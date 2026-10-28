@@ -1,7 +1,7 @@
 """Run: blender -b -t 6 --python scripts/render_racks.py
 Concept geometry only: tube fit and manufacture have not been validated.
 """
-import bpy, math
+import bpy, math, sys
 from mathutils import Vector
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]/'assets/products'
@@ -31,6 +31,11 @@ for key,nx,ny,pitch,radius,height in [('microtube-rack',6,4,18,5.5,28),('15ml-ra
     mat=bpy.data.materials.new('Matte FDM polymer');mat.use_nodes=True
     bs=mat.node_tree.nodes.get('Principled BSDF');bs.inputs['Roughness'].default_value=.34
     for o in parts:o.data.materials.append(mat)
+    bpy.ops.object.select_all(action='DESELECT')
+    for o in parts: o.select_set(True)
+    model_dir=ROOT.parent/'models';model_dir.mkdir(exist_ok=True)
+    bpy.ops.export_scene.gltf(filepath=str(model_dir/(key+'.glb')),use_selection=True,export_apply=True)
+    if '--models-only' in sys.argv: continue
     scene=bpy.context.scene;scene.render.engine='CYCLES';scene.cycles.samples=48;scene.cycles.use_denoising=True
     scene.render.resolution_x=scene.render.resolution_y=1024;scene.render.resolution_percentage=100
     scene.render.image_settings.file_format='PNG';scene.render.image_settings.color_mode='RGBA';scene.render.film_transparent=True

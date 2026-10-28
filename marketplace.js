@@ -10,7 +10,7 @@ async function api(path, options={}) {
   return res.json();
 }
 function showError(e) { toast(e.message || 'Unable to contact the server'); }
-function asProduct(p) { return {api:true,id:'api-'+p.id,name:p.title,category:p.category,price:p.price_cents/100,compat:p.compatibility,dimensions:p.dimensions,color:'teal',source:p.listing_type,state:'approved',designer:p.seller,materials:[p.material],lead:'to be confirmed',tolerance:'Not specified',inspection:'Contact the seller for details.',description:p.description,width:parseInt(p.dimensions)||0,permission:'contact the seller',images:p.images, colorImages:p.color_images||{},featured:p.featured}; }
+function asProduct(p) { return {api:true,id:'api-'+p.id,name:p.title,category:p.category,price:p.price_cents/100,compat:p.compatibility,dimensions:p.dimensions,color:'teal',source:p.listing_type,state:'approved',designer:p.seller,materials:[p.material],lead:'to be confirmed',tolerance:'Not specified',inspection:'Contact the seller for details.',description:p.description,width:parseInt(p.dimensions)||0,permission:'contact the seller',images:p.images, configurator:p.configurator,colorImages:p.color_images||{},featured:p.featured}; }
 function mergeProducts(items) { state.products=[]; state.products.push(...items.map(asProduct)); }
 async function refreshPublic() { try { const data=await api('/listings?per_page=50'); mergeProducts(data.items); } catch(e) { console.warn('Catalogue unavailable',e); } }
 card = function(p) { if (!p.api || !p.images.length) return originalCard(p); return originalCard(p).replace(art(p), `<img class="listing-card-image" src="${esc(p.images[0].thumbnail_url)}" alt="${esc(p.name)}">`); };

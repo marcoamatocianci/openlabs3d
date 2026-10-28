@@ -78,8 +78,10 @@ def user_data(user): return {'id':user.id, 'email':user.email, 'display_name':us
 def color_images(p):
     return {c:f'/assets/products/{p.collection_key}/{c}.png' for c in ('aqua-blue','signal-red','cream')} if p.collection_key else {}
 
+from .pricing import options, quote, Rules
+
 def listing_data(p):
-    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key')}, 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
+    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key')}, 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
 def get_listing(db, listing_id):
     p = db.scalar(select(models.Listing).options(selectinload(models.Listing.images), selectinload(models.Listing.owner)).where(models.Listing.id==listing_id))
     if not p: fail(404, 'Listing not found')
@@ -297,3 +299,16 @@ def seed_official_collection():
     with SessionLocal() as db:
         owner=db.scalar(select(models.User).where(models.User.role=='admin',models.User.active.is_(True)).order_by(models.User.id))
         if owner: seed(db,owner)
+
+@app.post('/api/listings/{listing_id}/quote')
+def price_quote(listing_id: int, body: schemas.QuoteInput, db: Session=Depends(get_db)):
+    p=get_listing(db,listing_id)
+    if p.status != 'approved': fail(404,'Listing not available')
+    return quote(p,body.material,body.color,body.quantity)
+
+@app.put('/api/listings/{listing_id}/pricing')
+def pricing_rules(listing_id: int, body: Rules, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
+    import json
+    p=get_listing(db,listing_id)
+    if any(k not in ('PLA','PETG','ABS',p.material) or not 100<=v<=100000 for k,v in body.materials.items()) or any(not 1<=k<=50 or not 0<=v<=9000 for k,v in body.discounts.items()): fail(422,'Invalid pricing rules')
+    p.configuration=json.dumps(body.model_dump());db.commit();return listing_data(p)

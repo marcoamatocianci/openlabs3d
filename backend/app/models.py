@@ -35,6 +35,8 @@ class Listing(Base):
     compatibility: Mapped[str] = mapped_column(String(300), default='')
     listing_type: Mapped[str] = mapped_column(String(20), default='community')
     status: Mapped[str] = mapped_column(String(20), default='draft')
+    configuration: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    model_url: Mapped[str] = mapped_column(String(300), default='', server_default='')
     featured: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
     collection_key: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)

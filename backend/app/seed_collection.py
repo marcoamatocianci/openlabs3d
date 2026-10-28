@@ -14,7 +14,7 @@ def seed(db, admin):
         ('15ml-rack','Centrifuge Tube Rack — 15 mL',2200,'15 mL conical tubes · 12 positions','110 × 85 × 52 mm'),
         ('50ml-rack','Centrifuge Tube Rack — 50 mL',2400,'50 mL conical tubes · 6 positions','124 × 86 × 62 mm')]:
         if db.scalar(select(Listing).where(Listing.collection_key==key)): continue
-        db.add(Listing(owner_id=admin.id,collection_key=key,title=title,price_cents=price,category='Tube racks',compatibility=compat,dimensions=dims,material='PETG',listing_type='official',status='approved',featured=True,approved_by=admin.id,published_at=now(),description='OpenLabs3D rack concept with rounded edges, a perforated upper deck, structural end walls and a stable base. Procedural 3D rendering; tube fit, printing tolerances and laboratory suitability require validation before manufacture.'))
+        db.add(Listing(owner_id=admin.id,collection_key=key,model_url='/assets/models/'+key+'.glb',title=title,price_cents=price,category='Tube racks',compatibility=compat,dimensions=dims,material='PETG',listing_type='official',status='approved',featured=True,approved_by=admin.id,published_at=now(),description='OpenLabs3D rack concept with rounded edges, a perforated upper deck, structural end walls and a stable base. Procedural 3D rendering; tube fit, printing tolerances and laboratory suitability require validation before manufacture.'))
     db.commit()
 if __name__=='__main__':
     with SessionLocal() as db:

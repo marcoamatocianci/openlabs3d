@@ -55,7 +55,13 @@ class ProfileInput(BaseModel):
 class AccountDeletion(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
-class OrderLine(BaseModel):
+class QuoteInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    material: str = Field(default="", max_length=200)
+    color: str = Field(default="", max_length=40)
+    quantity: int = Field(ge=1, le=50, strict=True)
+
+class OrderLine(QuoteInput):
     color: str = Field(default="", max_length=40)
     listing_id: int = Field(gt=0)
     quantity: int = Field(ge=1, le=50)

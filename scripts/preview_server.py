@@ -2,8 +2,8 @@
 import os, sys
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
-os.environ['DATABASE_URL']='sqlite:////tmp/openlabs-collection-preview.db'
-os.environ['UPLOAD_DIR']='/tmp/openlabs-collection-preview-uploads'
+os.environ['DATABASE_URL']='sqlite:////tmp/openlabs-configurator-preview.db'
+os.environ['UPLOAD_DIR']='/tmp/openlabs-configurator-preview-uploads'
 sys.path.insert(0,str(ROOT/'backend'))
 from app.main import app, hasher
 from app.database import engine,Base,SessionLocal
@@ -20,4 +20,4 @@ with SessionLocal() as db:
 app.mount('/',StaticFiles(directory=ROOT,html=True),name='preview')
 if __name__=='__main__':
     import uvicorn
-    uvicorn.run(app,host='127.0.0.1',port=8091)
+    uvicorn.run(app,host='127.0.0.1',port=8092)

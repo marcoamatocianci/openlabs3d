@@ -167,21 +167,19 @@ def create_order(body: schemas.OrderInput, auth=Depends(mutate), db: Session=Dep
     existing = db.scalar(select(models.Order).where(models.Order.buyer_id==auth[0].id, models.Order.idempotency_key==body.idempotency_key))
     if existing: return order_data(existing, db)
     ids = [i.listing_id for i in body.items]
-    if len({(i.listing_id,i.color) for i in body.items}) != len(ids): fail(422,'Combine duplicate products into one line')
+    if len({(i.listing_id,i.material,i.color) for i in body.items}) != len(ids): fail(422,'Combine duplicate products into one line')
     products = {p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(ids), models.Listing.status=='approved')).all()}
     if len(products) != len(set(ids)): fail(409,'A product is no longer available')
     if any(products[i].currency != 'EUR' for i in ids): fail(422,'Unsupported currency')
-    if any(products[line.listing_id].price_cents != line.expected_price_cents for line in body.items): fail(409,'A product price has changed. Remove it from the basket and add it again to see the current price.')
-    from .main import color_images
-    for line in body.items:
-        colors=color_images(products[line.listing_id])
-        if (colors and line.color not in colors) or (not colors and line.color): fail(422,'Select an available product color')
-    order = models.Order(reference='OL3D-'+uuid.uuid4().hex[:16].upper(), buyer_id=auth[0].id, idempotency_key=body.idempotency_key, contact=body.contact, address=body.address, total_cents=sum(products[i.listing_id].price_cents*i.quantity for i in body.items), currency='EUR')
+    from .pricing import quote
+    quotes=[quote(products[line.listing_id],line.material,line.color,line.quantity) for line in body.items]
+    if any(q['unit_price_cents'] != line.expected_price_cents for q,line in zip(quotes,body.items)): fail(409,'Price changed. Refresh the basket before ordering.')
+    order = models.Order(reference='OL3D-'+uuid.uuid4().hex[:16].upper(), buyer_id=auth[0].id, idempotency_key=body.idempotency_key, contact=body.contact, address=body.address, total_cents=sum(q['total_cents'] for q in quotes), currency='EUR')
     try:
         db.add(order); db.flush()
-        for line in body.items:
+        for line,q in zip(body.items,quotes):
             p=products[line.listing_id]
-            item=models.OrderItem(color=line.color,order_id=order.id,listing_id=p.id,title=p.title,material=p.material,dimensions=p.dimensions,quantity=line.quantity,price_cents=p.price_cents)
+            item=models.OrderItem(color=line.color,order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
             db.add(item); db.flush()
             db.add(models.PrintingJob(order_id=order.id,item_id=item.id))
         log(db, auth[0].id, 'order.created', f'order:{order.id}')

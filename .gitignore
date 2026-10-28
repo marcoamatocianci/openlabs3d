@@ -8,3 +8,5 @@ data/
 *.db-shm
 *.db-wal
 backups/
+.playwright-mcp/console-*.log
+.playwright-mcp/page-*.yml
