@@ -32,4 +32,4 @@ Implemented October 28, 2026. Running on the existing Compose stack at http://lo
 `backend/app/{main,models,schemas,operations,seed_collection}.py`, `backend/migrations/versions/36a_product_collection.py`, `backend/tests/test_z_collection.py`, `app.js`, `marketplace.js`, `operations.js`, `collection.js`, `style.css`, `index.html`, `compose.yaml`, `compose.production.yaml`, `scripts/render_racks.py`, `scripts/preview_server.py`, and `assets/products/`.
 
 ## Git
-No commits or pushes were made. The workspace was already entirely untracked at inspection; Git reports `??` for the application files and directories, including the new assets, scripts and report. It cannot provide a tracked before/after diff for this starting state.
+Published to `marcoamatocianci/openlabs3d` on the independent `v2` branch. Commit `cd7de3741a3c61553935908ea0148fc4cbfc1d41` is a root commit, so `main` and its separate project history remain untouched. This workspace now tracks `origin/v2`; no working changes remain.
