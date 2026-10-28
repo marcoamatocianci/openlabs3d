@@ -1,0 +1,48 @@
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    environment:
+      SEED_OFFICIAL_COLLECTION: "true"
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: sqlite:////app/data/openlabs3d.db
+      UPLOAD_DIR: /app/data/uploads
+      MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-5}
+      MAX_IMAGES_PER_LISTING: ${MAX_IMAGES_PER_LISTING:-5}
+    volumes:
+      - app_data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
+      - ./index.html:/srv/index.html:ro
+      - ./style.css:/srv/style.css:ro
+      - ./assets:/srv/assets:ro
+      - ./collection.js:/srv/collection.js:ro
+      - ./app.js:/srv/app.js:ro
+      - ./marketplace.js:/srv/marketplace.js:ro
+      - ./operations.js:/srv/operations.js:ro
+      - ./openlabs3d-logo.png:/srv/openlabs3d-logo.png:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:

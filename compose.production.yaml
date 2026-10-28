@@ -1,0 +1,28 @@
+services:
+  backend:
+    environment:
+      APP_ENV: production
+  caddy:
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:?Set SITE_DOMAIN to your public domain}
+    ports: !override
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes: !override
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./index.html:/srv/index.html:ro
+      - ./style.css:/srv/style.css:ro
+      - ./assets:/srv/assets:ro
+      - ./collection.js:/srv/collection.js:ro
+      - ./app.js:/srv/app.js:ro
+      - ./marketplace.js:/srv/marketplace.js:ro
+      - ./operations.js:/srv/operations.js:ro
+      - ./openlabs3d-logo.png:/srv/openlabs3d-logo.png:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1 && wget -q -O /dev/null http://backend:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
