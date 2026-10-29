@@ -1,0 +1,102 @@
+{
+  "product": "dna_pipette_stand_6",
+  "assumed_bed_mm": [
+    200.0,
+    200.0,
+    200.0
+  ],
+  "pipette_fit_unverified": {
+    "knob_width": 7.0,
+    "knob_height": 7.0,
+    "knob_length": 18.0,
+    "lip_height": 13.0,
+    "hang_radius": 67.0,
+    "min_spacing": 60.0,
+    "tip_clearance": 240.0
+  },
+  "parts": [
+    {
+      "part": "foot",
+      "dimensions_mm": [
+        190.0,
+        189.941,
+        32.0
+      ],
+      "volume_cm3": 345.25,
+      "triangles": 5792,
+      "single_solid": true,
+      "watertight": true,
+      "fits_bed": true,
+      "floating_layers": 0,
+      "overhang_area_over_limit_mm2": 0.0,
+      "steepest_downward_face_deg": 0.0
+    },
+    {
+      "part": "tower_lower",
+      "dimensions_mm": [
+        57.999,
+        57.999,
+        135.0
+      ],
+      "volume_cm3": 252.89,
+      "triangles": 24368,
+      "single_solid": true,
+      "watertight": true,
+      "fits_bed": true,
+      "floating_layers": 0,
+      "overhang_area_over_limit_mm2": 0.83,
+      "steepest_downward_face_deg": 90.0
+    },
+    {
+      "part": "tower_upper",
+      "dimensions_mm": [
+        57.996,
+        57.991,
+        131.0
+      ],
+      "volume_cm3": 251.72,
+      "triangles": 26482,
+      "single_solid": true,
+      "watertight": true,
+      "fits_bed": true,
+      "floating_layers": 0,
+      "overhang_area_over_limit_mm2": 0.87,
+      "steepest_downward_face_deg": 90.0
+    },
+    {
+      "part": "crown",
+      "dimensions_mm": [
+        160.0,
+        143.564,
+        25.0
+      ],
+      "volume_cm3": 81.72,
+      "triangles": 7250,
+      "single_solid": true,
+      "watertight": true,
+      "fits_bed": true,
+      "floating_layers": 0,
+      "overhang_area_over_limit_mm2": 0.92,
+      "steepest_downward_face_deg": 90.0
+    }
+  ],
+  "checks": {
+    "spindle_clears_tower_bore": true,
+    "lower_spigot_clears_upper_socket": true,
+    "upper_spigot_clears_crown_socket": true,
+    "pipette_spacing_mm": 67.0,
+    "knob_drop_above_foot_mm": 258.5,
+    "load_radius_inside_footprint": true
+  },
+  "host_cad_dimensions_mm": [
+    57.999,
+    189.941,
+    190.0
+  ],
+  "assembled_dimensions_mm": [
+    190.0,
+    189.941,
+    288.35
+  ],
+  "assembled_triangles": 50808
+}

@@ -40,7 +40,7 @@ def collection(tmp_path, monkeypatch):
     isolated.dispose()
 
 def test_seed_and_public_filters(collection):
-    with SessionLocal() as db: assert db.scalar(select(func.count()).select_from(Listing).where(Listing.collection_key.is_not(None)))==3
+    with SessionLocal() as db: assert db.scalar(select(func.count()).select_from(Listing).where(Listing.collection_key.is_not(None)))==4
     public=TestClient(app)
     items=public.get('/api/listings?featured=true&per_page=3').json()['items']
     assert len(items)==3 and all(p['status']=='approved' and len(p['color_images'])==3 for p in items)
