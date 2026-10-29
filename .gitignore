@@ -10,3 +10,11 @@ data/
 backups/
 .playwright-mcp/console-*.log
 .playwright-mcp/page-*.yml
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.tar.gz
+uploads/
+venv/
+.DS_Store
