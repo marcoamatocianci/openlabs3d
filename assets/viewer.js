@@ -3,8 +3,8 @@ import {OrbitControls} from './vendor/three/OrbitControls.js';
 import {GLTFLoader} from './vendor/three/GLTFLoader.js';
 import {STLLoader} from './vendor/three/STLLoader.js';
 export async function mountViewer(host,url,color,material){
- const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
- const scene=new THREE.Scene();scene.background=new THREE.Color('#edf1f2');const camera=new THREE.PerspectiveCamera(38,1,.1,10000);
+ const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+ const scene=new THREE.Scene();renderer.setClearColor(0x000000,0);const camera=new THREE.PerspectiveCamera(38,1,.1,10000);
  const controls=new OrbitControls(camera,renderer.domElement);controls.enablePan=false;controls.listenToKeyEvents(renderer.domElement);renderer.domElement.tabIndex=0;renderer.domElement.setAttribute('aria-label','3D product: drag to rotate, pinch or scroll to zoom');
  scene.add(new THREE.HemisphereLight(0xffffff,0x83949e,2.6));const key=new THREE.DirectionalLight(0xffffff,3);key.position.set(150,240,180);key.castShadow=true;key.shadow.mapSize.set(1024,1024);Object.assign(key.shadow.camera,{left:-200,right:200,top:200,bottom:-200,far:1000});key.shadow.bias=-.001;scene.add(key);
  const fill=new THREE.DirectionalLight(0xc7e7ff,1.5);fill.position.set(-150,80,-100);scene.add(fill);

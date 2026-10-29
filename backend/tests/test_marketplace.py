@@ -17,18 +17,26 @@ with SessionLocal() as db:
     db.add(Category(name='Tube racks',sort_order=0,active=True))
     db.commit()
 
-def register(client, email):
-    r=client.post('/api/auth/register',json={'email':email,'password':'long password for test','display_name':email.split('@')[0]})
+def register(client, email, host=False):
+    r=client.post('/api/auth/register',json={'email':email,'password':'LongPasswordForTest2026','display_name':email.split('@')[0], 'username':email.split('@')[0].replace('-','_')})
     assert r.status_code==201, r.text
+    from app.models import HostApplication
+    from sqlalchemy import select
+    with SessionLocal() as db:
+        user=db.scalar(select(User).where(User.email==email));user.email_verified=True
+        user.first_name='Test';user.last_name='User';user.phone='+39 011 1234567';user.country='IT';user.city='Torino'
+        if host:
+            user.role='host';db.add(HostApplication(user_id=user.id,status='approved'))
+        db.commit()
     return r.json()['csrf_token']
 def headers(token): return {'X-CSRF-Token':token}
 def picture():
     f=io.BytesIO(); Image.new('RGB',(32,32),'red').save(f,format='PNG'); return f.getvalue()
 def test_complete_marketplace():
     owner, stranger, admin, anonymous = [TestClient(app) for _ in range(4)]
-    token=register(owner,'owner@example.org'); other=register(stranger,'other@example.org')
+    token=register(owner,'owner@example.org',host=True); other=register(stranger,'other@example.org')
     with SessionLocal() as db:
-        db.add(User(email='admin@example.org',display_name='Admin',password_hash=hasher.hash('admin test password'),role='admin'));db.commit()
+        db.add(User(email='admin@example.org',display_name='Admin',password_hash=hasher.hash('admin test password'),role='admin',email_verified=True));db.commit()
     login=admin.post('/api/auth/login',json={'email':'admin@example.org','password':'admin test password'})
     assert login.status_code==200; admin_token=login.json()['csrf_token']
     assert owner.get('/api/auth/me').status_code==200
@@ -46,6 +54,7 @@ def test_complete_marketplace():
     image=uploaded.json()['images'][0]['id']
     assert stranger.get(f'/api/listings/{id}/images/{image}').status_code==404
     assert owner.get(f'/api/listings/{id}/images/{image}').status_code==200
+    upload_test_cad(owner,id,token)
     assert owner.post(f'/api/listings/{id}/submit',headers=headers(token)).json()['status']=='pending'
     assert owner.post(f'/api/admin/listings/{id}/approve',headers=headers(token)).status_code==403
     assert admin.post(f'/api/admin/listings/{id}/approve',headers=headers(admin_token)).json()['status']=='approved'
@@ -62,19 +71,17 @@ def test_complete_marketplace():
     assert owner.post('/api/auth/logout',headers=headers(token)).status_code==200
     assert owner.get('/api/auth/me').status_code==401
     assert owner.post('/api/auth/login',json={'email':'owner@example.org','password':'wrong'}).status_code==401
-    assert owner.post('/api/auth/login',json={'email':'owner@example.org','password':'long password for test'}).status_code==200
+    assert owner.post('/api/auth/login',json={'email':'owner@example.org','password':'LongPasswordForTest2026'}).status_code==200
 
 def test_admin_cannot_approve_own_community_listing():
     client=TestClient(app)
     token=client.post('/api/auth/login',json={'email':'admin@example.org','password':'admin test password'}).json()['csrf_token']
     data={'title':'Own','description':'Description','category':'Tube racks','price_cents':1,'material':'PLA','dimensions':'1','compatibility':'x'}
-    id=client.post('/api/listings',json=data,headers=headers(token)).json()['id']
-    assert client.post(f'/api/listings/{id}/submit',headers=headers(token)).status_code==200
-    assert client.post(f'/api/admin/listings/{id}/approve',headers=headers(token)).status_code==403
+    assert client.post('/api/listings',json=data,headers=headers(token)).status_code==403
 
 def test_image_limits_order_and_origin():
     client=TestClient(app)
-    token=register(client,'pictures@example.org')
+    token=register(client,'pictures@example.org',host=True)
     id=client.post('/api/listings',json={},headers=headers(token)).json()['id']
     files=[('files',(f'{i}.png',picture(),'image/png')) for i in range(2)]
     uploaded=client.post(f'/api/listings/{id}/images',files=files,headers=headers(token)); assert uploaded.status_code==201
@@ -101,7 +108,7 @@ def test_stale_review_cannot_overwrite_changed_listing():
     from sqlalchemy.orm.exc import StaleDataError
     from app.models import Listing
     client=TestClient(app)
-    token=register(client,'race@example.org')
+    token=register(client,'race@example.org',host=True)
     id=client.post('/api/listings',json={},headers=headers(token)).json()['id']
     with SessionLocal() as first, SessionLocal() as second:
         reviewer=first.get(Listing,id); editor=second.get(Listing,id)
@@ -128,7 +135,7 @@ def test_catalogue_filters_before_pagination():
 
 def test_upload_after_deletion_preserves_order():
     client=TestClient(app)
-    token=register(client,'ordering@example.org')
+    token=register(client,'ordering@example.org',host=True)
     listing_id=client.post('/api/listings',json={},headers=headers(token)).json()['id']
     files=[('files',(f'{i}.png',picture(),'image/png')) for i in range(3)]
     images=client.post(f'/api/listings/{listing_id}/images',files=files,headers=headers(token)).json()['images']
@@ -136,3 +143,10 @@ def test_upload_after_deletion_preserves_order():
     result=client.post(f'/api/listings/{listing_id}/images',files={'files':('new.png',picture(),'image/png')},headers=headers(token))
     assert result.status_code == 201
     assert [image['sort_order'] for image in result.json()['images']] == [0, 2, 3]
+
+
+def upload_test_cad(client,listing_id,token):
+    import struct
+    data=b'test'.ljust(80,b'\0')+struct.pack('<I',1)+struct.pack('<12fH',0,0,1,0,0,0,10,0,0,0,10,10,0)
+    result=client.post(f'/api/listings/{listing_id}/cad',files={'file':('test.stl',data)},headers=headers(token))
+    assert result.status_code==200,result.text

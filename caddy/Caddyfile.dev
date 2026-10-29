@@ -6,6 +6,8 @@
         Referrer-Policy strict-origin-when-cross-origin
         Content-Security-Policy "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     }
+    @frontend path / /index.html *.css *.js
+    header @frontend Cache-Control "no-cache"
     handle /api/* {
         request_body {
             max_size 30MB

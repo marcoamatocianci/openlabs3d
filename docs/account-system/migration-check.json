@@ -1,0 +1,33 @@
+{
+  "users": {
+    "original_records": 8,
+    "current_records": 8,
+    "preserved": true
+  },
+  "listings": {
+    "original_records": 5,
+    "current_records": 5,
+    "preserved": true
+  },
+  "orders": {
+    "original_records": 3,
+    "current_records": 3,
+    "preserved": true
+  },
+  "order_items": {
+    "original_records": 3,
+    "current_records": 3,
+    "preserved": true
+  },
+  "product_images": {
+    "original_records": 1,
+    "current_records": 1,
+    "preserved": true
+  },
+  "printing_jobs": {
+    "original_records": 3,
+    "current_records": 3,
+    "preserved": true
+  },
+  "foreign_key_violations": []
+}

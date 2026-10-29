@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, DateTime, ForeignKey, CheckConstraint, Text, Index, Boolean, UniqueConstraint
+from sqlalchemy import String, Integer, DateTime, ForeignKey, CheckConstraint, Text, Float, Index, Boolean, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -10,6 +10,19 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(100))
+    username: Mapped[str] = mapped_column(String(32, collation='NOCASE'), unique=True, default=lambda: 'user_' + __import__('uuid').uuid4().hex[:20])
+    theme: Mapped[str] = mapped_column(String(10), default='system', server_default='system')
+    avatar: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
+    first_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
+    last_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
+    phone: Mapped[str] = mapped_column(String(40), default='', server_default='')
+    country: Mapped[str] = mapped_column(String(2), default='', server_default='')
+    city: Mapped[str] = mapped_column(String(150), default='', server_default='')
+    region: Mapped[str] = mapped_column(String(150), default='', server_default='')
+    postal_code: Mapped[str] = mapped_column(String(30), default='', server_default='')
+    street: Mapped[str] = mapped_column(String(200), default='', server_default='')
+    additional: Mapped[str] = mapped_column(String(200), default='', server_default='')
     role: Mapped[str] = mapped_column(String(20), default='buyer')
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default='1', nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
@@ -38,6 +51,9 @@ class Listing(Base):
     configuration: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
     model_url: Mapped[str] = mapped_column(String(300), default='', server_default='')
     featured: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
+    cad_path: Mapped[str] = mapped_column(String(80),default='',server_default='')
+    cad_dimensions: Mapped[str] = mapped_column(Text,default='[]',server_default='[]')
+    removed: Mapped[bool] = mapped_column(Boolean,default=False,server_default='0')
     collection_key: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
     approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     rejection_reason: Mapped[str] = mapped_column(String(1000), default='')
@@ -140,3 +156,72 @@ class MarketplaceSetting(Base):
     __tablename__ = 'marketplace_settings'
     key: Mapped[str] = mapped_column(String(80), primary_key=True)
     value: Mapped[str] = mapped_column(String(500))
+
+class AccountToken(Base):
+    __tablename__ = 'account_tokens'
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), index=True)
+    purpose: Mapped[str] = mapped_column(String(20))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+
+class UserAddress(Base):
+    __tablename__ = 'user_addresses'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), index=True)
+    label: Mapped[str] = mapped_column(String(40))
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    phone: Mapped[str] = mapped_column(String(40))
+    country: Mapped[str] = mapped_column(String(2))
+    city: Mapped[str] = mapped_column(String(150))
+    region: Mapped[str] = mapped_column(String(150), default='')
+    postal_code: Mapped[str] = mapped_column(String(30), default='')
+    street: Mapped[str] = mapped_column(String(200))
+    additional: Mapped[str] = mapped_column(String(200), default='')
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    __table_args__ = (Index('uq_default_address', 'user_id', unique=True, sqlite_where=__import__('sqlalchemy').text('is_default = 1')),)
+
+class CartItem(Base):
+    __tablename__='cart_items'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id',ondelete='CASCADE'),index=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey('listings.id',ondelete='CASCADE'))
+    material: Mapped[str] = mapped_column(String(200))
+    color: Mapped[str] = mapped_column(String(40),default='')
+    quantity: Mapped[int] = mapped_column(Integer)
+    __table_args__=(UniqueConstraint('user_id','listing_id','material','color'),CheckConstraint('quantity BETWEEN 1 AND 50'))
+
+class Material(Base):
+    __tablename__='materials'
+    name: Mapped[str] = mapped_column(String(60),primary_key=True)
+    technology: Mapped[str] = mapped_column(String(10))
+class PrinterModel(Base):
+    __tablename__='printer_models'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    manufacturer: Mapped[str] = mapped_column(String(100))
+    model: Mapped[str] = mapped_column(String(100))
+    technology: Mapped[str] = mapped_column(String(10))
+    x: Mapped[float|None] = mapped_column(Float,nullable=True)
+    y: Mapped[float|None] = mapped_column(Float,nullable=True)
+    z: Mapped[float|None] = mapped_column(Float,nullable=True)
+    source: Mapped[str] = mapped_column(String(1000),default='')
+    verified: Mapped[bool] = mapped_column(Boolean,default=False)
+    materials: Mapped[str] = mapped_column(Text,default='[]')
+    limitations: Mapped[str] = mapped_column(Text,default='')
+    __table_args__=(UniqueConstraint('manufacturer','model'),CheckConstraint("technology IN ('FDM','RESIN')"))
+class HostPrinter(Base):
+    __tablename__='host_printers'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id',ondelete='CASCADE'),index=True)
+    model_id: Mapped[int|None] = mapped_column(ForeignKey('printer_models.id'),nullable=True)
+    manufacturer: Mapped[str] = mapped_column(String(100))
+    model: Mapped[str] = mapped_column(String(100))
+    technology: Mapped[str] = mapped_column(String(10))
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    z: Mapped[float] = mapped_column(Float)
+    quantity: Mapped[int] = mapped_column(Integer)
+    materials: Mapped[str] = mapped_column(Text)
+    material_colors: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    __table_args__=(CheckConstraint("technology IN ('FDM','RESIN')"),CheckConstraint('quantity BETWEEN 1 AND 100'),CheckConstraint('x>0 AND y>0 AND z>0'))

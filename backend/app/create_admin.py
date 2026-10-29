@@ -16,10 +16,11 @@ def check_utf8(*values):
 def main():
     email = input('Administrator email: ').strip().lower()
     name = input('Display name: ').strip()
-    password = getpass.getpass('Password (at least 12 characters): ')
-    check_utf8(email, name, password)
+    username = input('Username (3–32 letters, numbers, underscores): ').strip()
+    password = getpass.getpass('Password (8+ characters, uppercase and number): ')
+    check_utf8(email, name, username, password)
     try:
-        validated = Register(email=email, display_name=name, password=password)
+        validated = Register(email=email, username=username, display_name=name, password=password)
     except ValidationError:
         raise SystemExit('Invalid name, email, or password length.')
     confirmation = getpass.getpass('Confirm password: ')
@@ -28,6 +29,6 @@ def main():
     with SessionLocal() as db:
         email = str(validated.email).lower()
         if db.scalar(select(User).where(User.email == email)): raise SystemExit('This email is already registered. No account was changed.')
-        db.add(User(email=email, display_name=name, password_hash=hasher.hash(password), role='admin')); db.commit()
+        db.add(User(email=email, username=username, display_name=name, password_hash=hasher.hash(password), role='admin')); db.commit()
     print('Administrator created.')
 if __name__ == '__main__': main()

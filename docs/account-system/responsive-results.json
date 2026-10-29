@@ -1,0 +1,194 @@
+[
+  {
+    "role": "buyer",
+    "route": "account",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "account",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "account",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "account",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "basket",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "basket",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "basket",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "basket",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "checkout-cart",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "checkout-cart",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "checkout-cart",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "checkout-cart",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "onboarding",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "onboarding",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "onboarding",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "onboarding",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "product/api-1",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "product/api-1",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "product/api-1",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "buyer",
+    "route": "product/api-1",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "host",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "host",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "host",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "host",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "my-printers",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "my-printers",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "my-printers",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "my-printers",
+    "width": 1440,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "create-listing",
+    "width": 390,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "create-listing",
+    "width": 768,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "create-listing",
+    "width": 1024,
+    "overflow": false
+  },
+  {
+    "role": "host",
+    "route": "create-listing",
+    "width": 1440,
+    "overflow": false
+  }
+]

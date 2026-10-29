@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
+from fastapi import Request
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import DATABASE_URL
 
@@ -15,6 +16,11 @@ SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 class Base(DeclarativeBase):
     pass
 
-def get_db():
+def get_db(request: Request):
     with SessionLocal() as db:
+        # SQLite is the deployed database. Reserve the writer before auth/eligibility
+        # reads, so equipment edits, suspensions, checkout and assignment serialize.
+        # The reservation survives validation until the endpoint commits or rolls back.
+        if engine.dialect.name == 'sqlite' and request.method not in ('GET', 'HEAD', 'OPTIONS'):
+            db.execute(text('BEGIN IMMEDIATE'))
         yield db

@@ -1,0 +1,60 @@
+.............F......                                                     [100%]
+=================================== FAILURES ===================================
+______________ test_admin_deletion_permissions_and_linked_records ______________
+
+    def test_admin_deletion_permissions_and_linked_records():
+        from app.main import rate
+        rate.clear()
+        user, stranger = TestClient(app), TestClient(app)
+        token = register(user, 'delete-linked@example.org')
+        stranger_token = register(stranger, 'delete-stranger@example.org')
+        user_id = user.get('/api/auth/me').json()['user']['id']
+        admin, admin_token = admin_client()
+        request = lambda client, target, password, token: client.request('DELETE', f'/api/admin/users/{target}', json={'password':password}, headers=headers(token))
+        assert request(stranger,user_id,'LongPasswordForTest2026',stranger_token).status_code == 403
+        assert request(admin,user_id,'wrong password',admin_token).status_code == 401
+>       assert user.post('/api/listings',json={'title':'Owned listing'},headers=headers(token)).status_code == 201
+E       AssertionError: assert 403 == 201
+E        +  where 403 = <Response [403 Forbidden]>.status_code
+E        +    where <Response [403 Forbidden]> = post('/api/listings', json={'title': 'Owned listing'}, headers={'X-CSRF-Token': 'j_vimB4c-JQsnpbQBmo-gyYRHYOO3QYdQFK5JD5qXsA'})
+E        +      where post = <starlette.testclient.TestClient object at 0x79a1431f18c0>.post
+E        +      and   {'X-CSRF-Token': 'j_vimB4c-JQsnpbQBmo-gyYRHYOO3QYdQFK5JD5qXsA'} = headers('j_vimB4c-JQsnpbQBmo-gyYRHYOO3QYdQFK5JD5qXsA')
+
+backend/tests/test_operations.py:189: AssertionError
+=============================== warnings summary ===============================
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/testclient.py:1
+  /tmp/openlabs3d-test-deps/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/app/main.py:306
+  /home/mcianci/Documents/Personal/OpenLabs3D-self-host/OpenLabs3D/sitev2/backend/app/main.py:306: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event('startup')
+
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/applications.py:4723
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/applications.py:4723
+  /tmp/openlabs3d-test-deps/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+backend/app/main.py:335
+  /home/mcianci/Documents/Personal/OpenLabs3D-self-host/OpenLabs3D/sitev2/backend/app/main.py:335: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event('startup')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED backend/tests/test_operations.py::test_admin_deletion_permissions_and_linked_records
+1 failed, 19 passed, 5 warnings in 5.68s

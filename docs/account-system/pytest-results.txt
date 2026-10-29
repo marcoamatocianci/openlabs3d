@@ -1,0 +1,36 @@
+.............................                                            [100%]
+=============================== warnings summary ===============================
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/testclient.py:1
+  /tmp/openlabs3d-test-deps/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+backend/app/main.py:307
+  /home/mcianci/Documents/Personal/OpenLabs3D-self-host/OpenLabs3D/sitev2/backend/app/main.py:307: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event('startup')
+
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/applications.py:4723
+../../../../../../../tmp/openlabs3d-test-deps/fastapi/applications.py:4723
+  /tmp/openlabs3d-test-deps/fastapi/applications.py:4723: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+backend/app/main.py:339
+  /home/mcianci/Documents/Personal/OpenLabs3D-self-host/OpenLabs3D/sitev2/backend/app/main.py:339: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event('startup')
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+29 passed, 5 warnings in 8.66s

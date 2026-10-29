@@ -1,0 +1,1 @@
+digraph G { rankdir=LR; node [shape=box,style="rounded,filled",fillcolor="#e6f0f3",color="#457b9d",fontname="Helvetica"]; Draft -> "Upload images"; "Upload images" -> "Admin official publish"; "Upload images" -> "Community submit"; "Community submit" -> "Admin review"; "Admin review" -> Approved; "Admin official publish" -> Approved; Approved -> "Public catalogue"; }

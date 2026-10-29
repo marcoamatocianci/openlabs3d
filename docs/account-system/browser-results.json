@@ -1,0 +1,7 @@
+{
+  "environment": "isolated http://localhost:8096; read-only smoke checks at http://localhost:8080",
+  "passed": ["registration and profile persistence", "theme preference after refresh", "printer catalogue specification fill", "material selection and printer total", "buyer navigation without listing creation", "administrator navigation without buyer tools", "official product confirmation and immediate publication", "local-mail email verification", "saved address autofill", "direct checkout creates order without clearing cart", "unauthenticated Buy Now preserves quantity through login", "same-browser Buyer A/Buyer B cart isolation", "live Three.js canvas", "live account UI and API health"],
+  "responsive_checks": {"administrator":16,"buyer_and_host":32,"widths":[390,768,1024,1440],"horizontal_overflow_failures":0},
+  "final_product_failures": [],
+  "notes": ["Development browser checks found a login redirect issue, which was fixed and retested.", "Some test runs timed out because of stale cached scripts or incorrect test selectors; reruns with corrected selectors and refreshed asset hashes passed.", "Real SMTP inbox delivery was not tested.", "Responsive checks are not a complete accessibility audit."]
+}

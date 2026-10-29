@@ -1,3 +1,4 @@
+from .availability import supports
 """Persistent host, order and marketplace administration workflows."""
 import uuid
 from datetime import datetime, timezone
@@ -55,13 +56,6 @@ def sync_order(db, order_id):
     elif statuses and all(s == 'accepted' for s in statuses): order.status = 'accepted'
     else: order.status = 'pending'
 
-@router.patch('/profile')
-def profile(body: schemas.ProfileInput, auth=Depends(mutate), db: Session=Depends(get_db)):
-    name = body.display_name.strip()
-    if not name: fail(422, 'Display name is required')
-    auth[0].display_name = name
-    db.commit()
-    return user_data(auth[0])
 
 def delete_account(user, actor, db):
     user_id = user.id
@@ -117,9 +111,11 @@ def my_application(auth=Depends(require), db: Session=Depends(get_db)):
 
 @router.put('/host/application')
 def save_application(body: schemas.HostApplicationInput, auth=Depends(mutate), db: Session=Depends(get_db)):
+    fail(410, 'Use the structured equipment application at /api/host/equipment-application')
     if auth[0].role == 'admin': fail(403, 'Administrators cannot apply as hosts')
     host = db.scalar(select(models.HostApplication).where(models.HostApplication.user_id == auth[0].id))
     if host and host.status not in ('draft','rejected'): fail(409, 'This application cannot be edited in its current state')
+    if body.submit and not auth[0].email_verified: fail(403, 'Verify your email before submitting a host application')
     if body.submit and not settings(db)['host_applications_open']: fail(409, 'Host applications are currently closed')
     fields = body.model_dump(exclude={'submit'})
     if body.submit and any(not fields[name] for name in ('name','contact','country','region','printers','technologies','materials','dimensions','capabilities')):
@@ -164,11 +160,19 @@ def decide_host(host_id: int, decision: str, body: schemas.Reject, auth=Depends(
 
 @router.post('/orders', status_code=201)
 def create_order(body: schemas.OrderInput, auth=Depends(mutate), db: Session=Depends(get_db)):
+    return persist_order(body,auth,db)
+
+def persist_order(body,auth,db,commit=True):
+    import json
+    contact=json.loads(body.contact);contact['email']=auth[0].email
+    body.contact=json.dumps(contact,ensure_ascii=False)
+    if not auth[0].email_verified: fail(403, 'Verify your email before ordering')
+    if auth[0].role=='admin': fail(403, 'Use marketplace order management')
     existing = db.scalar(select(models.Order).where(models.Order.buyer_id==auth[0].id, models.Order.idempotency_key==body.idempotency_key))
     if existing: return order_data(existing, db)
     ids = [i.listing_id for i in body.items]
     if len({(i.listing_id,i.material,i.color) for i in body.items}) != len(ids): fail(422,'Combine duplicate products into one line')
-    products = {p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(ids), models.Listing.status=='approved')).all()}
+    products = {p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(ids), models.Listing.status=='approved', models.Listing.removed.is_(False))).all()}
     if len(products) != len(set(ids)): fail(409,'A product is no longer available')
     if any(products[i].currency != 'EUR' for i in ids): fail(422,'Unsupported currency')
     from .pricing import quote
@@ -183,7 +187,8 @@ def create_order(body: schemas.OrderInput, auth=Depends(mutate), db: Session=Dep
             db.add(item); db.flush()
             db.add(models.PrintingJob(order_id=order.id,item_id=item.id))
         log(db, auth[0].id, 'order.created', f'order:{order.id}')
-        db.commit()
+        if commit: db.commit()
+        else: db.flush()
     except IntegrityError:
         db.rollback()
         existing=db.scalar(select(models.Order).where(models.Order.buyer_id==auth[0].id,models.Order.idempotency_key==body.idempotency_key))
@@ -193,6 +198,7 @@ def create_order(body: schemas.OrderInput, auth=Depends(mutate), db: Session=Dep
 
 @router.get('/orders')
 def my_orders(auth=Depends(require), db: Session=Depends(get_db)):
+    if auth[0].role=='admin': fail(403, 'Use marketplace order management')
     orders=db.scalars(select(models.Order).options(selectinload(models.Order.items)).where(models.Order.buyer_id==auth[0].id).order_by(models.Order.created_at.desc())).all()
     return [order_data(o,db) for o in orders]
 
@@ -203,7 +209,7 @@ def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
     jobs=db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where((models.PrintingJob.status=='available') | (models.PrintingJob.host_id==auth[0].id)).order_by(models.PrintingJob.id.desc())).all()
     result=[]
     for job in jobs:
-        if job.host_id != auth[0].id and job.item.material.strip().casefold() not in materials: continue
+        if job.host_id != auth[0].id and not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id): continue
         item=job_data(job)
         if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','completed'):
             order=db.get(models.Order,job.order_id)
@@ -217,7 +223,7 @@ def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
     job=db.get(models.PrintingJob,job_id)
     if not job: fail(404,'Job not found')
     materials={s.strip().casefold() for s in host.materials.split(',') if s.strip()}
-    if job.item.material.strip().casefold() not in materials: fail(403,'This job requires a material not listed in your approved profile')
+    if not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id): fail(403,'Your approved equipment cannot manufacture this material, color and product size')
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
     order_active=exists(select(models.Order.id).where(models.Order.id==models.PrintingJob.order_id,models.Order.status!='cancelled'))
     changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.status=='available',models.PrintingJob.host_id.is_(None),host_active,order_active).values(status='accepted',host_id=auth[0].id,updated_at=datetime.now(timezone.utc))).rowcount

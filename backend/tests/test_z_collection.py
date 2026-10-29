@@ -1,3 +1,4 @@
+from order_fixtures import CONTACT, ADDRESS, provision_test_host
 import os, tempfile, sys
 _test_root=tempfile.TemporaryDirectory()
 os.environ.setdefault("DATABASE_URL", "sqlite:///"+_test_root.name+"/test.db")
@@ -29,7 +30,10 @@ def collection(tmp_path, monkeypatch):
     Base.metadata.create_all(isolated)
     email=uuid.uuid4().hex+'@example.org'
     with SessionLocal() as db:
-        admin=User(email=email,display_name='Collection QA',password_hash=hasher.hash('collection password'),role='admin');db.add(admin);db.commit();seed(db,admin);seed(db,admin)
+        admin=User(email=email,display_name='Collection QA',password_hash=hasher.hash('collection password'),role='admin',email_verified=True);db.add(admin);db.commit();seed(db,admin);seed(db,admin)
+        provision_test_host(db)
+        for product in db.scalars(select(Listing)):product.cad_dimensions='[100,100,100]'
+        db.commit()
     client=TestClient(app);r=client.post('/api/auth/login',json={'email':email,'password':'collection password'});client.headers['X-CSRF-Token']=r.json()['csrf_token']
     yield client
     app.dependency_overrides.clear()
@@ -54,17 +58,23 @@ def test_publish_webp_drafts_and_permissions(collection):
     assert public.get(f'/api/listings/{id}').status_code==200
     with SessionLocal() as db: assert not db.scalar(select(Activity).where(Activity.subject==f'listing:{id}',Activity.action=='listing.submitted'))
     c.delete(f'/api/listings/{id}');assert public.get(f'/api/listings/{id}').status_code==404
-    buyer=TestClient(app);r=buyer.post('/api/auth/register',json={'email':uuid.uuid4().hex+'@example.org','password':'collection password','display_name':'Buyer'});buyer.headers['X-CSRF-Token']=r.json()['csrf_token']
+    buyer=collection_buyer()
     assert buyer.post('/api/listings',json=payload).status_code==403
-    payload['listing_type']='community';p=buyer.post('/api/listings',json=payload).json()
-    assert buyer.post(f"/api/listings/{p['id']}/publish").status_code==403
-    assert buyer.post(f"/api/listings/{p['id']}/submit").json()['status']=='pending'
-    assert public.get(f"/api/listings/{p['id']}").status_code==404
+    payload['listing_type']='community'
+    assert buyer.post('/api/listings',json=payload).status_code==403
 
 def test_order_color_snapshot(collection):
     c=collection;p=c.get('/api/listings?featured=true').json()['items'][0]
-    body={'idempotency_key':uuid.uuid4().hex,'contact':'QA','address':'QA','items':[{'listing_id':p['id'],'quantity':1,'expected_price_cents':p['price_cents'],'color':color} for color in ['cream','signal-red']]}
+    body={'idempotency_key':uuid.uuid4().hex,'contact':CONTACT,'address':ADDRESS,'items':[{'listing_id':p['id'],'quantity':1,'expected_price_cents':p['price_cents'],'color':color} for color in ['cream','signal-red']]}
+    c=collection_buyer()
     r=c.post('/api/orders',json=body);assert r.status_code==201,r.text
     assert {i['color'] for i in r.json()['items']}=={'cream','signal-red'}
     assert {j['item']['color'] for j in r.json()['jobs']}=={'cream','signal-red'}
     body['idempotency_key']=uuid.uuid4().hex;body['items'][0]['color']='unknown';assert c.post('/api/orders',json=body).status_code==422
+
+
+def collection_buyer():
+    client=TestClient(app);email=uuid.uuid4().hex+'@example.org'
+    with SessionLocal() as db:
+        db.add(User(email=email,display_name='Test buyer',password_hash=hasher.hash('TestBuyer2026'),role='buyer',email_verified=True));db.commit()
+    r=client.post('/api/auth/login',json={'email':email,'password':'TestBuyer2026'});client.headers['X-CSRF-Token']=r.json()['csrf_token'];return client

@@ -74,20 +74,22 @@ def new_session(user, response, db):
     db.commit()
     response.set_cookie('ol3d_session', token, httponly=True, secure=config.SECURE_COOKIE, samesite='lax', max_age=14*86400, path='/')
     return {'user': user_data(user), 'csrf_token': csrf}
-def user_data(user): return {'id':user.id, 'email':user.email, 'display_name':user.display_name, 'role':user.role}
+def user_data(user): return {key:getattr(user,key) for key in ('id','email','display_name','role','username','theme','avatar','email_verified','first_name','last_name','phone','country','city','region','postal_code','street','additional')}
 def color_images(p):
     return {c:f'/assets/products/{p.collection_key}/{c}.png' for c in ('aqua-blue','signal-red','cream')} if p.collection_key else {}
 
 from .pricing import options, quote, Rules
 
 def listing_data(p):
-    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key')}, 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
+    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
 def get_listing(db, listing_id):
     p = db.scalar(select(models.Listing).options(selectinload(models.Listing.images), selectinload(models.Listing.owner)).where(models.Listing.id==listing_id))
-    if not p: fail(404, 'Listing not found')
+    if not p or p.removed: fail(404, 'Listing not found')
     return p
 def can_view(p, auth): return p.status == 'approved' or bool(auth and (auth[0].id == p.owner_id or auth[0].role == 'admin'))
 def owned(p, auth):
+    if auth[0].role != 'admin':
+        if auth[0].role != 'host' or not auth[0].email_verified: fail(403, 'Verified approved host access required')
     if p.owner_id != auth[0].id and auth[0].role != 'admin': fail(403, 'Not permitted')
 def changed(p, auth=None):
     if p.status == 'approved':
@@ -97,6 +99,7 @@ def changed(p, auth=None):
     # Advance the version for photo changes and already-pending edits.
     flag_modified(p, 'status')
 def complete(p, db):
+    if p.listing_type=='community' and not p.cad_path: fail(422,'Upload a valid STL or 3MF model before submission')
     missing = [name for name in ('title','description','category','material','dimensions','compatibility') if not getattr(p,name).strip()]
     if p.price_cents <= 0: missing.append('price')
     if missing: fail(422, 'Complete these fields before submission: ' + ', '.join(missing))
@@ -117,14 +120,16 @@ def health(db: Session = Depends(get_db)):
 @app.post('/api/auth/register', status_code=201)
 def register(body: schemas.Register, request: Request, response: Response, db: Session = Depends(get_db)):
     session_limit(request, 'register')
-    name = body.display_name.strip()
-    if not name: fail(422, 'Display name is required')
-    user = models.User(email=str(body.email).lower(), display_name=name, password_hash=hasher.hash(body.password), role='buyer')
+    name = body.display_name.strip() or body.username
+    user = models.User(email=str(body.email).lower(), username=body.username, display_name=name, password_hash=hasher.hash(body.password), role='buyer')
     db.add(user)
     try: db.commit()
-    except IntegrityError: db.rollback(); fail(409, 'An account with this email already exists')
+    except IntegrityError: db.rollback(); fail(409, 'Email or username is already in use')
     db.add(models.Activity(actor_id=user.id, action='user.registered', subject=f'user:{user.id}'))
-    return new_session(user, response, db)
+    result = new_session(user, response, db)
+    from .accounts import issue_token
+    result['verification_delivery'] = issue_token(db, user, 'verify')
+    return result
 @app.post('/api/auth/login')
 def login(body: schemas.Login, request: Request, response: Response, db: Session = Depends(get_db)):
     session_limit(request, 'login')
@@ -143,7 +148,7 @@ def logout(response: Response, auth = Depends(mutate), db: Session = Depends(get
 @app.get('/api/listings')
 def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: bool = False, page: int = 1, per_page: int = 12, material: str = '', max_price_cents: int | None = None, max_width: float | None = None, db: Session = Depends(get_db)):
     if page < 1 or not 1 <= per_page <= 50 or sort not in ('newest','oldest','price_asc','price_desc') or (max_price_cents is not None and max_price_cents < 0) or (max_width is not None and not 0 < max_width <= 100000): fail(422, 'Invalid filters, pagination or sort')
-    query = select(models.Listing).where(models.Listing.status == 'approved')
+    query = select(models.Listing).where(models.Listing.status == 'approved', models.Listing.removed.is_(False))
     if featured: query = query.where(models.Listing.featured.is_(True))
     if q: query = query.where(or_(*[c.icontains(q[:200], autoescape=True) for c in (models.Listing.title, models.Listing.description, models.Listing.compatibility)]))
     if category: query = query.where(models.Listing.category == category[:100])
@@ -166,8 +171,13 @@ def detail(listing_id: int, auth = Depends(current), db: Session = Depends(get_d
     return listing_data(p)
 @app.post('/api/listings', status_code=201)
 def create(body: schemas.ListingInput, auth = Depends(mutate), db: Session = Depends(get_db)):
+    if auth[0].role == 'admin' and body.listing_type != 'official': fail(403, 'Administrators must create official products')
+    if auth[0].role != 'admin':
+        from .operations import active_host
+        active_host(auth,db)
     if body.listing_type == 'official' and auth[0].role != 'admin': fail(403,'Only administrators can create official listings')
     if body.featured and auth[0].role != 'admin': fail(403,'Administrator access required')
+    if not auth[0].email_verified: fail(403, 'Verify your email before creating listings')
     p=models.Listing(**body.model_dump(), owner_id=auth[0].id); db.add(p); db.commit(); db.refresh(p); return listing_data(p)
 @app.patch('/api/listings/{listing_id}')
 def edit(listing_id: int, body: schemas.ListingPatch, auth = Depends(mutate), db: Session = Depends(get_db)):
@@ -189,12 +199,16 @@ def archive(listing_id: int, auth = Depends(mutate), db: Session = Depends(get_d
 @app.post('/api/listings/{listing_id}/submit')
 def submit(listing_id: int, auth = Depends(mutate), db: Session = Depends(get_db)):
     p=get_listing(db,listing_id); owned(p,auth)
+    if not auth[0].email_verified: fail(403, 'Verify your email before submitting listings')
     if p.status not in ('draft','rejected'): fail(409,'Only drafts and rejected listings can be submitted')
-    if auth[0].role == 'admin' and p.owner_id == auth[0].id and p.listing_type == 'official': return publish(listing_id,auth,db)
+    if auth[0].role == 'admin': fail(403, 'Use official product publication')
+    from .operations import active_host
+    active_host(auth,db)
     complete(p, db); p.status='pending'; p.rejection_reason=''; db.add(models.Activity(actor_id=auth[0].id, action='listing.submitted', subject=f'listing:{p.id}')); db.commit(); return listing_data(p)
 
 @app.post('/api/listings/{listing_id}/publish')
 def publish(listing_id: int, auth = Depends(admin_mutate), db: Session = Depends(get_db)):
+    if not auth[0].email_verified: fail(403, 'Verify your email before publishing')
     p=get_listing(db,listing_id)
     if p.owner_id != auth[0].id or p.listing_type != 'official': fail(403,'Only your own official products can be published directly')
     if p.status == 'archived': fail(409,'Archived listings cannot be published')
@@ -300,6 +314,13 @@ def seed_official_collection():
         owner=db.scalar(select(models.User).where(models.User.role=='admin',models.User.active.is_(True)).order_by(models.User.id))
         if owner: seed(db,owner)
 
+@app.get('/api/listings/{listing_id}/availability')
+def product_availability(listing_id: int, response: Response, db: Session=Depends(get_db)):
+    p=get_listing(db,listing_id)
+    if p.status != 'approved': fail(404,'Listing not available')
+    response.headers['Cache-Control']='no-store'
+    return options(p)
+
 @app.post('/api/listings/{listing_id}/quote')
 def price_quote(listing_id: int, body: schemas.QuoteInput, db: Session=Depends(get_db)):
     p=get_listing(db,listing_id)
@@ -307,8 +328,25 @@ def price_quote(listing_id: int, body: schemas.QuoteInput, db: Session=Depends(g
     return quote(p,body.material,body.color,body.quantity)
 
 @app.put('/api/listings/{listing_id}/pricing')
-def pricing_rules(listing_id: int, body: Rules, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
+def pricing_rules(listing_id: int, body: Rules, auth=Depends(mutate), db: Session=Depends(get_db)):
     import json
     p=get_listing(db,listing_id)
-    if any(k not in ('PLA','PETG','ABS',p.material) or not 100<=v<=100000 for k,v in body.materials.items()) or any(not 1<=k<=50 or not 0<=v<=9000 for k,v in body.discounts.items()): fail(422,'Invalid pricing rules')
+    owned(p,auth)
+    allowed={'PLA','PLA+','PETG','ABS','ASA','TPU','PA / Nylon','PC','Standard Resin','Tough Resin','Flexible Resin','High-Temperature Resin',p.material}
+    if any(k not in allowed or not 100<=v<=100000 for k,v in body.materials.items()) or any(not 1<=k<=50 or not 0<=v<=9000 for k,v in body.discounts.items()): fail(422,'Invalid pricing rules')
+    if auth[0].role != 'admin': changed(p,auth)
     p.configuration=json.dumps(body.model_dump());db.commit();return listing_data(p)
+
+from .accounts import router as accounts_router
+app.include_router(accounts_router)
+from .shopping import router as shopping_router
+app.include_router(shopping_router)
+from .equipment import router as equipment_router
+app.include_router(equipment_router)
+@app.on_event('startup')
+def seed_equipment_catalogue():
+    from .equipment import seed_equipment
+    from .database import SessionLocal
+    with SessionLocal() as db:seed_equipment(db)
+from .cad import router as cad_router
+app.include_router(cad_router)

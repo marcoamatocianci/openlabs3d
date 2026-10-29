@@ -1,10 +1,17 @@
 from typing import Literal
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 class Register(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=12, max_length=128)
-    display_name: str = Field(min_length=1, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[A-Za-z0-9_]+$")
+    @field_validator("password")
+    @classmethod
+    def password_policy(cls, value):
+        if not any(c.isupper() for c in value) or not any(c.isdigit() for c in value):
+            raise ValueError("Password requires an uppercase letter and a number")
+        return value
+    display_name: str = Field(default="", max_length=100)
 class Login(BaseModel):
     email: EmailStr
     password: str = Field(max_length=128)
@@ -67,12 +74,34 @@ class OrderLine(QuoteInput):
     quantity: int = Field(ge=1, le=50)
     expected_price_cents: int = Field(ge=0, le=100000000)
 
+def validate_delivery_snapshot(value, contact_only=False):
+    import json
+    from .accounts import Contact
+    try:
+        data=json.loads(value)
+        if not isinstance(data,dict):raise ValueError('Expected structured contact information')
+        email=data.pop('email',None)
+        validated=Contact.model_validate(data)
+        required=('first_name','last_name','phone') if contact_only else ('country','city','street')
+        if any(not getattr(validated,k) for k in required):raise ValueError('Complete contact and delivery information')
+        result=validated.model_dump()
+        if email is not None:result['email']=str(__import__("pydantic").TypeAdapter(EmailStr).validate_python(email))
+        return json.dumps(result,ensure_ascii=False)
+    except (ValueError,TypeError):raise ValueError('Provide valid structured contact and delivery information') from None
+
 class OrderInput(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     idempotency_key: str = Field(min_length=16, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
-    contact: str = Field(min_length=1, max_length=200)
-    address: str = Field(min_length=1, max_length=1000)
+    contact: str = Field(min_length=1, max_length=1000)
+    address: str = Field(min_length=1, max_length=3000)
     items: list[OrderLine] = Field(min_length=1, max_length=30)
+    @field_validator('contact')
+    @classmethod
+    def validate_contact(cls,value):return validate_delivery_snapshot(value,True)
+    @field_validator('address')
+    @classmethod
+    def validate_address(cls,value):return validate_delivery_snapshot(value)
+
 
 class JobTransition(BaseModel):
     status: Literal['printing', 'ready', 'completed']

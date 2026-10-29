@@ -1,0 +1,40 @@
+ M .env.example
+ M assets/configurator.js
+ M assets/viewer.js
+ M backend/app/create_admin.py
+ M backend/app/main.py
+ M backend/app/models.py
+ M backend/app/operations.py
+ M backend/app/schemas.py
+ M backend/requirements.txt
+ M backend/tests/test_configurator.py
+ M backend/tests/test_marketplace.py
+ M backend/tests/test_operations.py
+ M backend/tests/test_z_collection.py
+ M caddy/Caddyfile
+ M caddy/Caddyfile.dev
+ M compose.production.yaml
+ M compose.yaml
+ M index.html
+ M marketplace.js
+ M operations.js
+ M style.css
+?? assets/accounts.js
+?? assets/equipment.js
+?? assets/shopping.js
+?? assets/theme.js
+?? assets/workspaces.js
+?? backend/app/accounts.py
+?? backend/app/cad.py
+?? backend/app/equipment.py
+?? backend/app/shopping.py
+?? backend/migrations/versions/58a_accounts.py
+?? backend/migrations/versions/59a_preferences.py
+?? backend/migrations/versions/60a_carts.py
+?? backend/migrations/versions/61a_equipment.py
+?? backend/migrations/versions/62a_cad_removal.py
+?? backend/tests/conftest.py
+?? backend/tests/order_fixtures.py
+?? backend/tests/test_accounts.py
+?? docs/
+?? scripts/account_preview.py

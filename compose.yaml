@@ -7,6 +7,14 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: sqlite:////app/data/openlabs3d.db
       UPLOAD_DIR: /app/data/uploads
+      MAIL_TRANSPORT: ${MAIL_TRANSPORT:-file}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_STARTTLS: ${SMTP_STARTTLS:-true}
+      SMTP_FROM: ${SMTP_FROM:-noreply@localhost}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAX_UPLOAD_SIZE_MB: ${MAX_UPLOAD_SIZE_MB:-5}
       MAX_IMAGES_PER_LISTING: ${MAX_IMAGES_PER_LISTING:-5}
     volumes:
