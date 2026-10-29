@@ -1,5 +1,6 @@
 import hashlib
 import io
+import math
 import secrets
 import threading
 import time
@@ -26,6 +27,8 @@ app = FastAPI(title='OpenLabs3D API', docs_url='/api/docs', openapi_url='/api/op
 hasher = PasswordHasher()
 rate = defaultdict(deque)
 rate_lock = threading.Lock()
+login_lock = threading.Lock()
+login_clock = time.monotonic
 upload_lock = threading.Lock()
 Image.MAX_IMAGE_PIXELS = 20_000_000
 
@@ -132,13 +135,45 @@ def register(body: schemas.Register, request: Request, response: Response, db: S
     return result
 @app.post('/api/auth/login')
 def login(body: schemas.Login, request: Request, response: Response, db: Session = Depends(get_db)):
-    session_limit(request, 'login')
-    user = db.scalar(select(models.User).where(models.User.email == str(body.email).lower()))
-    if not user or not user.active: fail(401, 'Incorrect email or password')
-    try: hasher.verify(user.password_hash, body.password)
-    except (VerifyMismatchError, InvalidHashError): fail(401, 'Incorrect email or password')
-    if hasher.check_needs_rehash(user.password_hash): user.password_hash = hasher.hash(body.password); db.commit()
-    return new_session(user, response, db)
+    same_origin(request)
+    ip = request.headers.get('x-real-ip', request.client.host if request.client else 'unknown')
+    email = str(body.email).lower()
+    # The account key is independent of IP, while the IP key limits password spraying.
+    account_key = ('login-account', digest(email))
+    ip_key = ('login-ip', ip)
+    window = 900
+    # Serialize check/verify/record to prevent concurrent attempts from bypassing limits.
+    with login_lock:
+        now = login_clock()
+        with rate_lock:
+            if len(rate) > 10000:
+                for key in list(rate):
+                    if not rate[key] or rate[key][-1] <= now - window:
+                        del rate[key]
+            wait = 0
+            for key, limit in ((account_key, 5), (ip_key, 10)):
+                q = rate.get(key)
+                if not q: continue
+                while q and q[0] <= now - window: q.popleft()
+                if len(q) >= limit: wait = max(wait, math.ceil(q[0] + window - now))
+                if not q: rate.pop(key, None)
+            if wait:
+                raise HTTPException(status_code=429, detail='Too many failed sign-in attempts.', headers={'Retry-After': str(wait)})
+        user = db.scalar(select(models.User).where(models.User.email == email))
+        valid = False
+        if user and user.active:
+            try: valid = hasher.verify(user.password_hash, body.password)
+            except (VerifyMismatchError, InvalidHashError): pass
+        if not valid:
+            with rate_lock:
+                now = login_clock()
+                rate[account_key].append(now)
+                rate[ip_key].append(now)
+            fail(401, 'Incorrect email or password')
+        with rate_lock:
+            rate.pop(account_key, None)
+        if hasher.check_needs_rehash(user.password_hash): user.password_hash = hasher.hash(body.password); db.commit()
+        return new_session(user, response, db)
 @app.get('/api/auth/me')
 def me(auth = Depends(require)): return {'user':user_data(auth[0]), 'csrf_token':auth[1].csrf}
 @app.post('/api/auth/logout')

@@ -9,11 +9,13 @@ class Rules(BaseModel):
     max_quantity: int = Field(default=50,ge=1,le=50)
 
 def options(p):
+    from .visuals import visual_data
+    visual=visual_data(p)
     rules=json.loads(p.configuration or '{}')
     from .availability import combinations
     available=combinations(p)
     materials={m:f for m,f in (rules.get('materials') or {p.material:10000}).items() if available.get(m)}
-    return {'pricing_materials':rules.get('materials') or {p.material:10000},'materials':materials,'discounts':rules.get('discounts',{}),'max_quantity':rules.get('max_quantity',50),'colors':{c:h for m in materials for c,h in available[m].items()},'colors_by_material':{m:available[m] for m in materials},'model_url':p.model_url}
+    return {'pricing_materials':rules.get('materials') or {p.material:10000},'materials':materials,'discounts':rules.get('discounts',{}),'max_quantity':rules.get('max_quantity',50),'colors':{c:h for m in materials for c,h in available[m].items()},'colors_by_material':{m:available[m] for m in materials},'visual':visual,'model_url':visual.get('model','' if p.cad_path else p.model_url)}
 
 def quote(p, material, color, quantity):
     o=options(p);material=material or p.material

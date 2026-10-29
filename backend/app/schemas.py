@@ -13,8 +13,19 @@ class Register(BaseModel):
         return value
     display_name: str = Field(default="", max_length=100)
 class Login(BaseModel):
-    email: EmailStr
+    email: str = Field(max_length=254)
     password: str = Field(max_length=128)
+
+    @field_validator('email')
+    @classmethod
+    def validate_login_email(cls, value):
+        from . import config
+        from pydantic import TypeAdapter
+        if config.APP_ENV == 'development' and value.lower() in {
+            'admin@test.local', 'buyer@test.local', 'host@test.local', 'pending@test.local'
+        }:
+            return value.lower()
+        return str(TypeAdapter(EmailStr).validate_python(value))
 class ListingInput(BaseModel):
     featured: bool = False
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)

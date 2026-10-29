@@ -6,7 +6,15 @@ async function api(path, options={}) {
   if (options.body && !(options.body instanceof FormData)) headers['Content-Type']='application/json';
   if (csrf) headers['X-CSRF-Token']=csrf;
   const res=await fetch('/api'+path,{credentials:'same-origin',...options,headers});
-  if (!res.ok) { let data=await res.json().catch(()=>({})); throw new Error(typeof data.detail==='string'?data.detail:'Please check the form fields.'); }
+  if (!res.ok) {
+    const data=await res.json().catch(()=>({}));
+    let message=typeof data.detail==='string'?data.detail:'Please check the form fields.';
+    if (path==='/auth/login' && res.status===429) {
+      const seconds=Number(res.headers.get('Retry-After'));
+      message += seconds > 0 ? ` Try again in ${Math.ceil(seconds / 60)} minute${seconds > 60 ? 's' : ''}.` : ' Please try again later.';
+    }
+    throw new Error(message);
+  }
   return res.json();
 }
 function showError(e) { toast(e.message || 'Unable to contact the server'); }

@@ -136,3 +136,38 @@ def test_migration_preserves_legacy_equipment(tmp_path):
         row=db.execute('SELECT materials,material_colors,x FROM host_printers').fetchone()
         assert row==('["PLA"]','{}',200)
         assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='64a_material_colors'
+
+def test_material_color_availability_tracks_product_and_host(workflow):
+    clients,ids,pid,sessions=workflow
+    buyer=clients['buyer']
+    with sessions() as db:
+        # Use one approved host, with the requested explicit per-material colors.
+        other=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['other']))
+        other.status='suspended'
+        printer=db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id==ids['host']))
+        printer.materials=json.dumps(['PLA','PETG'])
+        printer.material_colors=json.dumps({'PLA':{'black':'#000000','white':'#ffffff','blue':'#0000ff'},'PETG':{'black':'#000000'}})
+        db.commit()
+    endpoint=f'/api/listings/{pid}/availability'
+    available=buyer.get(endpoint).json()
+    assert set(available['materials'])=={'PLA','PETG'}
+    assert set(available['colors_by_material']['PLA'])=={'black','white','blue'}
+    assert set(available['colors_by_material']['PETG'])=={'black'}
+    for material,color,expected in [('PLA','blue',1000),('PETG','black',1200)]:
+        q=buyer.post(f'/api/listings/{pid}/quote',json={'material':material,'color':color,'quantity':1})
+        assert q.status_code==200 and q.json()['unit_price_cents']==expected
+    assert buyer.post(f'/api/listings/{pid}/quote',json={'material':'PETG','color':'blue','quantity':1}).status_code==422
+    with sessions() as db:
+        printer=db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id==ids['host']))
+        printer.materials=json.dumps(['PETG']);db.commit()
+    assert set(buyer.get(endpoint).json()['materials'])=={'PETG'}
+    with sessions() as db:
+        db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['host'])).status='pending';db.commit()
+    assert buyer.get(endpoint).json()['materials']=={}
+    with sessions() as db:
+        db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['host'])).status='approved'
+        printer=db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id==ids['host']))
+        printer.materials=json.dumps(['PLA','PETG'])
+        db.get(models.Listing,pid).configuration=json.dumps({'materials':{'PETG':12000}});db.commit()
+    assert set(buyer.get(endpoint).json()['materials'])=={'PETG'}
+    assert buyer.post(f'/api/listings/{pid}/quote',json={'material':'PLA','color':'blue','quantity':1}).status_code==422

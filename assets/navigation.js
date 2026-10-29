@@ -191,11 +191,23 @@ document.addEventListener('input', e => {
 
 /* Light/dark switch: applies immediately, then persists to the account when signed in. */
 const effectiveTheme = () => document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
-const themeToggle = () => `<button type="button" class="switch" role="switch" aria-checked="${effectiveTheme() === 'dark'}" data-theme-toggle><span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span><span>Dark mode</span></button>`;
-async function toggleTheme() {
-  const previous = account?.theme, next = effectiveTheme() === 'dark' ? 'light' : 'dark';
-  applyTheme(next); document.querySelectorAll('[data-theme-toggle]').forEach(b => b.setAttribute('aria-checked', next === 'dark'));
-  if (!account) return;
-  try { account = await api('/preferences', {method:'PUT', body:JSON.stringify({theme:next})}); }
-  catch (e) { applyTheme(previous || 'system'); document.querySelectorAll('[data-theme-toggle]').forEach(b => b.setAttribute('aria-checked', effectiveTheme() === 'dark')); showError(e); }
+const themeToggle = () => `<button type="button" class="theme-toggle" role="switch" aria-label="Dark appearance" aria-checked="${effectiveTheme() === 'dark'}" data-theme-toggle><span class="theme-toggle-track" aria-hidden="true"><span class="theme-toggle-thumb"><svg class="theme-icon theme-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.7"/><path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg><svg class="theme-icon theme-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.1A8 8 0 0 1 9.9 4a8 8 0 1 0 10.1 10.1Z"/></svg></span></span><span class="theme-toggle-label" aria-hidden="true">${effectiveTheme() === 'dark' ? 'Dark' : 'Bright'}</span></button>`;
+function syncThemeToggle() {
+  const dark = effectiveTheme() === 'dark';
+  document.querySelectorAll('[data-theme-toggle]').forEach(button => {
+    button.setAttribute('aria-checked', String(dark));
+    button.querySelector('.theme-toggle-label').textContent = dark ? 'Dark' : 'Bright';
+  });
 }
+let themeSaving = false;
+async function toggleTheme() {
+  if (themeSaving) return;
+  const previous = account?.theme, next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+  applyTheme(next); syncThemeToggle();
+  if (!account) return;
+  themeSaving = true;
+  try { account = await api('/preferences', {method:'PUT', body:JSON.stringify({theme:next})}); }
+  catch (e) { applyTheme(previous || 'system'); syncThemeToggle(); showError(e); }
+  finally { themeSaving = false; }
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncThemeToggle);

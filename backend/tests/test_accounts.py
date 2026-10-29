@@ -177,7 +177,9 @@ def test_role_permissions():
     assert buyer.get('/api/admin/users').status_code==403
     assert admin.get('/api/admin/users').status_code==200
 
-def test_cad_and_product_lifecycle():
+def test_cad_and_product_lifecycle(monkeypatch):
+    generated=[]
+    monkeypatch.setattr("app.render_product.render_asset", lambda path: generated.append(path))
     import struct,io,zipfile
     from app.models import HostApplication,Category,Order,Listing
     from app.cad import inspect_mesh
@@ -271,3 +273,36 @@ def test_old_order_endpoint_requires_contact_details():
     client=signup('IncompleteBuyer')
     response=client.post('/api/orders',json={'idempotency_key':'invalid-contact-test','contact':'Arbitrary','address':'Text','items':[{'listing_id':1,'quantity':1,'expected_price_cents':100}]})
     assert response.status_code==422
+
+
+def test_login_failures_and_expiration(monkeypatch):
+    import app.main as main
+    clock = [10000.0]
+    monkeypatch.setattr(main, 'login_clock', lambda: clock[0])
+    signup('RateAlice'); signup('RateBob')
+    client = TestClient(app)
+    def login(name, password='Openlabs2026', ip='203.0.113.1'):
+        return client.post('/api/auth/login', headers={'x-real-ip': ip}, json={'email':name+'@example.org','password':password})
+    # Successful sessions never count as failures, even when switching users.
+    for _ in range(12):
+        response=login('RateAlice' if _ % 2 else 'RateBob')
+        assert response.status_code == 200
+        client.headers['X-CSRF-Token']=response.json()['csrf_token']
+        assert client.post('/api/auth/logout').status_code == 200
+    for _ in range(4): assert login('RateAlice','wrong').status_code == 401
+    assert login('RateAlice').status_code == 200  # clears only Alice's account failures
+    for _ in range(4): assert login('RateAlice','wrong',ip='203.0.113.2').status_code == 401
+    assert login('RateAlice','wrong',ip='203.0.113.2').status_code == 401
+    blocked=login('RateAlice',ip='203.0.113.2')
+    assert blocked.status_code == 429 and blocked.headers['retry-after']=='900'
+    assert login('RateBob',ip='203.0.113.2').status_code == 200
+    clock[0] += 899.1
+    assert login('RateAlice',ip='203.0.113.2').headers['retry-after']=='1'
+    clock[0] += .9
+    assert login('RateAlice',ip='203.0.113.2').status_code == 200
+    # Password spraying across accounts is stopped by the separate IP bucket.
+    for i in range(10): assert login('unknown'+str(i),'wrong',ip='203.0.113.3').status_code == 401
+    assert login('RateBob',ip='203.0.113.3').status_code == 429
+    assert login('RateBob',ip='203.0.113.4').status_code == 200
+    clock[0] += 900
+    assert login('RateBob',ip='203.0.113.3').status_code == 200
