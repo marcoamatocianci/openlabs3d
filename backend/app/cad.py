@@ -33,6 +33,23 @@ async def upload_cad(listing_id:int,background_tasks:BackgroundTasks,file:Upload
     printers=db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==p.owner_id)).all()
     fits=any(all(a<=b for a,b in zip(sorted(dimensions),sorted([q.x,q.y,q.z]))) for q in printers)
     return {'listing':listing_data(p),'dimensions_mm':dimensions,'warning':'Mesh parsed; printability is not verified.'+(' Dimensions exceed all registered printer volumes.' if printers and not fits else '')}
+@router.post('/cad/inspect')
+async def inspect_cad(file:UploadFile=File(...),auth=Depends(mutate)):
+    """Measure a model without storing it, so the editor can show dimensions before saving."""
+    if auth[0].role not in ('host','admin') or not auth[0].email_verified:fail(403,'Verified approved host access required')
+    data=await file.read(MAX_CAD+1)
+    if len(data)>MAX_CAD:fail(413,'Model must be no larger than 20 MB')
+    ext=PurePosixPath(file.filename or '').suffix.lower()
+    if ext not in ('.stl','.3mf'):fail(422,'Upload an STL or 3MF file')
+    try:dimensions=inspect_mesh(data,ext)
+    except (ValueError,UnicodeError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,struct.error):fail(422,'Invalid or unsupported STL/3MF mesh. Export a flattened, non-degenerate model.')
+    warnings=[]
+    if ext=='.stl':
+        # STL stores no units; OpenLabs3D always reads coordinates as millimetres.
+        if max(dimensions)<2:warnings.append('The model is under 2 mm. It may have been exported in metres or inches; re-export it in millimetres.')
+        if max(dimensions)>1000:warnings.append('The model is over 1 m. It may have been exported in micrometres or a smaller unit; re-export it in millimetres.')
+    return {'format':ext[1:].upper(),'dimensions_mm':dimensions,'units':'millimetres (STL has no unit; assumed)' if ext=='.stl' else 'millimetres (from 3MF unit)','warnings':warnings}
+
 @router.get('/listings/{listing_id}/cad')
 def download_cad(listing_id:int,auth=Depends(require),db:Session=Depends(get_db)):
     p=db.get(models.Listing,listing_id)

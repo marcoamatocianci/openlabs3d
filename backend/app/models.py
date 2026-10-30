@@ -225,6 +225,8 @@ class HostPrinter(Base):
     quantity: Mapped[int] = mapped_column(Integer)
     materials: Mapped[str] = mapped_column(Text)
     material_colors: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    # Administrator-approved material capabilities; materials/material_colors are host-managed stock.
+    capabilities: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
     __table_args__=(CheckConstraint("technology IN ('FDM','RESIN')"),CheckConstraint('quantity BETWEEN 1 AND 100'),CheckConstraint('x>0 AND y>0 AND z>0'))
 
 

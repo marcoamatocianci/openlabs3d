@@ -19,7 +19,7 @@ with SessionLocal() as db:
         if role=='host':
             db.add(models.HostApplication(user_id=user.id,status='approved'))
             colors={'PLA':{'black':'#000000','red':'#ff0000'},'PETG':{'black':'#000000'}} if name=='host' else {'PLA':{'blue':'#0000ff'},'PETG':{'white':'#ffffff'}}
-            db.add(models.HostPrinter(user_id=user.id,manufacturer='QA',model=name,technology='FDM',x=200,y=200,z=200,quantity=1,materials='["PLA","PETG"]',material_colors=json.dumps(colors)))
+            db.add(models.HostPrinter(user_id=user.id,manufacturer='QA',model=name,technology='FDM',x=200,y=200,z=200,quantity=1,materials='["PLA","PETG"]',capabilities='["PLA","PETG"]',material_colors=json.dumps(colors)))
         elif name=='buyer':buyer=user.id
     p=models.Listing(owner_id=buyer,title='Availability QA Rack',description='Isolated browser test product',category='Tube racks',material='PLA',dimensions='100 × 100 × 100 mm',cad_dimensions='[100,100,100]',configuration='{"materials":{"PLA":10000,"PETG":12000}}',price_cents=1000,status='approved')
     db.add(p);db.commit()

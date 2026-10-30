@@ -1,3 +1,4 @@
+import json
 import hashlib
 import io
 import math
@@ -84,7 +85,7 @@ def color_images(p):
 from .pricing import options, quote, Rules
 
 def listing_data(p):
-    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
+    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'cad_format':p.cad_path.rsplit('.',1)[-1].upper() if p.cad_path else '', 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
 def get_listing(db, listing_id):
     p = db.scalar(select(models.Listing).options(selectinload(models.Listing.images), selectinload(models.Listing.owner)).where(models.Listing.id==listing_id))
     if not p or p.removed: fail(404, 'Listing not found')
@@ -113,6 +114,11 @@ def session_limit(request, action):
     # Caddy overwrites X-Real-IP with the peer address; the backend is not public.
     throttle((action, request.headers.get('x-real-ip', request.client.host if request.client else 'unknown')), 10, 900)
 
+from fastapi.exceptions import RequestValidationError
+@app.exception_handler(RequestValidationError)
+def invalid_request(request, exc):
+    # Same 422 shape, without echoing inputs: non-finite numbers such as Infinity cannot be encoded as JSON.
+    return JSONResponse(status_code=422, content={'detail':[{k:v for k,v in e.items() if k in ('type','loc','msg')} for e in exc.errors()]})
 @app.exception_handler(StaleDataError)
 def stale_listing(request, exc): return JSONResponse(status_code=409, content={'detail':'Listing changed concurrently. Reload and try again.'})
 @app.exception_handler(OperationalError)
@@ -213,7 +219,8 @@ def create(body: schemas.ListingInput, auth = Depends(mutate), db: Session = Dep
     if body.listing_type == 'official' and auth[0].role != 'admin': fail(403,'Only administrators can create official listings')
     if body.featured and auth[0].role != 'admin': fail(403,'Administrator access required')
     if not auth[0].email_verified: fail(403, 'Verify your email before creating listings')
-    p=models.Listing(**body.model_dump(), owner_id=auth[0].id); db.add(p); db.commit(); db.refresh(p); return listing_data(p)
+    values=body.model_dump(); manual=values.pop('cad_dimensions')
+    p=models.Listing(**values, owner_id=auth[0].id, cad_dimensions=json.dumps(manual or [])); db.add(p); db.commit(); db.refresh(p); return listing_data(p)
 @app.patch('/api/listings/{listing_id}')
 def edit(listing_id: int, body: schemas.ListingPatch, auth = Depends(mutate), db: Session = Depends(get_db)):
     p=get_listing(db,listing_id); owned(p,auth)
@@ -222,6 +229,10 @@ def edit(listing_id: int, body: schemas.ListingPatch, auth = Depends(mutate), db
     if 'featured' in values and auth[0].role != 'admin': fail(403,'Administrator access required')
     if 'listing_type' in values and auth[0].role != 'admin': fail(403,'Only administrators can change listing type')
     if p.status == 'archived': fail(409,'Archived listings cannot be edited')
+    if 'cad_dimensions' in values:
+        # Uploaded geometry is authoritative; manual dimensions only stand in when no CAD file exists.
+        if p.cad_path: fail(409,'Dimensions are extracted from the uploaded CAD file')
+        values['cad_dimensions']=json.dumps(values['cad_dimensions'])
     if any(getattr(p,k)!=v for k,v in values.items()):
         changed(p,auth)
         if auth[0].role == 'admin' and p.owner_id == auth[0].id and p.listing_type == 'official': p.status='draft'; p.published_at=None
@@ -367,7 +378,8 @@ def pricing_rules(listing_id: int, body: Rules, auth=Depends(mutate), db: Sessio
     import json
     p=get_listing(db,listing_id)
     owned(p,auth)
-    allowed={'PLA','PLA+','PETG','ABS','ASA','TPU','PA / Nylon','PC','Standard Resin','Tough Resin','Flexible Resin','High-Temperature Resin',p.material}
+    # Product compatibility comes from the platform material catalogue, not the host's current stock.
+    allowed=set(db.scalars(select(models.Material.name)))|{p.material}
     if any(k not in allowed or not 100<=v<=100000 for k,v in body.materials.items()) or any(not 1<=k<=50 or not 0<=v<=9000 for k,v in body.discounts.items()): fail(422,'Invalid pricing rules')
     if auth[0].role != 'admin': changed(p,auth)
     p.configuration=json.dumps(body.model_dump());db.commit();return listing_data(p)

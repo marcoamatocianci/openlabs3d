@@ -26,6 +26,7 @@ def test_host_order_and_job_workflow():
     assert host.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(host_token)).status_code==403
     assert admin.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(admin_token)).json()['status']=='approved'
     assert admin.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(admin_token)).status_code==409
+    stock(host,host_token)
     assert host.get('/api/auth/me').json()['user']['role']=='host'
     listing=buyer.post('/api/listings',json={'title':'Orderable rack','description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
     upload_test_cad(buyer,listing['id'],buyer_token)
@@ -68,6 +69,7 @@ def test_two_hosts_cannot_accept_the_same_job():
     for client,token in ((first,first_token),(second,second_token)):
         host_id=structured_application(client,token).json()['id']
         assert admin.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(admin_token)).status_code==200
+        stock(client,token)
     product=buyer.post('/api/listings',json={'title':'Race rack','description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
     upload_test_cad(buyer,product['id'],buyer_token)
     assert buyer.post(f'/api/listings/{product["id"]}/submit',headers=headers(buyer_token)).status_code==200
@@ -210,7 +212,17 @@ def test_admin_can_delete_admin_account():
 
 def structured_application(client,token):
     from app.equipment import seed_equipment
-    with SessionLocal() as db: seed_equipment(db)
-    response=client.put('/api/host/equipment-application',json={'printers':[{'manufacturer':'Test','model':'Printer','technology':'FDM','x':200,'y':200,'z':200,'quantity':1,'materials':['PLA','PETG'],'material_colors':{'PLA':{'black':'#000000'},'PETG':{'black':'#000000'}}}],'submit':True},headers=headers(token))
+    from app.models import PrinterModel
+    with SessionLocal() as db:
+        seed_equipment(db);model_id=db.scalar(select(PrinterModel.id).where(PrinterModel.model=='P1S'))
+    response=client.put('/api/host/equipment-application',json={'printers':[{'model_id':model_id,'quantity':1}],'submit':True},headers=headers(token))
     assert response.status_code==200,response.text
     return client.get('/api/host/application')
+
+
+def stock(client,token):
+    """After approval the host stocks materials and colors directly, without a revision."""
+    printer=client.get('/api/host/equipment').json()[0]
+    assert {'PLA','PETG'}<=set(printer['capabilities'])
+    response=client.put(f"/api/host/printers/{printer['id']}/availability",json={'materials':['PLA','PETG'],'material_colors':{'PLA':{'black':'#000000'},'PETG':{'black':'#000000'}}},headers=headers(token))
+    assert response.status_code==200,response.text

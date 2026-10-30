@@ -23,6 +23,9 @@ import uuid
 
 def test_quotes_checkout_security_and_snapshot(collection):
     c=collection;p=c.get('/api/listings?featured=true').json()['items'][0];id=p['id']
+    from app.equipment import seed_equipment
+    import test_z_collection
+    with test_z_collection.SessionLocal() as db:seed_equipment(db)  # The running app seeds the material catalogue at startup.
     rules={'materials':{'PLA':10000,'PETG':12000,'ABS':13500},'discounts':{'10':1000},'max_quantity':30}
     assert c.put(f'/api/listings/{id}/pricing',json=rules).status_code==200
     public=TestClient(app)

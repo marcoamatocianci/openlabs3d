@@ -5,7 +5,7 @@ const routeRedirects = {dashboard:'catalogue', moderation:'admin/pending', 'admi
 const signedInRoutes = ['orders', 'basket', 'checkout', 'checkout-cart', 'host', 'admin', 'my-listings', 'my-printers', 'create-listing', 'edit-listing', 'onboarding'];
 const hostOnlyRoutes = ['host', 'my-listings', 'my-printers', 'create-listing', 'edit-listing'];
 const adminRedirects = ['custom', 'onboarding', 'orders', 'basket', 'checkout', 'checkout-cart', 'create-listing', 'my-listings', 'my-printers', 'host'];
-let workspaceRequest = 0, lastWorkspaceRoute = null, adminUsersCache = {};
+let workspaceRequest = 0, lastWorkspaceRoute = null, adminUsersCache = {}, adminHostsCache = {};
 
 function accessPage(title, text, actions) { return layout(`<div class="section-card access-card"><h1>${esc(title)}</h1><p>${esc(text)}</p><div class="actions">${actions}</div></div>`); }
 function signInPrompt(route) {
@@ -63,20 +63,31 @@ const updateWorkspaceAccount = updateAccount;
 updateAccount = function() { updateWorkspaceAccount(); renderNavbar(); refreshNavBadges(true); };
 
 /* Shared rows */
-function listingThumb(p) { const src = p.images?.[0]?.thumbnail_url || Object.values(p.color_images || {})[0]; return `<span class="row-thumb">${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : ''}</span>`; }
+// Same source as the marketplace card: the CAD render tinted to the first available finish, else photographs.
+function listingThumb(p) {
+  const o = p.configurator || {}, visual = o.visual;
+  if (visual?.status === 'ready') {
+    const material = Object.keys(o.colors_by_material || {})[0], hex = Object.values(o.colors_by_material?.[material] || {})[0] || '#b8c4ca';
+    return `<span class="row-thumb"><img src="${esc(visual.thumbnail)}" data-source="${esc(visual.thumbnail)}" data-color="${esc(hex)}" alt="" loading="lazy" decoding="async" onload="tintProductImage(this)"></span>`;
+  }
+  if (visual && visual.status !== 'none') return `<span class="row-thumb row-thumb-status" title="${visual.status === 'failed' ? 'Preview unavailable' : 'Preparing product preview…'}" role="img" aria-label="${visual.status === 'failed' ? 'Preview unavailable' : 'Preparing product preview'}">${visual.status === 'failed' ? '!' : '<span class="spinner" aria-hidden="true"></span>'}</span>`;
+  const src = p.images?.[0]?.thumbnail_url || Object.values(p.color_images || {})[0];
+  return `<span class="row-thumb">${src ? `<img src="${esc(src)}" alt="" loading="lazy">` : ''}</span>`;
+}
 function productRow(p, admin=true) {
   const menu = [p.status === 'approved' ? `<a class="menu-item" href="#product/api-${p.id}">View in marketplace</a>` : '',
     admin && p.status === 'approved' ? `<button type="button" class="menu-item" onclick="manageProduct(${p.id},'unpublish')">Unpublish</button>` : '',
     p.status !== 'archived' ? `<button type="button" class="menu-item" onclick="archiveListing(${p.id})">Archive</button>` : '',
     admin ? `<button type="button" class="menu-item danger-text" onclick="manageProduct(${p.id},'remove')">Remove from marketplace</button>` : ''].join('');
-  const review = admin && p.status === 'pending' ? `<button type="button" class="btn btn-sm" onclick="moderateListing(${p.id},'approve')">Approve</button><button type="button" class="btn-ghost btn-sm" onclick="moderateListing(${p.id},'reject')">Reject</button>` : '';
+  const review = (admin ? `<button type="button" class="btn-ghost btn-sm" onclick="productDetails(${p.id})">View details</button>` : '') + (admin && p.status === 'pending' ? `<button type="button" class="btn btn-sm" onclick="moderateListing(${p.id},'approve')">Approve</button><button type="button" class="btn-ghost btn-sm" onclick="moderateListing(${p.id},'reject')">Reject</button>` : '');
   const meta = [admin ? p.seller : '', p.category || 'No category', p.listing_type === 'official' ? 'Official' : 'Community'].filter(Boolean).join(' · ');
   return `<article class="list-row" data-search="${esc([p.title, p.seller, p.category, p.listing_type].join(' ').toLowerCase())}">${listingThumb(p)}<div class="row-main"><span class="row-title">${esc(p.title || 'Untitled draft')}</span><span class="row-meta">${esc(meta)}</span>${p.rejection_reason ? `<span class="row-note">Review note: ${esc(p.rejection_reason)}</span>` : ''}</div><span class="row-value">${money(p.price_cents / 100)}</span><span class="row-status">${statusBadge(p.status, statusLabel(p.status))}</span><div class="row-actions">${review}${p.status !== 'archived' ? `<a class="btn-ghost btn-sm" href="#edit-listing/${p.id}">Edit</a>` : ''}${menu ? rowMenu('product-menu-' + p.id, menu) : ''}</div></article>`;
 }
 function hostRow(h) {
-  const actions = h.status === 'pending' ? `<button type="button" class="btn btn-sm" onclick="adminAction('/admin/hosts/${h.id}/approve','Approve this printing host?',{})">Approve</button><button type="button" class="btn-ghost btn-sm" onclick="rejectHost(${h.id})">Reject</button>`
+  adminHostsCache[h.id] = h;
+  const actions = `<button type="button" class="btn-ghost btn-sm" onclick="hostDetails(${h.id})">View details</button>` + (h.status === 'pending' ? `<button type="button" class="btn btn-sm" onclick="adminAction('/admin/hosts/${h.id}/approve','Approve this printing host?',{})">Approve</button><button type="button" class="btn-ghost btn-sm" onclick="rejectHost(${h.id})">Reject</button>`
     : h.status === 'approved' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/suspend','Suspend this host? They stop receiving printing jobs.',{})">Suspend</button>`
-    : h.status === 'suspended' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/restore','Restore this host?',{})">Restore</button>` : '';
+    : h.status === 'suspended' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/restore','Restore this host?',{})">Restore</button>` : '');
   const details = [['Printers', h.printers], ['Technologies', h.technologies], ['Capabilities', h.capabilities], ['Workshop', h.additional], ['Contact', h.contact], ['Submitted', h.submitted_at && safeDate(h.submitted_at)], ['Review note', h.rejection_reason]].filter(([, v]) => v);
   return `<article class="list-row" data-search="${esc([h.name, h.user.display_name, h.user.email, h.region, h.materials].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml({...h.user, avatar:''}, 36)}</span><div class="row-main"><span class="row-title">${esc(h.name || h.user.display_name)}</span><span class="row-meta">${esc([h.user.email, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · '))}</span></div><span class="row-value">${esc(h.materials || '—')}${h.active_jobs != null ? `<small>${h.active_jobs} active · ${h.completed_jobs} completed</small>` : ''}</span><span class="row-status">${statusBadge(h.status)}</span><div class="row-actions">${actions}</div><details class="row-details"><summary>Details</summary><dl class="detail-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></details></article>`;
 }
@@ -217,11 +228,7 @@ const hostPages = {
     const items = (await api('/listings/mine')).filter(p => !p.removed);
     return {title:'My listings', action:`<a class="btn btn-sm" href="#create-listing">${icon('plus')}New listing</a>`, body:`<p class="muted ws-intro">An administrator reviews every listing before it is published. Changing a published listing sends it back for review.</p>` + (items.length ? `<div class="list">${items.map(p => productRow(p, false)).join('')}</div>` : `<div class="list">${emptyState('No listings yet', 'Create a listing with photographs and a 3D model, then submit it for review.', '<a class="btn btn-sm" href="#create-listing">Create listing</a>')}</div>`)};
   },
-  async 'my-printers'() {
-    const printers = await api('/host/equipment'), total = printers.reduce((n, p) => n + p.quantity, 0), materials = [...new Set(printers.flatMap(p => p.materials))];
-    const card = p => `<article class="section-card equipment-card"><header class="card-head"><div><h2>${esc(p.manufacturer + ' ' + p.model)}</h2><p class="muted">${p.technology === 'FDM' ? 'FDM / FFF' : 'Resin / vat photopolymerization'}</p></div>${p.verified ? statusBadge('approved', 'Verified specs') : statusBadge('pending', 'User-provided')}</header><dl class="detail-grid"><div><dt>Quantity</dt><dd>${p.quantity}</dd></div><div><dt>Build volume</dt><dd>${p.x} × ${p.y} × ${p.z} mm</dd></div></dl><div class="tag-list">${p.materials.map(m => `<span class="tag">${esc(m)}</span>`).join('') || '<span class="muted">No materials selected</span>'}</div></article>`;
-    return {title:'My equipment', action:'<a class="btn btn-sm" href="#my-printers/edit">Update equipment</a>', body:`<div class="banner info"><span>Equipment changes are reviewed by an administrator. Saving changes, even as a draft, pauses your host access until the update is approved.</span></div>${printers.length ? `<p class="muted ws-intro">${total} printer${total === 1 ? '' : 's'} · ${esc(materials.join(', ') || 'no materials')}</p><div class="equipment-grid">${printers.map(card).join('')}</div>` : `<div class="list">${emptyState('No equipment registered', 'Register your printers and the materials you can print.', '<a class="btn btn-sm" href="#my-printers/edit">Register equipment</a>')}</div>`}`};
-  },
+  'my-printers': equipmentOverview, 'my-printers/materials': equipmentOverview,
   async 'host/profile'() {
     const [h] = await Promise.all([api('/host/application'), ensureCountries()]);
     if (!h) return {title:'Host profile', body:`<div class="list">${emptyState('No host profile', 'Your printing host application could not be found.')}</div>`};
@@ -232,15 +239,58 @@ const hostPages = {
 
 /* Listing editor inside the workspace of the signed-in role. */
 listingPage = function(title, body) { return ['admin', 'host'].includes(account?.role) ? workspacePage(account.role, title, body) : layout(head(title, 'Your products') + body); };
-const workspaceListingEditor = listingEditor;
-listingEditor = function(p={}) {
-  let html = workspaceListingEditor(p);
-  if (account?.role === 'admin') html = html.replace(/<label>Listing type<select name="listing_type">.*?<\/select><\/label>/, `<input type="hidden" name="listing_type" value="${p.listing_type || 'official'}">`);
-  if (account?.role === 'admin' && p.listing_type === 'community') html = html.replace(/<button class="secondary" name="action" value="submit">.*?<\/button>/, '');
-  return html.replace('<label>Product photographs', `<label>CAD model (STL or 3MF, maximum 20 MB; required for host submission)<input id="listing-cad" type="file" accept=".stl,.3mf"></label>${p.has_cad ? `<p>Model uploaded · Dimensions: ${esc(p.cad_dimensions)} mm · Printability not verified.</p><button type="button" class="secondary" onclick="regenerateProductRender(${p.id},this)">Regenerate preview</button>` : ''}<label>Product photographs`);
-};
-const workspaceBindMarketplace = bindMarketplace;
-bindMarketplace = function() { workspaceBindMarketplace(); const form = $('#listing-form'); if (!form) return; api('/materials').then(items => { if (!form.isConnected) return; const input = form.elements.material; const current = input.value; const selected = editListing?.configurator?.materials || {[current]:10000}; const fieldset = document.createElement('fieldset'); fieldset.innerHTML = '<legend>Available materials (pricing adjustments configured separately)</legend>' + items.map(m => `<label class="material-choice"><span><input data-listing-material type="checkbox" value="${esc(m.name)}" ${Object.hasOwn(selected, m.name) ? 'checked' : ''}> ${esc(m.name)}</span></label>`).join(''); input.closest('label').after(fieldset); fieldset.onchange = () => { const checked = fieldset.querySelector('[data-listing-material]:checked'); if (checked) input.value = checked.value; }; }).catch(showError); };
-
 // All scripts are loaded: draw the final navigation and page once.
 render();
+
+
+/* Read-only review dialogs for Approvals: everything submitted, before Approve or Reject. */
+const reviewItem = (label, value) => `<div><dt>${esc(label)}</dt><dd>${value || '<span class="muted">—</span>'}</dd></div>`;
+const reviewSection = (title, body) => `<section class="review-section"><h3>${esc(title)}</h3>${body}</section>`;
+function openReview(title, subtitle, body, actions) {
+  const dialog = $('#modal'); dialog.className = 'review-dialog';
+  dialog.innerHTML = `<div class="review-frame"><header class="review-head"><div><p class="ws-crumb">${esc(subtitle)}</p><h2>${esc(title)}</h2></div><button type="button" class="icon-btn" data-close-modal aria-label="Close">${icon('close')}</button></header><div class="review-body">${body}</div><footer class="review-foot"><button type="button" class="btn-ghost btn-sm" data-close-modal>Close</button>${actions}</footer></div>`;
+  dialog.addEventListener('close', () => { dialog.querySelector('[data-cad-viewer]')?.disposeViewer?.(); dialog.className = ''; }, {once:true});
+  dialog.showModal();
+  return dialog;
+}
+async function productDetails(id) {
+  try {
+    const [listings, users] = await Promise.all([api('/admin/listings'), api('/admin/users')]);
+    const p = listings.find(x => x.id === id); if (!p) throw Error('Listing not found');
+    const owner = users.find(u => u.id === p.owner_id) || {}, o = p.configurator || {}, visual = o.visual || {};
+    let dims = []; try { dims = JSON.parse(p.cad_dimensions || '[]'); } catch (e) {}
+    const images = [...(visual.status === 'ready' ? [{url:visual.image, label:'Generated CAD render'}] : []), ...p.images.map((i, n) => ({url:i.url, label:`Photograph ${n + 1}`}))];
+    const gallery = images.length ? `<div class="review-gallery">${images.map(i => `<a href="${esc(i.url)}" target="_blank" rel="noopener"><img src="${esc(i.url)}" alt="${esc(i.label)}" loading="lazy"><span>${esc(i.label)}</span></a>`).join('')}</div>` : `<p class="muted">${visual.status && visual.status !== 'none' ? (visual.status === 'failed' ? 'Preview generation failed.' : 'Preview is still being generated.') : 'No images submitted.'}</p>`;
+    // Preview the generated GLB when ready; otherwise an STL can be shown directly. 3MF needs the render.
+    const previewUrl = visual.status === 'ready' ? visual.model : p.cad_format === 'STL' ? `/api/listings/${p.id}/cad#model.stl` : '';
+    const cad = p.has_cad ? `<dl class="detail-grid">${reviewItem('File', esc(p.cad_format + ' model'))}${reviewItem('Measured size (X × Y × Z)', dims.length === 3 ? esc(dims.map(v => +(+v).toFixed(1)).join(' × ') + ' mm') : '')}${reviewItem('Preview status', esc(statusText(visual.status || 'none')))}</dl><div class="actions review-cad-actions">${previewUrl ? '<button type="button" class="btn-ghost btn-sm" data-preview-cad>Preview 3D model</button>' : ''}<a class="btn-ghost btn-sm" href="/api/listings/${p.id}/cad" download>Download ${esc(p.cad_format)}</a></div><div class="review-viewer" data-cad-viewer hidden><p role="status">Loading 3D model…</p></div>` : '<p class="muted">No STL/3MF file uploaded.</p>';
+    const factors = o.pricing_materials || {}, base = p.price_cents / 100;
+    const pricing = `<table class="review-table"><thead><tr><th>Material</th><th>Unit price</th><th>Currently offered</th></tr></thead><tbody>${Object.entries(factors).map(([m, f]) => `<tr><td>${esc(m)}</td><td>${money(Math.round(p.price_cents * f / 10000) / 100)}</td><td>${o.materials?.[m] ? `Yes · ${Object.keys(o.colors_by_material?.[m] || {}).length} colors` : 'No eligible host'}</td></tr>`).join('')}</tbody></table><dl class="detail-grid">${reviewItem('Base price', money(base) + ' ' + esc(p.currency))}${reviewItem('Quantity discounts', esc(Object.entries(o.discounts || {}).map(([q, d]) => `${q}+ units: −${d / 100}%`).join(', ')))}${reviewItem('Maximum quantity', esc(o.max_quantity))}</dl>`;
+    const body = reviewSection('Product', `<dl class="detail-grid wide">${reviewItem('Name', esc(p.title))}${reviewItem('Category', esc(p.category))}${reviewItem('Type', esc(statusText(p.listing_type)))}${reviewItem('Stated dimensions', esc(p.dimensions))}${reviewItem('Compatibility', esc(p.compatibility))}</dl><p class="review-description">${esc(p.description) || '<span class="muted">No description.</span>'}</p>`)
+      + reviewSection('Images and previews', gallery) + reviewSection('CAD file', cad) + reviewSection('Materials and pricing', pricing)
+      + reviewSection('Submitted by', `<dl class="detail-grid">${reviewItem('Host', esc(owner.display_name || p.seller))}${reviewItem('Email', esc(owner.email))}${reviewItem('Phone', esc(owner.phone))}${reviewItem('Location', esc([owner.city, owner.country].filter(Boolean).join(', ')))}${reviewItem('Role', esc(owner.role ? roleLabel(owner.role) : ''))}</dl>`)
+      + reviewSection('Submission', `<dl class="detail-grid">${reviewItem('Status', statusBadge(p.status))}${reviewItem('Created', esc(safeDate(p.created_at)))}${reviewItem('Last updated', esc(safeDate(p.updated_at)))}${reviewItem('Review note', esc(p.rejection_reason))}</dl>`);
+    const actions = p.status === 'pending' ? `<button type="button" class="btn-ghost btn-sm" data-review="reject">Reject</button><button type="button" class="btn btn-sm" data-review="approve">Approve</button>` : '';
+    const dialog = openReview(p.title || 'Untitled listing', 'Product listing review', body, actions);
+    dialog.querySelectorAll('[data-review]').forEach(b => b.onclick = () => { dialog.close(); moderateListing(p.id, b.dataset.review); });
+    const previewButton = dialog.querySelector('[data-preview-cad]');
+    if (previewButton) previewButton.onclick = () => {
+      const host = dialog.querySelector('[data-cad-viewer]'); previewButton.disabled = true; host.hidden = false;
+      const material = Object.keys(o.pricing_materials || {})[0], hex = Object.values(o.colors_by_material?.[material] || {})[0] || '#b8c4ca';
+      import('./viewer.js?v=studio-3').then(m => m.mountViewer(host, previewUrl, hex, material)).catch(() => { if (host.isConnected) host.innerHTML = '<p role="alert">3D preview unavailable. Download the file to inspect it.</p>'; });
+    };
+  } catch (e) { showError(e); }
+}
+function hostDetails(id) {
+  const h = adminHostsCache[id]; if (!h) return;
+  const u = h.user || {}, printers = h.equipment || [];
+  const cards = printers.length ? `<div class="eq eq-grid">${printers.map((p, i) => printerCard(p, 'review-' + id + '-' + i, {badge:p.verified ? statusBadge('approved', 'Verified specs') : statusBadge('pending', 'User-provided specs')})).join('')}</div>` : '<p class="muted">No structured printers registered.</p>';
+  const table = printers.length ? `<table class="review-table"><thead><tr><th>Printer</th><th>Technology</th><th>Build volume</th><th>Units</th><th>Supported materials</th><th>Colors in stock</th></tr></thead><tbody>${printers.map(p => `<tr><td>${esc(p.manufacturer + ' ' + p.model)}</td><td>${esc(p.technology)}</td><td>${esc(`${p.x} × ${p.y} × ${p.z} mm`)}</td><td>${p.quantity}</td><td>${esc((p.capabilities || []).join(', ') || 'Not documented')}</td><td>${Object.entries(p.material_colors || {}).map(([m, c]) => `<div><strong>${esc(m)}</strong>: ${Object.keys(c).map(n => esc(colorName(n))).join(', ') || '—'}</div>`).join('') || '<span class="muted">None yet</span>'}</td></tr>`).join('')}</tbody></table>` : '';
+  const body = reviewSection('Applicant', `<dl class="detail-grid wide">${reviewItem('Name', esc(h.name || [u.first_name, u.last_name].filter(Boolean).join(' ')))}${reviewItem('Account', esc(u.display_name))}${reviewItem('Email', esc(u.email))}${reviewItem('Phone', esc(u.phone))}${reviewItem('Contact on application', esc(h.contact))}</dl>`)
+    + reviewSection('Facility', `<dl class="detail-grid wide">${reviewItem('Workshop / company', esc(h.additional))}${reviewItem('Service area', esc([h.region, countryLabel(h.country)].filter(Boolean).join(', ')))}${reviewItem('Technologies', esc(h.technologies))}${reviewItem('Production capabilities', esc(h.capabilities))}${reviewItem('Build dimensions', esc(h.dimensions))}</dl>`)
+    + reviewSection(`Registered printers (${printers.length})`, cards + table + (h.printers ? `<p class="muted">Summary: ${esc(h.printers)}</p>` : ''))
+    + reviewSection('Application', `<dl class="detail-grid">${reviewItem('Status', statusBadge(h.status))}${reviewItem('Submitted', esc(h.submitted_at ? safeDate(h.submitted_at) : ''))}${reviewItem('Last updated', esc(h.updated_at ? safeDate(h.updated_at) : ''))}${reviewItem('Review note', esc(h.rejection_reason))}</dl>`);
+  const actions = h.status === 'pending' ? `<button type="button" class="btn-ghost btn-sm" data-review="reject">Reject</button><button type="button" class="btn btn-sm" data-review="approve">Approve</button>` : '';
+  const dialog = openReview(h.name || u.display_name || 'Host application', 'Printing host application', body, actions);
+  dialog.querySelectorAll('[data-review]').forEach(b => b.onclick = () => { dialog.close(); if (b.dataset.review === 'approve') adminAction(`/admin/hosts/${h.id}/approve`, 'Approve this printing host?', {}); else rejectHost(h.id); });
+}

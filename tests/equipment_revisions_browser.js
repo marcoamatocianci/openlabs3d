@@ -4,48 +4,112 @@ async (page) => {
  const assert=(ok,message)=>{if(!ok)throw Error(message)};
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  const browser=page.context().browser();
- const hc=await browser.newContext(),ac=await browser.newContext();
+ const hc=await browser.newContext({viewport:{width:1280,height:900}}),ac=await browser.newContext();
  try{
   const login=async(context,email)=>{const r=await context.request.post(base+'/api/auth/login',{data:{email,password:'TestPassword2026'}});assert(r.ok(),await r.text());return (await r.json()).csrf_token};
   const csrf=await login(hc,'host@example.org');await login(ac,'admin@example.org');
   const h=await hc.newPage(),a=await ac.newPage();
   h.on('pageerror',e=>errors.push(e.message));a.on('pageerror',e=>errors.push(e.message));
-  const approved=await (await hc.request.get(base+'/api/host/equipment')).json();
-  await h.goto(base+'/#my-printers/edit');await h.getByRole('heading',{name:'Approved Equipment',exact:true}).waitFor();
-  assert((await (await hc.request.get(base+'/api/auth/me')).json()).user.role==='host','Opening editor preserves host');
+  const json=async(context,path)=>(await context.request.get(base+path)).json();
+  const approved=await json(hc,'/api/host/equipment');
+  const listing=(await json(hc,'/api/listings')).items?.[0]?.id;
+  const colors=async()=>listing?Object.keys((await json(hc,`/api/listings/${listing}/availability`)).colors||{}):[];
+  const marketplace=await colors();
+  const isHost=async()=>(await json(hc,'/api/auth/me')).user.role==='host';
+
+  // Overview: read-only approved cards, wizard hidden, specifications on hover/focus.
+  await h.goto(base+'/#my-printers');await h.getByRole('heading',{name:'Approved equipment',exact:true}).waitFor();
+  assert(await h.locator('#equipment-form').count()===0,'Wizard hidden by default');
+  assert(await h.locator('.eq-card').count()===approved.length,'Approved printer cards');
+  assert(await h.locator('.eq-card').getByRole('button',{name:'Edit'}).count()===0,'Approved cards are read-only');
+  assert(await h.getByText('Equipment draft').count()===0,'No empty draft section');
+  await h.locator('.eq-art-btn').first().hover();await h.locator('.eq-pop').first().waitFor({state:'visible'});
+  await h.mouse.move(0,0);await h.locator('.eq-art-btn').first().focus();await h.keyboard.press('Tab');await h.keyboard.press('Shift+Tab');
+  await h.locator('.eq-pop').first().waitFor({state:'visible'});await h.keyboard.press('Escape');
+
+  // Modify Equipment: edit a printer in the drawer, then configure materials and colors.
+  await h.getByRole('button',{name:'Modify equipment'}).click();await h.locator('.eq-stepper').waitFor();
+  assert(await isHost(),'Opening the editor preserves the host role');
   await h.locator('#next-step').click();
-  await h.locator('[data-field=model]').fill('Revised printer');
-  const save=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
-  await h.getByRole('button',{name:'Save Draft',exact:true}).click();assert((await save).ok(),'Draft saved');
-  assert((await (await ac.request.get(base+'/api/admin/equipment-revisions')).json()).length===0,'Draft creates no admin request');
-  assert(JSON.stringify(await(await hc.request.get(base+'/api/host/equipment')).json())===JSON.stringify(approved),'Approved equipment unchanged');
-  await h.reload();await h.locator('#next-step').click();assert(await h.locator('[data-field=model]').inputValue()==='Revised printer','Draft survives reload');
-  await h.locator('[data-field=model]').fill('Latest unsaved printer');
+  await h.locator('[data-edit-printer="0"]').click();await h.locator('[data-d=quantity]').fill('2');await h.locator('[data-d-save]').click();
+  assert((await h.locator('[data-card="draft-0"]').innerText()).includes('× 2'),'Printer edited');
+  await h.locator('#next-step').click();
+  assert(await h.locator('.eq-caps-review input,.eq-caps-review [data-add-color]').count()===0,'Step 3 is read-only');
+  assert((await h.locator('.eq-caps-review').innerText()).includes('✓ PLA'),'Step 3 shows approved capabilities');
+  await h.locator('[data-step="1"]').click();
+  assert((await h.locator('[data-card="draft-0"]').innerText()).includes('× 2'),'Edits persist between steps');
+
+  // Save Draft: private, no approval request, approved equipment unchanged.
+  await h.getByRole('button',{name:'Save draft',exact:true}).click();await h.locator('.eq-draft').waitFor();
+  assert((await json(ac,'/api/admin/equipment-revisions')).length===0,'Draft creates no admin request');
+  assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Approved equipment unchanged');
+  assert(await h.getByRole('button',{name:'Modify equipment'}).isDisabled(),'Modify disabled while a draft exists');
+  await h.getByText('An equipment draft already exists').waitFor();
+  assert(JSON.stringify(await colors())===JSON.stringify(marketplace),'Marketplace availability ignores drafts');
+
+  // Continue Editing restores the draft; Delete Draft removes only the draft.
+  await h.getByRole('link',{name:'Continue editing'}).click();await h.locator('#next-step').click();
+  assert((await h.locator('[data-card="draft-0"]').innerText()).includes('× 2'),'Draft restored');
+  await h.locator('[data-leave]').click();await h.locator('.eq-draft').waitFor();
+  await h.getByRole('button',{name:'Delete draft'}).click();await h.locator('dialog [data-confirm]').click();
+  await h.waitForFunction(()=>!document.querySelector('.eq-draft')&&document.querySelector('[data-modify]')?.disabled===false);
+  assert(await h.locator('.eq-draft').count()===0,'Draft card removed');
+  assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Delete preserves approved equipment');
+
+  // Save, reopen, change again and submit: the latest unsaved edit is submitted.
+  await h.getByRole('button',{name:'Modify equipment'}).click();await h.locator('#next-step').click();
+  await h.locator('[data-edit-printer="0"]').click();await h.locator('[data-d=quantity]').fill('2');await h.locator('[data-d-save]').click();
+  await h.getByRole('button',{name:'Save draft',exact:true}).click();await h.getByRole('link',{name:'Continue editing'}).click();
+  await h.locator('#next-step').click();await h.locator('[data-edit-printer="0"]').click();await h.locator('[data-d=quantity]').fill('3');await h.locator('[data-d-save]').click();
   for(let i=0;i<3;i++)await h.locator('#next-step').click();
   const submitted=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
-  await h.getByRole('button',{name:'Submit for Approval',exact:true}).click();assert((await submitted).ok(),'Submitted');
-  await h.waitForFunction(()=>document.querySelector('[value=submit]')?.disabled);
-  assert((await(await hc.request.get(base+'/api/auth/me')).json()).user.role==='host','Submission preserves host');
+  await h.getByRole('button',{name:'Submit for approval',exact:true}).click();assert((await submitted).ok(),'Submitted');
+  await h.locator('.eq-draft.is-pending').waitFor();
+  assert(await h.getByRole('button',{name:'Modify equipment'}).isDisabled(),'Modify disabled while pending');
+  assert(await isHost(),'Submission preserves host');
+  assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Approved equipment unchanged while pending');
+
+  // Administrator rejects, host resubmits, administrator approves.
   await a.goto(base+'/#admin/pending');await a.getByRole('heading',{name:'Before / Currently approved'}).waitFor();
   assert(await a.getByRole('heading',{name:'After / Proposed equipment'}).count()===1,'Before/After visible');
   a.on('dialog',d=>d.accept(d.type()==='prompt'?'Verify printer calibration':undefined));
   const rejected=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/reject'));
   await a.getByRole('button',{name:'Reject equipment update'}).click();assert((await rejected).ok(),'Rejected');
   await h.reload();await h.getByText(/Verify printer calibration/).waitFor();
-  assert(JSON.stringify(await(await hc.request.get(base+'/api/host/equipment')).json())===JSON.stringify(approved),'Rejection preserves approved equipment');
+  assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Rejection preserves approved equipment');
+  await h.getByRole('link',{name:'Revise and resubmit'}).click();
   for(let i=0;i<4;i++)await h.locator('#next-step').click();
   const resubmitted=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
-  await h.getByRole('button',{name:'Submit for Approval',exact:true}).click();assert((await resubmitted).ok(),'Resubmitted');
+  await h.getByRole('button',{name:'Submit for approval',exact:true}).click();assert((await resubmitted).ok(),'Resubmitted');
   await a.reload();await a.getByRole('button',{name:'Approve equipment update'}).waitFor();
   const accepted=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/approve'));
   await a.getByRole('button',{name:'Approve equipment update'}).click();assert((await accepted).ok(),'Approved');
-  assert((await(await hc.request.get(base+'/api/host/equipment')).json())[0].model==='Latest unsaved printer','Approved revision activated');
+  assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');
+
+  // Materials & Colors: host-managed stock, live without approval, bounded by capabilities.
+  await h.goto(base+'/#my-printers/materials');await h.locator('#eq-stock .eq-acc').waitFor();
+  assert(await h.locator('#stock-0 [data-toggle-material="PLA+"]').isDisabled(),'Unsupported material cannot be selected');
+  await h.locator('[data-open-material="0|PLA"]').click();
+  await h.locator('[data-add-color="0|PLA"]').click();await h.locator('[data-pick="orange"]').click();await h.locator('[data-color-confirm]').click();
+  await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
+  assert((await colors()).includes('orange'),'Added color is live for buyers');
+  assert((await json(ac,'/api/admin/equipment-revisions')).length===0,'Stock needs no approval');
+  await h.locator('[data-add-color="0|PLA"]').click();await h.locator('[data-custom-mode]').click();
+  await h.locator('[data-custom-name]').fill('Lab Teal');await h.locator('[data-custom-hex]').fill('#127a8a');await h.locator('[data-color-confirm]').click();
+  await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
+  await h.reload();await h.locator('[data-open-material="0|PLA"]').click();
+  assert(/Orange[\s\S]*Lab teal|Lab teal[\s\S]*Orange/.test(await h.locator('#stock-0').innerText()),'Stock persists after refresh');
+  await h.locator('[data-remove-color="orange"]').click();await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
+  assert(!(await colors()).includes('orange'),'Removed color leaves the marketplace');
+  await h.locator('.eq-tab',{hasText:'Printers'}).click();await h.locator('[data-card="approved-0"]').waitFor();
+  assert((await h.locator('[data-card="approved-0"] .eq-card-materials').innerText()).includes('PLA'),'Printer card reflects stock');
+
   await hc.request.post(base+'/api/auth/logout',{headers:{'X-CSRF-Token':csrf}});
   await login(hc,'host@example.org');
-  await h.goto(base+'/#my-printers/edit');await h.getByRole('heading',{name:'Approved Equipment',exact:true}).waitFor();
-  assert((await(await hc.request.get(base+'/api/auth/me')).json()).user.role==='host','Host permission survives login');
+  await h.goto(base+'/#my-printers');await h.getByRole('heading',{name:'Approved equipment',exact:true}).waitFor();
+  assert(await isHost(),'Host permission survives login');
   await h.setViewportSize({width:390,height:844});assert(!await h.evaluate(()=>document.documentElement.scrollWidth>innerWidth),'No mobile overflow');
   assert(!errors.length,errors.join('\n'));
-  return {passed:true,checks:['approved view','private draft','reload persistence','pending lock','before/after','rejection','resubmission','approval','logout/login','mobile','no browser errors']};
+  return {passed:true,checks:['read-only approved cards','spec popover hover/focus','hidden wizard','printer drawer','read-only step 3','step persistence','private draft','draft card','modify lock','continue editing','delete draft','submit latest edits','pending lock','before/after','rejection','resubmission','approval','marketplace availability','stock tab','capability bounds','stock persistence','logout/login','mobile','no browser errors']};
  }finally{await hc.close();await ac.close()}
 }

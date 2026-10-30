@@ -16,7 +16,7 @@ def setup():
         user=models.User(email='host@example.org',password_hash='x',display_name='Host',role='host')
         db.add(user);db.flush()
         host=models.HostApplication(user_id=user.id,status='approved')
-        printer=models.HostPrinter(user_id=user.id,manufacturer='Custom',model='Printer',technology='FDM',x=200,y=200,z=200,quantity=1,materials='["PLA","PETG"]',material_colors='{"PLA":{"red":"#ff0000"},"PETG":{"blue":"#0000ff"}}')
+        printer=models.HostPrinter(user_id=user.id,manufacturer='Custom',model='Printer',technology='FDM',x=200,y=200,z=200,quantity=1,materials='["PLA","PETG"]',capabilities='["PLA","PETG"]',material_colors='{"PLA":{"red":"#ff0000"},"PETG":{"blue":"#0000ff"}}')
         product=models.Listing(owner_id=user.id,title='Rack',status='approved',material='PLA',configuration='{"materials":{"PLA":10000,"PETG":12000}}',cad_dimensions='[100,100,100]',price_cents=1000)
         db.add_all([host,printer,product]);db.commit()
         yield db,user,host,printer,product
@@ -50,7 +50,7 @@ def test_invalid_dimensions_fail_closed(setup,dimensions):
 def test_no_cross_printer_combination(setup):
     db,user,host,printer,p=setup
     printer.material_colors='{"PLA":{"red":"#ff0000"}}'
-    small=models.HostPrinter(user_id=user.id,manufacturer='Custom',model='Small',technology='FDM',x=50,y=200,z=200,quantity=1,materials='["PETG"]',material_colors='{"PETG":{"blue":"#0000ff"}}')
+    small=models.HostPrinter(user_id=user.id,manufacturer='Custom',model='Small',technology='FDM',x=50,y=200,z=200,quantity=1,materials='["PETG"]',capabilities='["PETG"]',material_colors='{"PETG":{"blue":"#0000ff"}}')
     db.add(small);db.flush()
     assert not supports(p,'PETG','blue',user.id)
     small.x=200;db.flush()

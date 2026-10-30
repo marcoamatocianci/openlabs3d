@@ -1,4 +1,5 @@
 from typing import Literal
+from typing import Annotated
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 class Register(BaseModel):
@@ -26,6 +27,8 @@ class Login(BaseModel):
         }:
             return value.lower()
         return str(TypeAdapter(EmailStr).validate_python(value))
+# Manual X × Y × Z in millimetres, used only when no CAD file supplies the bounding box.
+Dimension = Annotated[float, Field(gt=0, le=5000, allow_inf_nan=False)]
 class ListingInput(BaseModel):
     featured: bool = False
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
@@ -37,6 +40,7 @@ class ListingInput(BaseModel):
     dimensions: str = Field(default='', max_length=200)
     compatibility: str = Field(default='', max_length=300)
     listing_type: Literal['official','community'] = 'community'
+    cad_dimensions: list[Dimension] | None = Field(default=None, min_length=3, max_length=3)
 class ListingPatch(BaseModel):
     featured: bool | None = None
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
@@ -48,6 +52,7 @@ class ListingPatch(BaseModel):
     dimensions: str | None = Field(default=None, max_length=200)
     compatibility: str | None = Field(default=None, max_length=300)
     listing_type: Literal['official','community'] | None = None
+    cad_dimensions: list[Dimension] | None = Field(default=None, min_length=3, max_length=3)
 class Reorder(BaseModel):
     image_ids: list[int] = Field(max_length=5)
 class Reject(BaseModel):

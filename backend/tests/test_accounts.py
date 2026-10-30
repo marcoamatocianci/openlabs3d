@@ -148,7 +148,8 @@ def test_equipment():
     rate.clear();client=signup('EquipmentLab')
     with SessionLocal() as db:
         seed_equipment(db);seed_equipment(db)
-        assert len(db.scalars(select(PrinterModel)).all())==7
+        from app.equipment import CATALOGUE
+        assert len(db.scalars(select(PrinterModel)).all())==len(CATALOGUE)
         user=db.scalar(select(User).where(User.username=='EquipmentLab'));user.email_verified=True
         for k,v in {'first_name':'Host','last_name':'Lab','phone':'+39 011 1234567','country':'IT','city':'Torino'}.items():setattr(user,k,v)
         db.commit()

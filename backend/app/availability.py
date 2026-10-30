@@ -23,7 +23,8 @@ def compatible_printers(product, host_id=None):
 def combinations(product, host_id=None):
     result = {}
     for printer in compatible_printers(product, host_id):
-        materials = json.loads(printer.materials)
+        # Stocked by the host and within the printer's administrator-approved capabilities.
+        materials = set(json.loads(printer.materials)) & set(json.loads(printer.capabilities or '[]'))
         for material, colors in json.loads(printer.material_colors or '{}').items():
             if material in materials:
                 result.setdefault(material, {}).update(colors)

@@ -141,7 +141,10 @@ def hosts(status: str='', auth=Depends(admin), db: Session=Depends(get_db)):
     totals = {(host_id, job_status):count for host_id, job_status, count in db.execute(select(models.PrintingJob.host_id, models.PrintingJob.status, func.count()).where(models.PrintingJob.host_id.is_not(None)).group_by(models.PrintingJob.host_id, models.PrintingJob.status))}
     result=[]
     for host in db.scalars(query).all():
-        result.append({**host_data(host), 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
+        # Read-only: the applicant's registered printers, so administrators can review them before deciding.
+        from .equipment import printer_data
+        printers=[printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==host.user_id).order_by(models.HostPrinter.id))]
+        result.append({**host_data(host), 'equipment':printers, 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
     return result
 
 @router.post('/admin/hosts/{host_id}/{decision}')
