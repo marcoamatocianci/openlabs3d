@@ -5,7 +5,7 @@ import numpy as np
 import trimesh
 results=[]
 for directory in sorted(Path(__file__).parent.iterdir()):
-    if not directory.is_dir():continue
+    if not directory.is_dir() or not (directory/(directory.name+'.stl')).is_file():continue
     meshes=[trimesh.load(directory/(directory.name+ext),force='mesh') for ext in ('.stl','.3mf')]
     for mesh in meshes:
         assert mesh.is_watertight and mesh.is_winding_consistent and mesh.is_volume

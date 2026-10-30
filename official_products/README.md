@@ -1,5 +1,7 @@
 # Official rack manufacturing assets
 
+**Revision 3:** Current files are the open-frame Bridge collection with the softened premium finish. See [BRIDGE.md](BRIDGE.md) and [finish details](redesign/finish-v3.md) for geometry, validation, manufacturing limitations, and rollback instructions. The description below documents the archived revision 1 block designs, retained in `previous/block_v1/`.
+
 Each product folder contains real CadQuery STL/3MF exports and editable source/model.py. Units are millimeters; print upright, flat base on the bed. Vertical blind wells have a 3 mm floor and outer corners have a 2 mm radius. PLA or PETG, initially 0.2 mm layers, 3–4 perimeters and 15–20% infill; confirm settings with your printer. Supports should not be needed. These are substantial closed-body racks rather than the existing illustrative open-deck renders.
 
 | Model | Envelope X × Y × Z (mm) | Arrangement | Bore diameter | Pitch X/Y |

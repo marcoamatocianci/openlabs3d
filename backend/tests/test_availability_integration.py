@@ -92,7 +92,7 @@ def test_equipment_persistence_and_unknown_colors(workflow):
     printer={'manufacturer':'Custom','model':'Registered','technology':'FDM','x':200,'y':200,'z':200,'quantity':1,'materials':['PLA'],'material_colors':{'PLA':{'cream':'#e7d9bc'}}}
     r=host.put('/api/host/equipment-application',json={'printers':[printer],'submit':False})
     assert r.status_code==200,r.text
-    assert host.get('/api/host/equipment').json()[0]['material_colors']==printer['material_colors']
+    assert host.get('/api/host/equipment-revision').json()['proposal']['printers'][0]['material_colors']==printer['material_colors']
     assert clients['buyer'].get('/api/host/equipment').json()==[]
     assert 'cream' not in clients['buyer'].get(f'/api/listings/{pid}/availability').json()['colors'] # Draft is ineligible.
     bad={**printer,'material_colors':{'PETG':{'cream':'#e7d9bc'}}}
@@ -100,7 +100,7 @@ def test_equipment_persistence_and_unknown_colors(workflow):
     unknown={**printer,'material_colors':{}}
     assert host.put('/api/host/equipment-application',json={'printers':[unknown],'submit':True}).status_code==422
     assert host.put('/api/host/equipment-application',json={'printers':[unknown]}).status_code==200
-    assert host.get('/api/host/equipment').json()[0]['materials']==['PLA']
+    assert host.get('/api/host/equipment-revision').json()['proposal']['printers'][0]['materials']==['PLA']
 
 def test_checkout_serializes_concurrent_suspension(workflow,monkeypatch):
     clients,ids,pid,sessions=workflow
@@ -135,7 +135,7 @@ def test_migration_preserves_legacy_equipment(tmp_path):
     with sqlite3.connect(path) as db:
         row=db.execute('SELECT materials,material_colors,x FROM host_printers').fetchone()
         assert row==('["PLA"]','{}',200)
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='64a_material_colors'
+        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='65a_equipment_revisions'
 
 def test_material_color_availability_tracks_product_and_host(workflow):
     clients,ids,pid,sessions=workflow

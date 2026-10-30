@@ -1,0 +1,20 @@
+[
+  {
+    "product": "microtube_rack_24",
+    "layer_height_mm": 0.2,
+    "layers": 160,
+    "floating_components": 0
+  },
+  {
+    "product": "centrifuge_rack_15ml_12",
+    "layer_height_mm": 0.2,
+    "layers": 260,
+    "floating_components": 0
+  },
+  {
+    "product": "centrifuge_rack_50ml_6",
+    "layer_height_mm": 0.2,
+    "layers": 310,
+    "floating_components": 0
+  }
+]

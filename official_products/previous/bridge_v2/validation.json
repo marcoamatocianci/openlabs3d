@@ -1,0 +1,41 @@
+[
+  {
+    "product": "centrifuge_rack_15ml_12",
+    "dimensions_mm": [
+      110.0,
+      85.0,
+      52.0
+    ],
+    "volume_mm3": 139789.85967175275,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true
+  },
+  {
+    "product": "centrifuge_rack_50ml_6",
+    "dimensions_mm": [
+      124.0,
+      86.0,
+      62.0
+    ],
+    "volume_mm3": 148334.78444579718,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true
+  },
+  {
+    "product": "microtube_rack_24",
+    "dimensions_mm": [
+      118.0,
+      82.0,
+      32.0
+    ],
+    "volume_mm3": 127992.50472442871,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true
+  }
+]

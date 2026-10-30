@@ -1,0 +1,89 @@
+[
+  {
+    "product": "microtube_rack_24",
+    "dimensions_mm": [
+      118.0,
+      82.0,
+      32.0
+    ],
+    "bounds_mm": [
+      [
+        -59.0,
+        -41.0,
+        -1.5543122344752192e-15
+      ],
+      [
+        59.0,
+        41.0,
+        32.0
+      ]
+    ],
+    "volume_mm3": 127744.33907115587,
+    "brep_volume_mm3": 127736.67238760226,
+    "reduction_percent": 45.277383537890735,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true,
+    "clearance_check": true,
+    "triangles": 84300
+  },
+  {
+    "product": "centrifuge_rack_15ml_12",
+    "dimensions_mm": [
+      110.0,
+      85.0,
+      52.0
+    ],
+    "bounds_mm": [
+      [
+        -55.0,
+        -42.5,
+        -1.5543122344752192e-15
+      ],
+      [
+        55.0,
+        42.5,
+        52.0
+      ]
+    ],
+    "volume_mm3": 138904.5988596259,
+    "brep_volume_mm3": 138898.24357544034,
+    "reduction_percent": 60.60698046300337,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true,
+    "clearance_check": true,
+    "triangles": 42940
+  },
+  {
+    "product": "centrifuge_rack_50ml_6",
+    "dimensions_mm": [
+      124.0,
+      86.0,
+      62.0
+    ],
+    "bounds_mm": [
+      [
+        -62.0,
+        -43.0,
+        -1.5543122344752192e-15
+      ],
+      [
+        62.0,
+        43.0,
+        62.0
+      ]
+    ],
+    "volume_mm3": 146984.27023421592,
+    "brep_volume_mm3": 146972.53960303942,
+    "reduction_percent": 64.22266113629226,
+    "watertight": true,
+    "consistent_winding": true,
+    "single_solid": true,
+    "equivalent_exports": true,
+    "clearance_check": true,
+    "triangles": 26564
+  }
+]

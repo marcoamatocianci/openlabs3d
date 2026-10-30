@@ -483,3 +483,10 @@ button:disabled{cursor:not-allowed;opacity:.55}
 .model-viewer{background:var(--media)}.model-viewer>img{position:absolute;inset:0}.model-viewer canvas{position:relative}
 @media(max-width:700px){.product-card .card-body{padding:16px}.product-card .card-actions{padding:0 16px 16px}.product-card h3{font-size:17px}.product-card .price{font-size:19px}.product-card .card-bottom{flex-wrap:wrap}.config-layout{gap:20px}.config-panel .swatches{gap:4px}.model-viewer{min-height:240px}}
 @media(prefers-reduced-motion:reduce){.product-card,.product-card .listing-card-image,.config-panel .swatches span{transition:none}.product-card:hover,.product-card:hover .listing-card-image{transform:none}}
+
+/* Compact homepage hero: the model sits directly beside the headline. */
+.hero{grid-template-columns:minmax(0,1.25fr) minmax(0,.75fr);align-items:center;gap:28px;min-height:0;padding-top:38px;padding-bottom:28px}
+.hero .hero-art{background:transparent!important;background-image:none!important;border:0;border-radius:0;box-shadow:none;aspect-ratio:auto;height:300px;min-height:0;padding:0;overflow:visible}
+.hero .hero-art img{max-height:300px;object-fit:contain;transform:scale(1.35);transform-origin:center}
+@media(max-width:1050px) and (min-width:701px){.hero{gap:18px}.hero .hero-art{height:260px}.hero .hero-art img{max-height:260px}}
+@media(max-width:700px){.hero{grid-template-columns:1fr;gap:8px;padding-top:26px;padding-bottom:18px}.hero .hero-art{height:200px}.hero .hero-art img{max-height:200px;transform:none}}

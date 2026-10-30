@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, DateTime, ForeignKey, CheckConstraint, Text, Float, Index, Boolean, UniqueConstraint
+from sqlalchemy import String, Integer, DateTime, ForeignKey, CheckConstraint, Text, Float, Index, Boolean, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from .database import Base
 
@@ -113,6 +113,7 @@ class Order(Base):
     __table_args__ = (UniqueConstraint('buyer_id', 'idempotency_key'), CheckConstraint("status IN ('pending','accepted','printing','ready','completed','cancelled')"), CheckConstraint('total_cents >= 0'))
 
 class OrderItem(Base):
+    manufacturing_dimensions: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
     color: Mapped[str] = mapped_column(String(40), default='', server_default='')
     __tablename__ = 'order_items'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -180,7 +181,7 @@ class UserAddress(Base):
     street: Mapped[str] = mapped_column(String(200))
     additional: Mapped[str] = mapped_column(String(200), default='')
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    __table_args__ = (Index('uq_default_address', 'user_id', unique=True, sqlite_where=__import__('sqlalchemy').text('is_default = 1')),)
+    __table_args__ = (Index('uq_default_address', 'user_id', unique=True, sqlite_where=text('is_default = 1')),)
 
 class CartItem(Base):
     __tablename__='cart_items'
@@ -225,3 +226,19 @@ class HostPrinter(Base):
     materials: Mapped[str] = mapped_column(Text)
     material_colors: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
     __table_args__=(CheckConstraint("technology IN ('FDM','RESIN')"),CheckConstraint('quantity BETWEEN 1 AND 100'),CheckConstraint('x>0 AND y>0 AND z>0'))
+
+
+class EquipmentRevision(Base):
+    __tablename__ = 'equipment_revisions'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), index=True)
+    status: Mapped[str] = mapped_column(String(20), default='draft', index=True)
+    proposal: Mapped[str] = mapped_column(Text)
+    before: Mapped[str] = mapped_column(Text)
+    rejection_reason: Mapped[str] = mapped_column(String(1000), default='')
+    reviewed_by: Mapped[int | None] = mapped_column(ForeignKey('users.id'), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    __table_args__ = (CheckConstraint("status IN ('draft','pending','approved','rejected')"),
+        Index('uq_equipment_open_revision', 'user_id', unique=True, sqlite_where=text("status IN ('draft','pending')")))

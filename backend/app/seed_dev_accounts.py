@@ -16,10 +16,10 @@ from .main import hasher
 from . import models
 
 ACCOUNTS = [
-    ('admin@test.local', 'admin_test', 'AdminTest2026!', 'admin'),
-    ('buyer@test.local', 'buyer_test', 'BuyerTest2026!', 'buyer'),
-    ('host@test.local', 'host_test', 'HostTest2026!', 'host'),
-    ('pending@test.local', 'pending_test', 'PendingTest2026!', 'buyer'),
+    ('admin@example.org', 'admin_test', 'AdminTest2026!', 'admin'),
+    ('buyer@example.org', 'buyer_test', 'BuyerTest2026!', 'buyer'),
+    ('host@example.org', 'host_test', 'HostTest2026!', 'host'),
+    ('pending@example.org', 'pending_test', 'PendingTest2026!', 'buyer'),
 ]
 
 def reset():
@@ -44,8 +44,8 @@ def reset():
         db.flush()
         for user,(email,username,_,_) in zip(users,ACCOUNTS):
             user.email=email;user.username=username
-        db.add_all([models.HostApplication(user_id=host.id,status='approved',name='host_test',contact='host@test.local'),
-                    models.HostApplication(user_id=pending.id,status='pending',name='pending_test',contact='pending@test.local',submitted_at=models.now())])
+        db.add_all([models.HostApplication(user_id=host.id,status='approved',name='host_test',contact='host@example.org'),
+                    models.HostApplication(user_id=pending.id,status='pending',name='pending_test',contact='pending@example.org',submitted_at=models.now())])
         db.flush()
         violations=db.execute(text('PRAGMA foreign_key_check')).fetchall()
         if violations: raise RuntimeError(f'Foreign key violations: {violations}')

@@ -47,17 +47,12 @@ async (page) => {
     const save=editor.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
     await editor.getByRole('button',{name:'Save Draft',exact:true}).click();assert((await save).status()===200,'Host equipment saved');
     const equipment=await(await hostContext.request.get(base+'/api/host/equipment')).json();
-    assert(equipment[0].material_colors.PETG.green==='#00ff00'&&!equipment[0].material_colors.PETG.white,'Per-material color changes persist');
-    await page.waitForFunction(()=>!document.querySelector('.swatches input[value=white]'),{},{timeout:22000});
-    assert(await page.locator('input[name=color]:checked').inputValue()==='black','Stale selection replaced');
-    cart=await(await page.request.get(base+'/api/cart')).json();assert(!cart[0].available,'Stale cart configuration unavailable');
-    const first=await(await hostContext.request.post(base+'/api/auth/login',{data:{email:'host@example.org',password:'TestPassword2026'}})).json();
-    const printers=await(await hostContext.request.get(base+'/api/host/equipment')).json();
-    assert((await hostContext.request.put(base+'/api/host/equipment-application',{headers:{'X-CSRF-Token':first.csrf_token},data:{submit:false,printers:printers.map(({id,verified,...p})=>p)}})).status()===200,'Last eligible host updates capabilities');
-    await page.waitForFunction(()=>document.querySelector('.material-grid')?.children.length===0,{},{timeout:22000});
-    assert(await page.locator('#config-add').isDisabled()&&await page.locator('#buy-now').isDisabled(),'Unavailable products cannot be purchased');
-    assert(await page.locator('.swatches input').count()===0,'Unavailable selections cleared');
+    assert(equipment[0].material_colors.PETG.white==='#ffffff'&&!equipment[0].material_colors.PETG.green,'Approved equipment remains unchanged');
+    const revision=await(await hostContext.request.get(base+'/api/host/equipment-revision')).json();
+    assert(revision.status==='draft'&&revision.proposal.printers[0].material_colors.PETG.green==='#00ff00','Draft colors persist separately');
+    assert((await(await hostContext.request.get(base+'/api/auth/me')).json()).user.role==='host','Draft preserves host role');
+    assert((await(await page.request.get(base+'/api/cart')).json())[0].available,'Draft preserves marketplace availability');
   }finally{await hostContext.close()}
   assert(errors.length===0,errors.join('\n'));
-  return {passed:true,checks:['material/color filtering','dynamic price','persistent cart','direct checkout','compatible assignment','host color editing','live invalidation','empty state','mobile layout','no page errors']};
+  return {passed:true,checks:['material/color filtering','dynamic price','persistent cart','direct checkout','compatible assignment','host color editing','draft isolation','approved availability','mobile layout','no page errors']};
 }

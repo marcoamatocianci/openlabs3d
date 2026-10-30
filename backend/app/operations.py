@@ -68,6 +68,8 @@ def delete_account(user, actor, db):
         fail(409, 'This account has listings, orders or printing jobs and cannot be deleted while those records exist. Contact the site administrator.')
     # Preserve the activity history without retaining a foreign key to the deleted user.
     db.execute(update(models.Activity).where(models.Activity.actor_id == user_id).values(actor_id=None))
+    db.execute(update(models.EquipmentRevision).where(models.EquipmentRevision.reviewed_by == user_id).values(reviewed_by=None))
+    db.execute(delete(models.EquipmentRevision).where(models.EquipmentRevision.user_id == user_id))
     db.execute(update(models.HostApplication).where(models.HostApplication.reviewed_by == user_id).values(reviewed_by=None))
     db.execute(delete(models.HostApplication).where(models.HostApplication.user_id == user_id))
     db.execute(delete(models.LoginSession).where(models.LoginSession.user_id == user_id))
@@ -183,7 +185,7 @@ def persist_order(body,auth,db,commit=True):
         db.add(order); db.flush()
         for line,q in zip(body.items,quotes):
             p=products[line.listing_id]
-            item=models.OrderItem(color=line.color,order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
+            item=models.OrderItem(color=line.color,order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,manufacturing_dimensions=p.cad_dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
             db.add(item); db.flush()
             db.add(models.PrintingJob(order_id=order.id,item_id=item.id))
         log(db, auth[0].id, 'order.created', f'order:{order.id}')
@@ -325,6 +327,6 @@ def activity(auth=Depends(admin), db: Session=Depends(get_db)):
 @router.get('/admin/overview')
 def overview(auth=Depends(admin), db: Session=Depends(get_db)):
     def count(model,*where): return db.scalar(select(func.count()).select_from(model).where(*where))
-    return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'),
+    return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'), 'pending_equipment':count(models.EquipmentRevision,models.EquipmentRevision.status=='pending'),
             'products':count(models.Listing), **{f'products_{s}':count(models.Listing,models.Listing.status==s) for s in ('approved','pending','draft','rejected')},
             'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available')}

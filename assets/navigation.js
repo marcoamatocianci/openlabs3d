@@ -85,7 +85,7 @@ async function refreshNavBadges(force=false) {
   if (!force && Date.now() - navCountsAt < 15000) return;
   navCountsAt = Date.now(); const owner = account.id;
   try {
-    if (account.role === 'admin') { const o = await api('/admin/overview'); if (account?.id === owner) setNavCount('approvals', o.pending_hosts + o.products_pending); }
+    if (account.role === 'admin') { const o = await api('/admin/overview'); if (account?.id === owner) setNavCount('approvals', o.pending_hosts + o.products_pending + (o.pending_equipment || 0)); }
     else { const jobs = await api('/host/jobs'); if (account?.id === owner) setNavCount('jobs', jobs.filter(j => j.status === 'available').length); }
     renderNavbar();
   } catch (e) { console.warn('Navigation counts unavailable', e); }

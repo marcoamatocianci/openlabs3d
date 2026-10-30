@@ -10,7 +10,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
 from . import models
 from .database import get_db
-from .main import require,mutate,admin_mutate,fail
+from .main import require,mutate,admin_mutate,fail,admin
 router=APIRouter(prefix='/api')
 CATALOGUE=[
  ('Bambu Lab','P1S','FDM',256,256,256,'https://cdn1.bambulab.com/documentation/quick-start-2024-01-17/Quick-Start-P1S_en.pdf',['PLA','PETG','TPU','ABS','ASA','PA / Nylon','PC'],'PA/PC are rated capable, not ideal; stock nozzle is not recommended for fiber composites.'),
@@ -65,12 +65,15 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
     if user.role=='admin':fail(403,'Administrators cannot apply as hosts')
     host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==user.id))
     if host and host.status not in ('draft','rejected','approved'):fail(409,'Application is under review or suspended')
+    approved = bool(host and host.status=='approved')
+    revision = db.scalar(select(models.EquipmentRevision).where(models.EquipmentRevision.user_id==user.id, models.EquipmentRevision.status.in_(['draft','pending']))) if approved else None
+    if revision and revision.status=='pending':fail(409,'Equipment update is already awaiting review')
     if body.submit:
         from .operations import settings
-        if not settings(db)['host_applications_open']:fail(409,'Host applications are closed')
+        if not approved and not settings(db)['host_applications_open']:fail(409,'Host applications are closed')
         if not user.email_verified:fail(403,'Verify your email before applying')
         if any(not getattr(user,k) for k in ('first_name','last_name','phone','country','city')):fail(422,'Your contact information is incomplete. Complete Account Information.')
-        if not body.printers:fail(422,'Register at least one printer')
+        if not approved and not body.printers:fail(422,'Register at least one printer')
     equipment=[]
     for item in body.printers:
         data=item.model_dump();model=db.get(models.PrinterModel,item.model_id) if item.model_id else None
@@ -78,7 +81,7 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
         if model:
             for key in ('manufacturer','model','technology','x','y','z'):data[key]=getattr(model,key)
             if any(data[k] is None for k in ('x','y','z')):fail(422,'Build volume unknown; use a custom printer entry')
-        elif not item.manufacturer or not item.model:fail(422,'Enter manufacturer and model')
+        elif body.submit and (not item.manufacturer or not item.model):fail(422,'Enter manufacturer and model')
         valid=set(db.scalars(select(models.Material.name).where(models.Material.technology==data['technology'])))
         if not set(item.materials)<=valid:fail(422,'Selected materials do not match printer technology')
         if body.submit and not item.materials:fail(422,'Select supported materials for every printer')
@@ -88,6 +91,18 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
         if body.submit and any(not item.material_colors.get(m) for m in item.materials):fail(422,'Configure available colors for each material before submitting')
         data['material_colors']=json.dumps(item.material_colors)
         data['materials']=json.dumps(sorted(set(item.materials)));equipment.append(models.HostPrinter(user_id=user.id,**data))
+    if approved:
+        proposal={'company':body.company,'weekly_hours':body.weekly_hours,'printers':[equipment_payload(p) for p in equipment]}
+        if not revision:
+            revision=models.EquipmentRevision(user_id=user.id,before=json.dumps(approved_payload(db,user.id)),proposal='{}')
+            db.add(revision)
+        revision.proposal=json.dumps(proposal)
+        revision.status='pending' if body.submit else 'draft'
+        revision.rejection_reason=''
+        from .operations import log
+        if body.submit:log(db,user.id,'equipment.submitted',f'user:{user.id}')
+        db.commit()
+        return revision_data(revision,db)
     db.execute(delete(models.HostPrinter).where(models.HostPrinter.user_id==user.id));db.add_all(equipment)
     if not host:host=models.HostApplication(user_id=user.id);db.add(host)
     # Legacy summaries retained for existing moderation and job matching, derived from structured records.
@@ -96,8 +111,8 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
     host.technologies=', '.join(sorted({p.technology for p in equipment}));host.materials=', '.join(sorted({m for p in equipment for m in json.loads(p.materials)}))
     host.dimensions='See registered equipment';host.capabilities=f'{sum(p.quantity for p in equipment)} printers; weekly availability: {body.weekly_hours or "not specified"} hours'
     host.additional=body.company
-    # Equipment changes require renewed review before expanding job eligibility.
-    host.status='pending' if body.submit else 'draft';user.role='buyer';host.rejection_reason=''
+    # First-time applicants retain the existing account application workflow.
+    host.status='pending' if body.submit else 'draft';host.rejection_reason=''
     if body.submit:host.submitted_at=datetime.now(timezone.utc)
     db.commit()
     return {'status':host.status,'printers':[printer_data(p) for p in equipment],'total':sum(p.quantity for p in equipment)}
@@ -111,7 +126,96 @@ def approve_suggestion(printer_id:int,auth=Depends(admin_mutate),db:Session=Depe
         db.add(existing);db.flush()
     p.model_id=existing.id;db.commit();return printer_data(existing)
 
-from .main import admin
 @router.get('/admin/printer-suggestions')
 def suggestions(auth=Depends(admin),db:Session=Depends(get_db)):
     return [printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.model_id.is_(None)))]
+
+
+def equipment_payload(p):
+    return {**{k:getattr(p,k) for k in ('model_id','manufacturer','model','technology','x','y','z','quantity')},
+            'materials':sorted(set(json.loads(p.materials))),'material_colors':json.loads(p.material_colors or '{}')}
+
+def approved_payload(db,user_id):
+    host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==user_id))
+    return {'company':host.additional if host else '', 'weekly_hours':int(re.search(r'weekly availability: (\d+)',host.capabilities)[1]) if host and re.search(r'weekly availability: (\d+)',host.capabilities) else None,
+            'printers':[equipment_payload(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==user_id).order_by(models.HostPrinter.id))]}
+
+def revision_data(r,db):
+    user=db.get(models.User,r.user_id)
+    return {'id':r.id,'user_id':r.user_id,'host':user.display_name,'email':user.email,'status':r.status,
+            'before':json.loads(r.before),'proposal':json.loads(r.proposal),'rejection_reason':r.rejection_reason}
+
+@router.get('/host/equipment-revision')
+def my_revision(auth=Depends(require),db:Session=Depends(get_db)):
+    r=db.scalar(select(models.EquipmentRevision).where(models.EquipmentRevision.user_id==auth[0].id).order_by(models.EquipmentRevision.id.desc()))
+    return revision_data(r,db) if r else None
+
+@router.delete('/host/equipment-revision')
+def discard_revision(auth=Depends(mutate),db:Session=Depends(get_db)):
+    r=db.scalar(select(models.EquipmentRevision).where(models.EquipmentRevision.user_id==auth[0].id,models.EquipmentRevision.status.in_(['draft','pending'])))
+    if r and r.status=='pending':fail(409,'A pending request cannot be discarded')
+    host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==auth[0].id))
+    if not host or host.status!='approved':fail(403,'Approved host account required')
+    current=json.dumps(approved_payload(db,auth[0].id))
+    if not r:
+        r=models.EquipmentRevision(user_id=auth[0].id,status='draft',proposal=current,before=current)
+        db.add(r)
+    else:r.proposal=current;r.before=current
+    db.commit()
+    return revision_data(r,db)
+
+@router.get('/admin/equipment-revisions')
+def revision_queue(auth=Depends(admin),db:Session=Depends(get_db)):
+    return [revision_data(r,db) for r in db.scalars(select(models.EquipmentRevision).where(models.EquipmentRevision.status=='pending').order_by(models.EquipmentRevision.created_at))]
+
+from . import schemas
+@router.post('/admin/equipment-revisions/{revision_id}/{decision}')
+def decide_revision(revision_id:int,decision:str,body:schemas.Reject,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
+    if decision not in ('approve','reject'):fail(404,'Unknown action')
+    r=db.scalar(select(models.EquipmentRevision).where(models.EquipmentRevision.id==revision_id).with_for_update())
+    if not r:fail(404,'Equipment revision not found')
+    if r.user_id==auth[0].id:fail(403,'You cannot review your own equipment')
+    if r.status!='pending':fail(409,'Revision has already been reviewed')
+    if decision=='reject' and not body.reason.strip():fail(422,'Enter a rejection reason')
+    host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==r.user_id))
+    if decision=='approve':
+        if not host or host.status!='approved':fail(409,'Host account must be approved before activating equipment')
+        if approved_payload(db,r.user_id)!=json.loads(r.before):fail(409,'Approved equipment changed; reject this revision so the host can submit a fresh proposal')
+        proposal=json.loads(r.proposal)
+        # Accepted work keeps its assignment and immutable order-item requirements.
+        # Require a single proposed printer capable of each active job before removal.
+        import math
+        removes_capabilities=any(p not in proposal['printers'] for p in json.loads(r.before)['printers'])
+        for job in db.scalars(select(models.PrintingJob).where(models.PrintingJob.host_id==r.user_id,models.PrintingJob.status.in_(['accepted','printing','ready']))):
+            if not removes_capabilities:continue
+            try:
+                dimensions=json.loads(job.item.manufacturing_dimensions)
+                if not dimensions:
+                    dimension=r'(\d+(?:\.\d+)?)\s*(?:mm)?'
+                    match=re.fullmatch(r'\s*'+dimension+r'\s*[x×*]\s*'+dimension+r'\s*[x×*]\s*'+dimension+r'\s*',job.item.dimensions,re.IGNORECASE)
+                    dimensions=[float(v) for v in match.groups()] if match else []
+            except (ValueError,TypeError):dimensions=[]
+            if not isinstance(dimensions,list) or len(dimensions)!=3 or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0 for v in dimensions):
+                fail(409,f'Complete active job {job.id} before changing equipment: its build dimensions cannot be verified')
+            if not any(job.item.material in p['materials'] and job.item.color in p['material_colors'].get(job.item.material,{}) and all(a<=b for a,b in zip(sorted(dimensions),sorted([p['x'],p['y'],p['z']]))) for p in proposal['printers']):
+                fail(409,f'Equipment is required by active job {job.id}; complete or explicitly reassign that job first')
+        # Reuse identical records so unrelated certified equipment retains its identity.
+        existing=list(db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==r.user_id)))
+        for data in proposal['printers']:
+            match=next((p for p in existing if equipment_payload(p)==data),None)
+            if match:existing.remove(match)
+            else:
+                values={**data,'materials':json.dumps(data['materials']),'material_colors':json.dumps(data['material_colors'])}
+                db.add(models.HostPrinter(user_id=r.user_id,**values))
+        for p in existing:db.delete(p)
+        host.additional=proposal['company']
+        host.printers=', '.join(f"{p['manufacturer']} {p['model']} × {p['quantity']}" for p in proposal['printers'])
+        host.materials=', '.join(sorted({m for p in proposal['printers'] for m in p['materials']}))
+        host.technologies=', '.join(sorted({p['technology'] for p in proposal['printers']}))
+        host.capabilities=f"{sum(p['quantity'] for p in proposal['printers'])} printers; weekly availability: {proposal['weekly_hours'] or 'not specified'} hours"
+    r.status='approved' if decision=='approve' else 'rejected'
+    r.rejection_reason=body.reason.strip();r.reviewed_by=auth[0].id;r.reviewed_at=datetime.now(timezone.utc)
+    from .operations import log
+    log(db,auth[0].id,f'equipment.{decision}',f'user:{r.user_id}',body.reason.strip())
+    db.commit()
+    return revision_data(r,db)
