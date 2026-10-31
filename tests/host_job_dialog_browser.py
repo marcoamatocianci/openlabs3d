@@ -66,9 +66,9 @@ with sync_playwright() as pw:
     open_step(p, first, 'Accept job'); p.mouse.click(8, 450)
     ok(p.locator(DIALOG + '[open]').count() == 0, 'clicking outside closes it')
 
-    # Each step through to completion.
+    # Each step up to shipped.
     for label, title, after, toast in (('Accept job', 'Accept this printing job?', 'accepted', 'Job accepted'), ('Start printing', 'Start printing?', 'printing', 'Printing started'),
-                                       ('Mark ready', 'Mark as ready for delivery?', 'ready', 'Marked ready for delivery'), ('Mark completed', 'Mark this job completed?', 'completed', 'Job completed')):
+                                       ('Mark ready', 'Mark as ready for delivery?', 'ready', 'Marked ready for delivery')):
         if label != 'Accept job': p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{first}"]')
         open_step(p, first, label)
         ok(d.get_by_role('heading', name=title).is_visible(), f'{label}: dialog titled "{title}"')
@@ -78,6 +78,42 @@ with sync_playwright() as pw:
         ok(status(first) == after, f'{label}: job is now {after}, confirmed with "{toast}"')
     p.wait_for_timeout(400)
     ok(p.evaluate("document.activeElement.classList.contains('chip') || !!document.activeElement.dataset.job"), 'focus lands back in the job list after the refresh')
+    ok(p.locator(f'[data-job="{first}"]', has_text='Mark completed').count() == 0, 'hosts cannot complete a job')
+
+    # Shipping: same dialog and bullets, plus the shipment form.
+    p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{first}"]')
+    open_step(p, first, 'Mark shipped')
+    ok(d.get_by_role('heading', name='Mark as shipped?').is_visible() and d.locator('.ad-notes li').count() == 3, 'Mark shipped opens the job dialog with its notes')
+    ok(d.locator('.ad-flow [aria-current=step]').inner_text().strip() == 'Shipped', 'progress shows Shipped between Ready and Completed')
+    ok([t.strip().split('\n')[0] for t in d.locator('.ad-flow li').all_inner_texts()] == ['Accepted', 'Printing', 'Ready', 'Shipped', 'Completed'] and 'Awaiting buyer confirmation' in d.locator('.ad-flow li').last.inner_text(), 'Completed waits for the buyer')
+    ok(p.evaluate("document.activeElement.name") == 'carrier', 'focus starts in the shipment form')
+    p.screenshot(path=str(OUT / 'shipped-1366-light.png'))
+    d.get_by_role('button', name='Mark shipped').click()
+    ok(p.locator(DIALOG + '[open]').count() == 1 and 'carrier and tracking number' in p.locator('.ad-error').inner_text() and status(first) == 'ready', 'shipment details are required')
+    d.locator('[name=carrier]').fill('DHL Express'); d.locator('[name=tracking_number]').fill('JD0146000032')
+    d.locator('[name=tracking_url]').fill('ftp://example.org')
+    d.get_by_role('button', name='Mark shipped').click()
+    ok('http:// or https://' in p.locator('.ad-error').inner_text() and status(first) == 'ready', 'tracking links must be web addresses')
+    d.locator('[name=tracking_url]').fill('https://www.dhl.com/track?id=JD0146000032'); d.locator('[name=note]').fill('Left with reception')
+    d.locator('[name=tracking_number]').press('Enter')
+    p.wait_for_selector(DIALOG + ':not([open])', state='attached'); p.get_by_text('Marked as shipped', exact=True).wait_for()
+    ok(status(first) == 'shipped', 'Enter in the form marks the job shipped')
+    p.goto(BASE + '/#host/jobs/in-progress'); p.wait_for_selector('.list-row')
+    shipped_row = p.locator('.list-row', has_text='awaiting buyer confirmation')
+    ok(shipped_row.count() == 1, 'a shipped job is listed under In progress, awaiting buyer confirmation')
+    shipped_row.locator('summary').click()
+    ok('DHL Express' in shipped_row.inner_text() and shipped_row.locator('a[href^="https://www.dhl.com"]').count() == 1, 'the shipment appears with the job')
+
+    # Colours: one per category; accepted, printing, ready and shipped share one.
+    third_job = order(buyer, micro); host.request.post(f'{BASE}/api/host/jobs/{third_job}/accept', headers={'X-CSRF-Token': host.csrf})
+    p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{third_job}"]')
+    rows = p.evaluate("""() => [...document.querySelectorAll('#job-list .list-row, .list .list-row')].map(r => { const b = r.querySelector('.job-status'); return [b.className.match(/job-(available|active|completed|cancelled)/)[1], getComputedStyle(b).backgroundColor]; })""")
+    order_seen = [c for c, _ in rows]
+    rank = {'available': 0, 'active': 1, 'completed': 2, 'cancelled': 3}
+    ok(order_seen == sorted(order_seen, key=rank.get) and {'available', 'active'} <= set(order_seen), 'All lists available, then in progress, then completed: ' + ','.join(order_seen))
+    colours = {}
+    for c, bg in rows: colours.setdefault(c, set()).add(bg)
+    ok(all(len(v) == 1 for v in colours.values()) and len({next(iter(v)) for v in colours.values()}) == len(colours), 'one colour per category, shared within it')
 
     # Errors stay in the dialog, in the site's style.
     p.goto(BASE + '/#host/jobs/available'); p.wait_for_selector(f'[data-job="{second}"]')

@@ -196,8 +196,14 @@ async function manageProduct(id, action) { if (!confirm(action === 'remove' ? 'R
 async function approvePrinterSuggestion(id) { if (!confirm('Add this printer to the catalogue as user-provided and unverified?')) return; try { await accountAction('/admin/printer-suggestions/' + id + '/approve', {}); toast('Printer added to the catalogue'); render(); } catch (e) { showError(e); } }
 
 /* Printing host workspace */
-const nextJobStep = {accepted:['printing', 'Start printing'], printing:['ready', 'Mark ready'], ready:['completed', 'Mark completed']};
-const jobOrder = ['accepted', 'printing', 'ready', 'available', 'completed', 'cancelled'];
+const nextJobStep = {accepted:['printing', 'Start printing'], printing:['ready', 'Mark ready'], ready:['shipped', 'Mark shipped']};
+// "All" lists the categories left to right as the filter chips do: available, accepted, in progress, completed.
+const jobOrder = ['available', 'accepted', 'printing', 'ready', 'shipped', 'completed', 'cancelled'];
+// One colour per category: available, everything the host is working on, completed (tokens in style.css).
+const JOB_CATEGORY = {available:'available', accepted:'active', printing:'active', ready:'active', shipped:'active', completed:'completed', cancelled:'cancelled'};
+const JOB_LABELS = {available:'Available', accepted:'Accepted', printing:'Printing', ready:'Ready', shipped:'Shipped · awaiting buyer confirmation', completed:'Completed', cancelled:'Cancelled'};
+const jobBadge = status => `<span class="status job-status job-${JOB_CATEGORY[status] || 'cancelled'}">${esc(JOB_LABELS[status] || statusText(status))}</span>`;
+const shipmentDetails = s => s ? `<div><dt>Shipment</dt><dd>${esc(s.carrier)} · ${s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number)}${s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ''}<br><span class="muted">Shipped ${esc(safeDate(s.shipped_at))}</span></dd></div>` : '';
 // The model sold with this order line (never the listing's newer uploads). The server re-checks the
 // assignment on every download, so the link stops working once the job is completed or reassigned.
 const jobModel = j => ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="btn-ghost btn-sm" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
@@ -205,7 +211,7 @@ const jobModelNote = j => j.item.cad_status === 'unverified' ? '<span class="row
 function jobRow(j) {
   const i = j.item, step = j.host_id === account.id && nextJobStep[j.status];
   const action = (j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModel(j) : '') + (j.status === 'available' ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'accept')">Accept job</button>` : step ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : '');
-  return `<article class="list-row" data-search="${esc([i.title, i.material, colorName(i.color), 'order ' + j.order_id].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta">${esc([i.material, colorName(i.color), i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span>${j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModelNote(j) : ''}</div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${statusBadge(j.status)}</span><div class="row-actions">${action}</div>${j.fulfillment ? `<details class="row-details"><summary>Buyer contact and delivery</summary><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div></dl></details>` : ''}</article>`;
+  return `<article class="list-row" data-search="${esc([i.title, i.material, colorName(i.color), 'order ' + j.order_id].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta">${esc([i.material, colorName(i.color), i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span>${j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModelNote(j) : ''}</div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${jobBadge(j.status)}</span><div class="row-actions">${action}</div>${j.fulfillment ? `<details class="row-details"><summary>Buyer contact and delivery</summary><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div>${shipmentDetails(j.shipment)}</dl></details>` : ''}</article>`;
 }
 /* Job steps are confirmed in a site-styled dialog (not the browser's confirm box) that shows which
    job changes and what the step means for the buyer. */
@@ -214,16 +220,24 @@ const rememberJobs = jobs => { hostJobs = Object.fromEntries(jobs.map(j => [j.id
 const JOB_STEPS = {
   accept:{title:'Accept this printing job?', confirm:'Accept job', busy:'Accepting…', done:'Job accepted', notes:['You commit to printing this item in the material and colour shown.', 'The buyer’s contact and delivery details become visible to you.', 'Agree payment and delivery directly with the buyer before printing.']},
   printing:{title:'Start printing?', confirm:'Start printing', busy:'Updating…', done:'Printing started', notes:['The buyer sees that production has started.', 'Use the model from this job: it is the exact version the buyer ordered.']},
-  ready:{title:'Mark as ready for delivery?', confirm:'Mark ready', busy:'Updating…', done:'Marked ready for delivery', notes:['The buyer is told the item is ready.', 'Hand it over or ship it as agreed with the buyer.']},
-  completed:{title:'Mark this job completed?', confirm:'Mark completed', busy:'Updating…', done:'Job completed', notes:['Confirm the buyer has received the item.', 'The job closes and its model download is no longer available.']}
+  ready:{title:'Mark as ready for delivery?', confirm:'Mark ready', busy:'Updating…', done:'Marked ready for delivery', notes:['The buyer is told the item is ready.', 'Pack it, then mark it shipped with the tracking details.']},
+  shipped:{title:'Mark as shipped?', confirm:'Mark shipped', busy:'Updating…', done:'Marked as shipped', notes:['The buyer sees the carrier and tracking details below.', 'The job completes when the buyer confirms they received it.', 'The model download is no longer available.'], form:true}
 };
-const JOB_FLOW = [['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['completed', 'Completed']];
+// Shipped sits under "In progress"; the last step completes only when the buyer confirms receipt.
+const JOB_FLOW = [['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['shipped', 'Shipped'], ['completed', 'Completed']];
+const shipmentForm = () => `<form class="ad-form" id="shipment-form" novalidate><div class="fields"><label>Carrier or delivery method<input name="carrier" required maxlength="80" autocomplete="off" placeholder="e.g. DHL, Poste Italiane, courier"></label><label>Tracking number<input name="tracking_number" required maxlength="80" autocomplete="off"></label><label class="wide"><span>Tracking link <span class="optional">(optional)</span></span><input name="tracking_url" type="url" maxlength="500" placeholder="https://"></label><label class="wide"><span>Note for the buyer <span class="optional">(optional)</span></span><textarea name="note" rows="2" maxlength="500"></textarea></label></div></form>`;
+function shipmentInput(form) {
+  if (!form.reportValidity()) throw Error('Enter the carrier and tracking number.');
+  const d = Object.fromEntries(new FormData(form));
+  if (d.tracking_url && !/^https?:\/\//i.test(d.tracking_url.trim())) { form.elements.tracking_url.focus(); throw Error('The tracking link must start with http:// or https://'); }
+  return Object.fromEntries(Object.entries(d).map(([k, v]) => [k, v.trim()]));
+}
 function jobSummary(j, action) {
   if (!j) return '';
   const i = j.item, hex = /^#[0-9a-f]{6}$/i.test(i.color_hex || '') ? i.color_hex : '';
   const target = action === 'accept' ? 'accepted' : action, reached = JOB_FLOW.findIndex(([s]) => s === target);
   return `<div class="ad-job"><div class="ad-job-main"><strong>${esc(i.title)} × ${i.quantity}</strong><span class="ad-job-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" aria-hidden="true"></span>` : ''}${esc([i.material, colorName(i.color)].filter(Boolean).join(' · '))}</span><span class="ad-job-meta">${esc([i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span></div><strong class="ad-job-value">${money(i.price_cents * i.quantity / 100)}</strong></div>
-    <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}</li>`).join('')}</ol>`;
+    <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Awaiting buyer confirmation</small>' : ''}</li>`).join('')}</ol>`;
 }
 /** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
 function actionDialog({title, body, confirm, busy, run}) {
@@ -246,7 +260,10 @@ function actionDialog({title, body, confirm, busy, run}) {
       catch (err) { working = false; button.disabled = false; button.textContent = confirm; error.textContent = err.message || 'Something went wrong. Please try again.'; }
     };
     document.documentElement.classList.add('dialog-open');
-    d.showModal(); button.focus();
+    // Enter inside a form in the dialog confirms instead of submitting the page.
+    d.querySelector('form')?.addEventListener('submit', e => { e.preventDefault(); button.click(); });
+    d.querySelector('form')?.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); button.click(); } });
+    d.showModal(); (d.querySelector('.ad-body input') || button).focus();
   });
 }
 // Overrides the browser confirm box from operations.js.
@@ -254,8 +271,11 @@ jobAction = async function(id, action) {
   const step = JOB_STEPS[action], trigger = document.activeElement;
   if (!step) return;
   const ok = await actionDialog({title:step.title, confirm:step.confirm, busy:step.busy,
-    body:`${jobSummary(hostJobs[id], action)}<ul class="ad-notes">${step.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`,
-    run:() => api(`/host/jobs/${id}/${action === 'accept' ? 'accept' : 'status'}`, {method:'POST', ...(action === 'accept' ? {} : {body:JSON.stringify({status:action})})})});
+    body:`${jobSummary(hostJobs[id], action)}<ul class="ad-notes">${step.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>${step.form ? shipmentForm() : ''}`,
+    run:() => {
+      const extra = step.form ? shipmentInput($('#shipment-form')) : {};
+      return api(`/host/jobs/${id}/${action === 'accept' ? 'accept' : 'status'}`, {method:'POST', ...(action === 'accept' ? {} : {body:JSON.stringify({status:action, ...extra})})});
+    }});
   if (!ok) { if (trigger?.isConnected) trigger.focus(); return; }
   toast(step.done);
   // Return focus to the same job once the list has refreshed (its next step, or the selected filter).
@@ -265,14 +285,14 @@ jobAction = async function(id, action) {
 };
 function jobGroups(jobs) {
   const mine = jobs.filter(j => j.host_id === account.id);
-  return {available:jobs.filter(j => j.status === 'available'), accepted:mine.filter(j => j.status === 'accepted'), 'in-progress':mine.filter(j => ['printing', 'ready'].includes(j.status)), completed:mine.filter(j => j.status === 'completed')};
+  return {available:jobs.filter(j => j.status === 'available'), accepted:mine.filter(j => j.status === 'accepted'), 'in-progress':mine.filter(j => ['printing', 'ready', 'shipped'].includes(j.status)), completed:mine.filter(j => j.status === 'completed')};
 }
 const hostPages = {
   async 'host'() {
     const [jobs, listings] = await Promise.all([api('/host/jobs'), api('/listings/mine')]), g = jobGroups(jobs); rememberJobs(jobs);
     setNavCount('jobs', g.available.length);
     const active = [...g.accepted, ...g['in-progress']], rejected = listings.filter(p => p.status === 'rejected').length, pending = listings.filter(p => p.status === 'pending').length;
-    const stats = [statCard('Available jobs', g.available.length, 'host/jobs/available', 'Matching your materials'), statCard('Accepted', g.accepted.length, 'host/jobs/accepted', 'Ready to start printing'), statCard('In progress', g['in-progress'].length, 'host/jobs/in-progress', 'Printing or ready'), statCard('Completed', g.completed.length, 'host/jobs/completed'), statCard('Published listings', listings.filter(p => p.status === 'approved').length, 'my-listings', pending ? `${pending} awaiting review` : '')];
+    const stats = [statCard('Available jobs', g.available.length, 'host/jobs/available', 'Matching your materials'), statCard('Accepted', g.accepted.length, 'host/jobs/accepted', 'Ready to start printing'), statCard('In progress', g['in-progress'].length, 'host/jobs/in-progress', 'Printing, ready or shipped'), statCard('Completed', g.completed.length, 'host/jobs/completed'), statCard('Published listings', listings.filter(p => p.status === 'approved').length, 'my-listings', pending ? `${pending} awaiting review` : '')];
     const notices = [rejected ? `<div class="banner warning"><span>${rejected === 1 ? 'One listing was' : rejected + ' listings were'} returned by an administrator with review notes.</span><a class="btn-ghost btn-sm" href="#my-listings">Review listings</a></div>` : ''].join('');
     return {title:'Overview', action:g.available.length ? `<a class="btn btn-sm" href="#host/jobs/available">View available jobs</a>` : '', body:`${notices}<div class="stat-grid">${stats.join('')}</div><section class="section-card"><header class="card-head"><div><h2>Your active jobs</h2><p class="muted">Agree payment and delivery directly with the buyer before printing.</p></div>${active.length > 5 ? '<a class="textlink" href="#host/jobs">View all</a>' : ''}</header>${active.length ? `<div class="list">${active.slice(0, 5).map(jobRow).join('')}</div>` : emptyState('No active jobs', g.available.length ? 'Accept an available job to start printing.' : 'New jobs matching your materials will appear in Printing jobs.', g.available.length ? '<a class="btn btn-sm" href="#host/jobs/available">Browse available jobs</a>' : '')}</section>`};
   },
