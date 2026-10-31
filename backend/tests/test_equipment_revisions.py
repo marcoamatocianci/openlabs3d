@@ -290,3 +290,17 @@ def test_printer_suggestions_include_revisions_and_can_be_verified(workflow):
     assert 'Garage' not in [s['model'] for s in a.get('/api/admin/printer-suggestions').json()]
     with sessions() as db:
         assert {e.action for e in db.scalars(select(models.Activity).where(models.Activity.action.like('printer.%')))}=={'printer.verified','printer.suggestion_approved'}
+
+
+def test_printer_stats_group_registered_printers(workflow):
+    clients,ids,pid,sessions=workflow;h,a,b=clients['host'],clients['admin'],clients['buyer']
+    assert b.get('/api/admin/printer-stats').status_code==403
+    stats=a.get('/api/admin/printer-stats').json()
+    assert stats==[{'manufacturer':'Custom','model':'Printer','technology':'FDM','units':2,'hosts':2,'verified':False,'active_jobs':0,'utilisation':0}]
+    with sessions() as db:
+        db.add(models.HostPrinter(user_id=ids['host'],manufacturer='Bambu Lab',model='A1',technology='FDM',x=256,y=256,z=256,quantity=1,capabilities='["PLA"]'));db.commit()
+    assert b.post('/api/checkout',json=checkout_body(pid,'red')).status_code==201
+    job=h.get('/api/host/jobs').json()[0];assert h.post(f"/api/host/jobs/{job['id']}/accept").status_code==200
+    stats={s['model']:s for s in a.get('/api/admin/printer-stats').json()}
+    # The host's one active job is shared over its two printer types by units.
+    assert stats['A1']['hosts']==1 and stats['A1']['utilisation']==0.5 and stats['Printer']['utilisation']==0.5 and stats['Printer']['hosts']==2

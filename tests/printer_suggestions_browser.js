@@ -5,7 +5,24 @@ async page => {
   await page.context().request.post(base + '/api/auth/login', {data:{email:'admin@example.org', password:'TestPassword2026'}});
   const open = async () => { await page.goto(base + '/?qa=' + Date.now() + '#admin/printers'); await page.locator('[data-suggestions]').waitFor({state:'attached'}); };
   await open();
+  // Layout: tiles first, then two sections collapsed by default; the arrow turns when one opens.
+  const tiles = page.locator('.ap-tiles .ap-tile');
+  check(await tiles.count() === 2 && (await tiles.first().innerText()).includes('QA'), 'One tile per registered printer type');
+  check((await tiles.first().locator('.ap-tile-count').innerText()).trim() === '1', 'Tile counts units');
+  await tiles.first().hover();
+  check(await tiles.first().locator('.ap-tip').isVisible() && (await tiles.first().locator('.ap-tip').innerText()).includes('Registered hosts'), 'Hover shows utilisation and hosts');
+  const order = await page.locator('.ws-main .ap-available, .ws-main .ap-collapse').evaluateAll(e => e.map(x => x.dataset.collapse || 'available'));
+  check(JSON.stringify(order) === '["available","suggestions","catalogue"]', 'Section order ' + order);
+  check(await page.locator('.ap-collapse[open]').count() === 0, 'Both collapsed by default');
+  const summary = page.locator('[data-collapse=catalogue] > summary');
+  check(/^Catalogue\s*· \(\d+\)\s*▸$/.test((await summary.innerText()).trim()), 'Catalogue header reads "Catalogue · (n) ▸"');
+  await summary.hover(); await page.waitForTimeout(300);
+  const colours = await summary.evaluate(s => [...s.children].map(c => getComputedStyle(c).color));
+  check(new Set(colours).size === 1, 'Title, count and arrow highlight together');
+  await summary.click();
+  check(await page.locator('[data-collapse=catalogue] .ap-collapse-arrow').evaluate(a => getComputedStyle(a).transform !== 'none'), 'Arrow rotates when open');
   const rows = page.locator('[data-suggestions] .list-row');
+  await page.locator('[data-collapse=suggestions] > summary').click();
   check(await rows.count() >= 2, 'Suggestions listed');
   check((await rows.first().innerText()).includes('Host application'), 'Origin shown');
   // Verify the first suggestion.

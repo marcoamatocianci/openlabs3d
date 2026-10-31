@@ -370,3 +370,23 @@ def update_materials(body:InventoryInput,auth=Depends(mutate),db:Session=Depends
     log(db,user.id,'equipment.stock_updated',f'user:{user.id}',', '.join(sorted(body.material_colors)))
     db.commit()
     return inventory_data(db,user.id)
+
+
+@router.get('/admin/printer-stats')
+def printer_stats(auth=Depends(admin),db:Session=Depends(get_db)):
+    """Registered printers of approved hosts grouped by type (manufacturer and model): units, hosts and a
+    utilisation rate relative to the other types — the share of active jobs held by hosts owning that type."""
+    rows=db.execute(select(models.HostPrinter).join(models.HostApplication,models.HostApplication.user_id==models.HostPrinter.user_id).where(models.HostApplication.status=='approved')).scalars().all()
+    active={h:n for h,n in db.execute(select(models.PrintingJob.host_id,__import__('sqlalchemy').func.count()).where(models.PrintingJob.status.in_(['accepted','printing','ready'])).group_by(models.PrintingJob.host_id))}
+    types={}
+    for p in rows:
+        t=types.setdefault((p.manufacturer,p.model),{'manufacturer':p.manufacturer,'model':p.model,'technology':p.technology,'units':0,'hosts':set(),'verified':False})
+        t['units']+=p.quantity;t['hosts'].add(p.user_id)
+        if p.model_id:t['verified']=bool(db.get(models.PrinterModel,p.model_id).verified)
+    total=sum(active.values())
+    result=[]
+    for t in types.values():
+        # A host's active jobs are shared across its printer types in proportion to units.
+        jobs=sum(active.get(h,0)*sum(q.quantity for q in rows if q.user_id==h and (q.manufacturer,q.model)==(t['manufacturer'],t['model']))/max(1,sum(q.quantity for q in rows if q.user_id==h)) for h in t['hosts'])
+        result.append({**t,'hosts':len(t['hosts']),'active_jobs':round(jobs,2),'utilisation':round(jobs/total,4) if total else 0})
+    return sorted(result,key=lambda t:(-t['units'],t['manufacturer'],t['model']))
