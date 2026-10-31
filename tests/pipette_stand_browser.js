@@ -1,7 +1,8 @@
-// Run with Playwright MCP browser_run_code_unsafe (set BASE first). Uses guest storage only.
-// Requires the seeded DNA pipette stand and an approved host offering PLA/PETG/ABS in cream.
+// Isolated fixtures: run scripts/catalogue_preview.py, then this file with Playwright MCP
+// browser_run_code_unsafe or tests/run_playwright_script.js. Uses guest storage only.
+// The fixture publishes the DNA pipette stand and stocks PLA/PETG/ABS in cream and signal-red.
 async page => {
- const BASE=globalThis.OPENLABS3D_BASE||'http://127.0.0.1:8080';
+ const BASE=globalThis.OPENLABS3D_BASE||'http://127.0.0.1:18101';
  const context=await page.context().browser().newContext({viewport:{width:1280,height:900}});
  const p=await context.newPage(),errors=[],glb=[];p.on('pageerror',e=>errors.push(e.message));
  p.on('request',r=>{if(r.url().endsWith('.glb'))glb.push(r.url())});

@@ -15,7 +15,6 @@ function signInPrompt(route) {
 }
 const userIndex = users => Object.fromEntries(users.map(u => [u.id, u]));
 const personName = (index, id) => index[id] ? index[id].display_name || index[id].username : id ? `User #${id}` : 'System';
-const colorName = c => c ? colorLabels[c] || c : '';
 const listEmpty = text => `<p class="list-empty" data-filter-empty hidden>${esc(text)}</p>`;
 
 render = function() {
@@ -89,7 +88,7 @@ function hostRow(h) {
     : h.status === 'approved' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/suspend','Suspend this host? They stop receiving printing jobs.',{})">Suspend</button>`
     : h.status === 'suspended' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/restore','Restore this host?',{})">Restore</button>` : '');
   const details = [['Printers', h.printers], ['Technologies', h.technologies], ['Capabilities', h.capabilities], ['Workshop', h.additional], ['Contact', h.contact], ['Submitted', h.submitted_at && safeDate(h.submitted_at)], ['Review note', h.rejection_reason]].filter(([, v]) => v);
-  return `<article class="list-row" data-search="${esc([h.name, h.user.display_name, h.user.email, h.region, h.materials].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml({...h.user, avatar:''}, 36)}</span><div class="row-main"><span class="row-title">${esc(h.name || h.user.display_name)}</span><span class="row-meta">${esc([h.user.email, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · '))}</span></div><span class="row-value">${esc(h.materials || '—')}${h.active_jobs != null ? `<small>${h.active_jobs} active · ${h.completed_jobs} completed</small>` : ''}</span><span class="row-status">${statusBadge(h.status)}</span><div class="row-actions">${actions}</div><details class="row-details"><summary>Details</summary><dl class="detail-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></details></article>`;
+  return `<article class="list-row" data-search="${esc([h.name, h.user.display_name, h.user.email, h.region, h.materials].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml(h.user, 36)}</span><div class="row-main"><span class="row-title">${esc(h.name || h.user.display_name)}</span><span class="row-meta">${esc([h.user.email, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · '))}</span></div><span class="row-value">${esc(h.materials || '—')}${h.active_jobs != null ? `<small>${h.active_jobs} active · ${h.completed_jobs} completed</small>` : ''}</span><span class="row-status">${statusBadge(h.status)}</span><div class="row-actions">${actions}</div><details class="row-details"><summary>Details</summary><dl class="detail-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></details></article>`;
 }
 function equipmentRevisionRow(r){
  const before=r.before.printers,after=r.proposal.printers;
@@ -139,7 +138,7 @@ const adminPages = {
     const selected = route.split('/')[2] || '', all = await api('/admin/users'), items = all.filter(u => !selected || u.role === selected);
     adminUsersCache = userIndex(all);
     const filters = statusFilters('admin/users', [['buyer', 'Buyers'], ['host', 'Hosts'], ['admin', 'Admins']], all, 'role');
-    const row = u => `<article class="list-row" data-search="${esc([u.display_name, u.username, u.email, u.role].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml({...u, avatar:''}, 36)}</span><div class="row-main"><span class="row-title">${esc(u.display_name)}${u.id === account.id ? ' <span class="muted">(you)</span>' : ''}</span><span class="row-meta">@${esc(u.username)} · ${esc(u.email)}</span></div><span class="row-value"><small>Joined ${parseServerDate(u.created_at).toLocaleDateString()}</small></span><span class="row-status">${statusBadge(u.role, roleLabel(u.role))}${u.active ? '' : statusBadge('suspended', 'Suspended')}${u.email_verified ? '' : statusBadge('pending', 'Unverified')}</span><div class="row-actions">${u.role !== 'admin' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/users/${u.id}/${u.active ? 'suspend' : 'restore'}','${u.active ? 'Suspend this account? The user is signed out.' : 'Restore this account?'}')">${u.active ? 'Suspend' : 'Restore'}</button>` : ''}${rowMenu('user-menu-' + u.id, `<button type="button" class="menu-item danger-text" onclick="deleteUserDialog(${u.id})">Delete account…</button>`)}</div></article>`;
+    const row = u => `<article class="list-row" data-search="${esc([u.display_name, u.username, u.email, u.role].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml(u, 36)}</span><div class="row-main"><span class="row-title">${esc(u.display_name)}${u.id === account.id ? ' <span class="muted">(you)</span>' : ''}</span><span class="row-meta">@${esc(u.username)} · ${esc(u.email)}</span></div><span class="row-value"><small>Joined ${parseServerDate(u.created_at).toLocaleDateString()}</small></span><span class="row-status">${statusBadge(u.role, roleLabel(u.role))}${u.active ? '' : statusBadge('suspended', 'Suspended')}${u.email_verified ? '' : statusBadge('pending', 'Unverified')}</span><div class="row-actions">${u.role !== 'admin' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/users/${u.id}/${u.active ? 'suspend' : 'restore'}','${u.active ? 'Suspend this account? The user is signed out.' : 'Restore this account?'}')">${u.active ? 'Suspend' : 'Restore'}</button>` : ''}${rowMenu('user-menu-' + u.id, `<button type="button" class="menu-item danger-text" onclick="deleteUserDialog(${u.id})">Delete account…</button>`)}</div></article>`;
     return {title:'Users', body:toolbar(filterChips('Role', filters, selected), searchBox('user-list', 'Search name, username or email')) + filteredList('user-list', items.map(row), 'No users here', 'No accounts have this role.', 'No users match your search.')};
   },
   async 'admin/orders'(route) {
@@ -147,7 +146,7 @@ const adminPages = {
     const filters = statusFilters('admin/orders', [['pending', 'Pending'], ['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['completed', 'Completed'], ['cancelled', 'Cancelled']], all);
     const row = o => {
       const titles = o.items.map(i => `${i.quantity} × ${i.title}`);
-      const jobs = o.jobs.map(j => `<li><span>${esc(j.item.title)}</span>${statusBadge(j.status)}<span class="muted">${j.host_id ? 'Host: ' + esc(personName(index, j.host_id)) : 'No host yet'}</span>${j.status === 'accepted' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/jobs/${j.id}/reopen','Return this job to the available pool?')">Reopen job</button>` : ''}</li>`).join('');
+      const jobs = o.jobs.map(j => `<li><span>${esc(j.item.title)}</span>${statusBadge(j.status)}<span class="muted">${j.host_id ? 'Host: ' + esc(personName(index, j.host_id)) : 'No host yet'}</span>${jobModel(j)}${j.status === 'accepted' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/jobs/${j.id}/reopen','Return this job to the available pool?')">Reopen job</button>` : ''}</li>`).join('');
       return `<article class="list-row" data-search="${esc([o.reference, personName(index, o.buyer_id), ...titles].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title mono">${esc(o.reference)}</span><span class="row-meta">${esc(personName(index, o.buyer_id))} · ${safeDate(o.created_at)}</span></div><span class="row-main row-summary">${esc(titles[0] || '')}${titles.length > 1 ? ` <span class="muted">+${titles.length - 1} more</span>` : ''}</span><span class="row-value">${money(o.total_cents / 100)}</span><span class="row-status">${statusBadge(o.status)}</span><div class="row-actions">${['pending', 'accepted'].includes(o.status) ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/orders/${o.id}/cancel','Cancel order ${esc(o.reference)}? Jobs that have not started printing are cancelled.')">Cancel order</button>` : ''}</div><details class="row-details"><summary>Jobs, delivery and history</summary><ul class="job-list">${jobs}</ul><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(o.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(o.address))}</dd></div><div><dt>History</dt><dd>${o.history.map(e => `${esc(safeDate(e.created_at))} · ${esc(e.action)}`).join('<br>') || 'No events yet.'}</dd></div></dl></details></article>`;
     };
     return {title:'Orders', body:toolbar(filterChips('Order status', filters, selected), searchBox('order-list', 'Search reference, buyer or product')) + filteredList('order-list', items.map(row), 'No orders here', 'Order requests with this status appear here.', 'No orders match your search.')};
@@ -199,18 +198,78 @@ async function approvePrinterSuggestion(id) { if (!confirm('Add this printer to 
 /* Printing host workspace */
 const nextJobStep = {accepted:['printing', 'Start printing'], printing:['ready', 'Mark ready'], ready:['completed', 'Mark completed']};
 const jobOrder = ['accepted', 'printing', 'ready', 'available', 'completed', 'cancelled'];
+// The model sold with this order line (never the listing's newer uploads). The server re-checks the
+// assignment on every download, so the link stops working once the job is completed or reassigned.
+const jobModel = j => ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="btn-ghost btn-sm" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
+const jobModelNote = j => j.item.cad_status === 'unverified' ? '<span class="row-meta">Model version not recorded at purchase: this is the model on file when versioning began.</span>' : '';
 function jobRow(j) {
   const i = j.item, step = j.host_id === account.id && nextJobStep[j.status];
-  const action = j.status === 'available' ? `<button type="button" class="btn btn-sm" onclick="jobAction(${j.id},'accept')">Accept job</button>` : step ? `<button type="button" class="btn btn-sm" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : '';
-  return `<article class="list-row" data-search="${esc([i.title, i.material, colorName(i.color), 'order ' + j.order_id].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta">${esc([i.material, colorName(i.color), i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span></div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${statusBadge(j.status)}</span><div class="row-actions">${action}</div>${j.fulfillment ? `<details class="row-details"><summary>Buyer contact and delivery</summary><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div></dl></details>` : ''}</article>`;
+  const action = (j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModel(j) : '') + (j.status === 'available' ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'accept')">Accept job</button>` : step ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : '');
+  return `<article class="list-row" data-search="${esc([i.title, i.material, colorName(i.color), 'order ' + j.order_id].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta">${esc([i.material, colorName(i.color), i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span>${j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModelNote(j) : ''}</div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${statusBadge(j.status)}</span><div class="row-actions">${action}</div>${j.fulfillment ? `<details class="row-details"><summary>Buyer contact and delivery</summary><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div></dl></details>` : ''}</article>`;
 }
+/* Job steps are confirmed in a site-styled dialog (not the browser's confirm box) that shows which
+   job changes and what the step means for the buyer. */
+let hostJobs = {};
+const rememberJobs = jobs => { hostJobs = Object.fromEntries(jobs.map(j => [j.id, j])); };
+const JOB_STEPS = {
+  accept:{title:'Accept this printing job?', confirm:'Accept job', busy:'Accepting…', done:'Job accepted', notes:['You commit to printing this item in the material and colour shown.', 'The buyer’s contact and delivery details become visible to you.', 'Agree payment and delivery directly with the buyer before printing.']},
+  printing:{title:'Start printing?', confirm:'Start printing', busy:'Updating…', done:'Printing started', notes:['The buyer sees that production has started.', 'Use the model from this job: it is the exact version the buyer ordered.']},
+  ready:{title:'Mark as ready for delivery?', confirm:'Mark ready', busy:'Updating…', done:'Marked ready for delivery', notes:['The buyer is told the item is ready.', 'Hand it over or ship it as agreed with the buyer.']},
+  completed:{title:'Mark this job completed?', confirm:'Mark completed', busy:'Updating…', done:'Job completed', notes:['Confirm the buyer has received the item.', 'The job closes and its model download is no longer available.']}
+};
+const JOB_FLOW = [['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['completed', 'Completed']];
+function jobSummary(j, action) {
+  if (!j) return '';
+  const i = j.item, hex = /^#[0-9a-f]{6}$/i.test(i.color_hex || '') ? i.color_hex : '';
+  const target = action === 'accept' ? 'accepted' : action, reached = JOB_FLOW.findIndex(([s]) => s === target);
+  return `<div class="ad-job"><div class="ad-job-main"><strong>${esc(i.title)} × ${i.quantity}</strong><span class="ad-job-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" aria-hidden="true"></span>` : ''}${esc([i.material, colorName(i.color)].filter(Boolean).join(' · '))}</span><span class="ad-job-meta">${esc([i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span></div><strong class="ad-job-value">${money(i.price_cents * i.quantity / 100)}</strong></div>
+    <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}</li>`).join('')}</ol>`;
+}
+/** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
+function actionDialog({title, body, confirm, busy, run}) {
+  return new Promise(resolve => {
+    let d = $('#action-dialog');
+    if (!d) { d = document.createElement('dialog'); d.id = 'action-dialog'; d.className = 'ad-dialog'; d.setAttribute('aria-labelledby', 'ad-title'); document.body.append(d); keepFocusInside(d); }
+    d.innerHTML = `<div class="ad"><header class="ad-head"><h2 id="ad-title">${esc(title)}</h2><button type="button" class="icon-btn" data-ad-cancel aria-label="Close">${icon('close')}</button></header><div class="ad-body">${body}<p class="ad-error" role="alert"></p></div><div class="ad-foot"><button type="button" class="btn-ghost" data-ad-cancel>Cancel</button><button type="button" class="primary" data-ad-confirm>${esc(confirm)}</button></div></div>`;
+    let working = false, result = false;
+    const button = d.querySelector('[data-ad-confirm]'), error = d.querySelector('.ad-error');
+    const finish = ok => { result = ok; document.documentElement.classList.remove('dialog-open'); d.close(); };
+    d.onclose = () => resolve(result);
+    d.oncancel = e => { e.preventDefault(); if (!working) finish(false); };   // Escape
+    let outside = false; d.onpointerdown = e => { outside = e.target === d; };
+    d.onclick = async e => {
+      if (working) return;
+      if ((e.target === d && outside) || e.target.closest('[data-ad-cancel]')) return finish(false);
+      if (!e.target.closest('[data-ad-confirm]')) return;
+      working = true; button.disabled = true; button.textContent = busy; error.textContent = '';
+      try { await run(); finish(true); }
+      catch (err) { working = false; button.disabled = false; button.textContent = confirm; error.textContent = err.message || 'Something went wrong. Please try again.'; }
+    };
+    document.documentElement.classList.add('dialog-open');
+    d.showModal(); button.focus();
+  });
+}
+// Overrides the browser confirm box from operations.js.
+jobAction = async function(id, action) {
+  const step = JOB_STEPS[action], trigger = document.activeElement;
+  if (!step) return;
+  const ok = await actionDialog({title:step.title, confirm:step.confirm, busy:step.busy,
+    body:`${jobSummary(hostJobs[id], action)}<ul class="ad-notes">${step.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul>`,
+    run:() => api(`/host/jobs/${id}/${action === 'accept' ? 'accept' : 'status'}`, {method:'POST', ...(action === 'accept' ? {} : {body:JSON.stringify({status:action})})})});
+  if (!ok) { if (trigger?.isConnected) trigger.focus(); return; }
+  toast(step.done);
+  // Return focus to the same job once the list has refreshed (its next step, or the selected filter).
+  const app = $('#app'), watch = new MutationObserver(() => { const next = app.querySelector(`[data-job="${id}"]`) || app.querySelector('.ws-main .chip.active'); if (next && !app.querySelector('.ws-main[aria-busy]')) { watch.disconnect(); next.focus(); } });
+  watch.observe(app, {childList:true, subtree:true}); setTimeout(() => watch.disconnect(), 3000);
+  render();
+};
 function jobGroups(jobs) {
   const mine = jobs.filter(j => j.host_id === account.id);
   return {available:jobs.filter(j => j.status === 'available'), accepted:mine.filter(j => j.status === 'accepted'), 'in-progress':mine.filter(j => ['printing', 'ready'].includes(j.status)), completed:mine.filter(j => j.status === 'completed')};
 }
 const hostPages = {
   async 'host'() {
-    const [jobs, listings] = await Promise.all([api('/host/jobs'), api('/listings/mine')]), g = jobGroups(jobs);
+    const [jobs, listings] = await Promise.all([api('/host/jobs'), api('/listings/mine')]), g = jobGroups(jobs); rememberJobs(jobs);
     setNavCount('jobs', g.available.length);
     const active = [...g.accepted, ...g['in-progress']], rejected = listings.filter(p => p.status === 'rejected').length, pending = listings.filter(p => p.status === 'pending').length;
     const stats = [statCard('Available jobs', g.available.length, 'host/jobs/available', 'Matching your materials', g.available.length ? 'attention' : ''), statCard('Accepted', g.accepted.length, 'host/jobs/accepted', 'Ready to start printing'), statCard('In progress', g['in-progress'].length, 'host/jobs/in-progress', 'Printing or ready'), statCard('Completed', g.completed.length, 'host/jobs/completed'), statCard('Published listings', listings.filter(p => p.status === 'approved').length, 'my-listings', pending ? `${pending} awaiting review` : '')];
@@ -218,7 +277,7 @@ const hostPages = {
     return {title:'Overview', action:g.available.length ? `<a class="btn btn-sm" href="#host/jobs/available">View available jobs</a>` : '', body:`${notices}<div class="stat-grid">${stats.join('')}</div><section class="section-card"><header class="card-head"><div><h2>Your active jobs</h2><p class="muted">Agree payment and delivery directly with the buyer before printing.</p></div>${active.length > 5 ? '<a class="textlink" href="#host/jobs">View all</a>' : ''}</header>${active.length ? `<div class="list">${active.slice(0, 5).map(jobRow).join('')}</div>` : emptyState('No active jobs', g.available.length ? 'Accept an available job to start printing.' : 'New jobs matching your materials will appear in Printing jobs.', g.available.length ? '<a class="btn btn-sm" href="#host/jobs/available">Browse available jobs</a>' : '')}</section>`};
   },
   async 'host/jobs'(route) {
-    const selected = route.split('/')[2] || '', jobs = await api('/host/jobs'), g = jobGroups(jobs);
+    const selected = route.split('/')[2] || '', jobs = await api('/host/jobs'), g = jobGroups(jobs); rememberJobs(jobs);
     setNavCount('jobs', g.available.length);
     const all = jobs.filter(j => j.status === 'available' || j.host_id === account.id).sort((a, b) => jobOrder.indexOf(a.status) - jobOrder.indexOf(b.status));
     const items = selected ? g[selected] || [] : all;

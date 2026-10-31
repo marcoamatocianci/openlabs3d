@@ -80,7 +80,7 @@ try:
     route('create-listing','#listing-form')
     for name,value in {'title':product_name,'price':'12.50','material':'PETG','dimensions':'40 x 30 mm','compatibility':'Microtubes','description':'A test rack for the isolated browser workflow.'}.items():fill(f'#listing-form [name={name}]',value)
     d.find_element(By.CSS_SELECTOR,'#listing-form [name=category]').send_keys('Tube racks')
-    img=Path(__file__).resolve().parents[1]/'openlabs3d-logo.png'
+    img=Path(__file__).resolve().parents[1]/'assets/brand/openlabs3d-logo.png'
     d.find_element(By.ID,'listing-files').send_keys(str(img));click('#listing-form [value=submit]');wait.until(lambda _:d.current_url.endswith('#my-listings'));text_has('Pending approval')
     d.refresh();text_has(product_name);print('listing and photo submitted',flush=True)
     logout();login(ADMIN_EMAIL,ADMIN_PASSWORD)

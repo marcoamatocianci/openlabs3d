@@ -8,12 +8,13 @@ async function api(path, options={}) {
   const res=await fetch('/api'+path,{credentials:'same-origin',...options,headers});
   if (!res.ok) {
     const data=await res.json().catch(()=>({}));
-    let message=typeof data.detail==='string'?data.detail:'Please check the form fields.';
+    // Structured conflicts (e.g. price changes) carry a message plus details for the page.
+    let message=typeof data.detail==='string'?data.detail:data.detail?.message||'Please check the form fields.';
     if (path==='/auth/login' && res.status===429) {
       const seconds=Number(res.headers.get('Retry-After'));
       message += seconds > 0 ? ` Try again in ${Math.ceil(seconds / 60)} minute${seconds > 60 ? 's' : ''}.` : ' Please try again later.';
     }
-    throw new Error(message);
+    throw Object.assign(new Error(message),{status:res.status,detail:data.detail});
   }
   return res.json();
 }
@@ -47,7 +48,7 @@ async function quickAddCard(id,button) {
   if(button.disabled)return;
   if(!account){toast('Sign in to use your persistent basket');location.hash='account';return;}
   setCardButton(button,true,'Adding…');
-  try { await accountAction('/cart',cardConfiguration(id),'POST');await refreshCart();setCardButton(button,false,'Added!');button.classList.add('is-added');setTimeout(()=>{if(button.isConnected){setCardButton(button,false,'Add to Cart');button.classList.remove('is-added')}},1600); }
+  try { await accountAction('/cart',{...cardConfiguration(id),expected_unit_price_cents:typeof cardShownPrice==='function'?cardShownPrice(id):undefined},'POST');await refreshCart();setCardButton(button,false,'Added!');button.classList.add('is-added');setTimeout(()=>{if(button.isConnected){setCardButton(button,false,'Add to Cart');button.classList.remove('is-added')}},1600); }
   catch(e){setCardButton(button,false,'Add to Cart');showError(e);}
 }
 async function quickBuyCard(id,button) {

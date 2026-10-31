@@ -42,14 +42,20 @@ const navRole = () => !account ? 'guest' : ['admin', 'host'].includes(account.ro
 const itemActive = (item, route) => item.match ? item.match(route) : routeIn(route, item.href);
 const countBadge = key => key ? `<span class="nav-badge" data-count-key="${key}" ${navCounts[key] ? '' : 'hidden'}>${navCounts[key] || 0}</span>` : '';
 
-/* Avatar with initials fallback; other users' pictures are private, so pass avatar:'' for them. */
+/* Shared renderer: exactly one active picture in every account and workspace surface. */
 function initials(user) {
-  const named = [user.first_name, user.last_name].filter(Boolean).map(s => s[0]).join('');
-  return (named || String(user.display_name || user.username || '?').replace(/[^A-Za-z0-9]/g, '').slice(0, 2) || '?').toUpperCase().slice(0, 2);
+  const words = String(user?.display_name || user?.username || '?').trim().split(/[\s_\-]+/u).filter(Boolean);
+  return (words.length > 1 ? Array.from(words[0])[0] + Array.from(words.at(-1))[0] : Array.from(words[0] || '?').slice(0, 2).join('')).toLocaleUpperCase();
 }
 function avatarHtml(user, size=32, extra='') {
-  const hue = [...String(user.username || user.email || '')].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 200);
-  return `<span class="avatar ${extra}" style="--size:${size}px;--hue:${hue}" aria-hidden="true"><span class="avatar-initials">${esc(initials(user))}</span>${user.avatar ? `<img src="/api/profile/avatar?v=${encodeURIComponent(user.avatar)}" alt="" onerror="this.remove()">` : ''}</span>`;
+  const picture = profilePictureFor(user), letters = esc(initials(user));
+  const content = picture.kind === 'avatar' ? labAvatarSvg(picture.style) : picture.kind === 'photo' ? `${letters}<img src="${esc(profilePhotoUrl(user))}" alt="" onerror="this.remove()">` : letters;
+  return `<span class="avatar ${esc(extra)}" data-profile-user="${esc(user.id)}" data-profile-size="${size}" data-profile-extra="${esc(extra)}" style="--size:${size}px" aria-hidden="true">${content}</span>`;
+}
+function refreshProfilePictures(user) {
+  for (const element of document.querySelectorAll('[data-profile-user]')) {
+    if (element.dataset.profileUser === String(user.id)) element.outerHTML = avatarHtml(user, Number(element.dataset.profileSize), element.dataset.profileExtra);
+  }
 }
 
 /* Topbar: brand · primary navigation · actions · account menu. */
@@ -68,7 +74,7 @@ function navbarHtml(route) {
 function userMenuHtml(config, route) {
   const active = config.menu.some(item => itemActive(item, route));
   const items = config.menu.map(item => { const current = itemActive(item, route); return `<a class="menu-item ${current ? 'active' : ''}" href="#${item.href}" ${current ? 'aria-current="page"' : ''}>${esc(item.label)}</a>`; }).join('');
-  return `<div class="dropdown user-menu"><button type="button" class="user-trigger ${active ? 'active' : ''}" id="user-menu-button" data-dropdown aria-expanded="false" aria-controls="user-menu">${avatarHtml(account, 28)}<span class="user-name">${esc(account.username)}</span>${icon('chevron')}<span class="sr-only">Account menu</span></button><div class="dropdown-menu align-end" id="user-menu" hidden><div class="menu-header">${avatarHtml(account, 36)}<div><strong>${esc(account.display_name || account.username)}</strong><span>${esc(account.email)}</span></div></div>${items}<hr class="menu-separator"><button type="button" class="menu-item" data-logout>${icon('logout')}Log out</button></div></div>`;
+  return `<div class="dropdown user-menu"><button type="button" class="user-trigger ${active ? 'active' : ''}" id="user-menu-button" data-dropdown aria-expanded="false" aria-controls="user-menu">${avatarHtml(account, 36)}<span class="user-name">${esc(account.username)}</span>${icon('chevron')}<span class="sr-only">Account menu</span></button><div class="dropdown-menu align-end" id="user-menu" hidden><div class="menu-header">${avatarHtml(account, 42)}<div><strong>${esc(account.display_name || account.username)}</strong><span>${esc(account.email)}</span></div></div>${items}<hr class="menu-separator"><button type="button" class="menu-item" data-logout>${icon('logout')}Log out</button></div></div>`;
 }
 function renderNavbar(route=currentRoute()) {
   const header = $('#topbar'); if (!header) return;
@@ -92,6 +98,18 @@ async function refreshNavBadges(force=false) {
     else { const jobs = await api('/host/jobs'); if (account?.id === owner) setNavCount('jobs', jobs.filter(j => j.status === 'available').length); }
     renderNavbar();
   } catch (e) { console.warn('Navigation counts unavailable', e); }
+}
+
+/* Modal dialogs: native <dialog> keeps the page inert, but lets Tab leave to the browser after the
+   last control. This keeps keyboard focus cycling inside the dialog. */
+function keepFocusInside(dialog) {
+  dialog.addEventListener('keydown', e => {
+    if (e.key !== 'Tab') return;
+    const items = [...dialog.querySelectorAll('button,input,select,textarea,[href]')].filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length && !el.closest('[hidden]') && (el.type !== 'radio' || el.checked || !dialog.querySelector(`input[name="${el.name}"]:checked`)));
+    const first = items[0], last = items.at(-1);
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+  });
 }
 
 /* Dropdowns follow the disclosure pattern: Escape closes, arrows move between entries. */

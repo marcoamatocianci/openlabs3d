@@ -1,4 +1,4 @@
-"""OpenLabs3D pipette holder — BRIDGE family, parametric CadQuery source (single printable part).
+"""OpenLabs3D pipette holder — BRIDGE family, parametric CadQuery source, printed as three parts.
 
 The holder is built from the same vocabulary as the Bridge racks (microtube_rack_24, centrifuge_rack_*):
 rounded-polygon prisms with 7 mm vertical radii, a 1.6 mm rolled top perimeter, a 0.8 mm bed chamfer,
@@ -10,20 +10,31 @@ each pipette.
            between the positions
   mast     rounded hexagon column pierced by stacked gabled windows, leaving six piers
   collar   rounded hexagon ring wall on a faceted 48-degree underside, carried by one web in line with
-           each pipette; between the webs it
-           spans on the racks' 45-degree gables. Each pipette face carries the concave cradle
+           each pipette; between the webs it spans on the racks' 45-degree gables. Each pipette face
+           carries the concave cradle
   canopy   solid rack-like deck on a faceted 48-degree underside; the finger hook rests on its flat top
            with the hook nose in a chamfered stadium slot, which also centres it
 
-Millimetres, Z up, printed upright as modelled. Build and validate with ../../build_pipette_holder.py.
+Printed parts (each upright as modelled, flat face on the bed, no supports intended):
+
+  base     plinth and the foot of the mast; keyed spigot on top
+  column   middle of the mast; keyed socket below, keyed spigot on top. Both joints are identical, so a
+           second column stacks for a taller holder
+  head     top of the mast with the collar, webs and canopy; keyed socket below
+
+Every joint is a rounded n-gon spigot with a corner at every other mast corner, so a part seats only in
+the n orientations that keep the head's positions over the base's tip wells. Each split plane is finished
+like a rack body (rolled top below, bed chamfer above), so the joint reads as a deliberate reveal.
+
+Millimetres, Z up, modelled assembled. Build and validate with ../../build_pipette_holder.py.
 """
 import math
 import cadquery as cq
 
 # Functional datums carried over from the reference (exaple_product/mechanical-pipette-holder.stl):
-# finger hook resting near r = 22 mm, nose pocket inboard of it, handle back leaning on a concave saddle near
-# r = 43 mm / z = 150-165, pipette axis near r = 58 mm. The pipette below is a stand-in envelope used to
-# carve clearances; it is NOT a measurement of any brand. See README.md before relying on the fit.
+# finger hook resting near r = 22 mm, nose pocket inboard of it, handle back leaning on a concave saddle,
+# pipette axis near r = 58 mm. The pipette below is a stand-in envelope used to carve clearances; it is NOT a
+# measurement of any brand. See README.md before relying on the fit.
 PIPETTE_FIT = dict(
     axis_r=58.0,          # pipette axis radius from the holder centre
     body_r=15.5,          # handle radius at the cradle (back of grip at axis_r - body_r = 42.5)
@@ -33,48 +44,61 @@ PIPETTE_FIT = dict(
     nose_drop=10.0,       # hook nose hanging below the crest
     above_hook=45.0,      # plunger top above the crest
     below_hook=205.0,     # pipette lower end below the crest (no tip fitted)
+    tip_drop=60.0,        # a fitted 1000 uL tip beyond the nozzle; it must hang clear of the plinth
     clearance=0.6,        # radial clearance between the envelope and the holder
 )
 
 PARAMETERS = dict(
     positions=3,
     first_angle_deg=90.0,
-    hook_z=212.0,                  # canopy top = underside of the finger hook = overall height
+    hook_z=280.0,                  # canopy top = underside of the finger hook = overall height (v1: 212)
+    joint_z=(62.0, 142.0),         # split planes: base | column | head
+    bed=(180.0, 180.0, 180.0),     # every part fits the smallest printer in the catalogue (Bambu Lab A1 mini)
     # Bridge finish, identical to the racks
     corner_radius=7.0,             # vertical edges of every prism
     top_fillet=1.6,                # rolled top perimeters
     bed_chamfer=0.8,
-    entry_chamfer=1.1,             # slot and well entries
+    entry_chamfer=1.1,             # slot, well and socket entries
     window_fillet=2.0,             # gabled window tool edges (apex left sharp so it prints without bridging)
-    underside_deg=48.0,            # collar and canopy undersides, from horizontal (45 rule + tessellation margin)
+    underside_deg=48.0,            # collar, canopy and socket ceilings, from horizontal (45 rule + tessellation margin)
     # plinth
     plinth_apothem=72.0,
     plinth_height=4.0,             # the racks' 4 mm base
     plinth_windows=(22.0, 64.0, 15.0),  # radial from, radial to, half width: pointed through-windows
     tip_well=(9.0, 1.0),           # radius, depth; the rack's 1.2/2.4 mm locating cone sits at its floor
-    # mast
+    # mast: (bottom z, apex z) per window tier; each tier stays inside one part
     mast_apothem=17.0,
-    mast_windows=[(12.0, 54.0), (62.0, 96.0), (112.0, 154.0), (162.0, 184.0)],  # (bottom z, apex z) per tier
+    mast_windows=[(12.0, 54.0), (90.0, 134.0), (180.0, 222.0), (230.0, 252.0)],
     mast_window_half=5.5,
+    # joints
+    spigot_inradius=8.0,           # rounded triangle for 3 positions, corners towards alternate mast corners
+    spigot_corner=3.0,
+    spigot_height=14.0,
+    spigot_chamfer=1.0,
+    joint_clearance=0.25,          # per side, as the DNA stand's joints
+    crush_rib=(0.8, 0.45),         # radius, reach beyond the spigot face: 0.2 mm interference, one rib per face
+    socket_floor=3.0,              # solid mast between a socket ceiling and the window above it
+    joint_band=8.0,                # solid mast between a window apex and the joint above it
     # collar (cradle ring)
     collar_apothem=46.5,           # face towards each pipette
     collar_wall=6.0,
-    collar_top=172.0,
-    collar_underside_z=132.0,      # inner edge of the ring's 48-degree underside
-    collar_vault_apex=162.0,       # 45-degree gables between the webs
+    collar_top=240.0,
+    collar_underside_z=200.0,      # inner edge of the ring's 48-degree underside
+    collar_vault_apex=230.0,       # 45-degree gables between the webs
     web_thickness=7.0,
     web_underside_deg=50.0,
-    web_top=168.0,
+    web_top=236.0,
     vault_margin=0.8,              # keeps gable tools off the web faces
     cradle_radius=22.0,            # concave cradle; contact stays on its centre line for handles up to R22
     # canopy (hook rest)
     canopy_apothem=31.0,
-    canopy_underside_z=189.5,     # 6 mm rim at the pipette faces
+    canopy_underside_z=257.5,      # 6 mm rim at the pipette faces
     nose_slot=(15.0, 20.0, 8.0, 12.0),  # centre r, length (tangential), width (radial), depth: stadium slot
     min_pipette_gap=20.0,          # required free gap between neighbouring handles
 )
 
 P, F = PARAMETERS, PIPETTE_FIT
+PARTS = ('base', 'column', 'head')
 
 
 def stations():
@@ -104,15 +128,38 @@ def checked(cutter):
     return cutter
 
 
+def seats():
+    """Bottom of each part in the assembly; subtract it to get the part in print orientation."""
+    j1, j2 = P['joint_z']
+    return dict(base=0.0, column=j1, head=j2)
+
+
+def socket_height():
+    """Socket depth plus its faceted ceiling, measured from the joint plane."""
+    a = P['spigot_inradius'] + P['joint_clearance']
+    return P['spigot_height'] + 0.5 + a * math.tan(math.radians(P['underside_deg']))
+
+
 def check_parameters():
     half = math.pi / P['positions']
     gap = 2 * F['axis_r'] * math.sin(half) - 2 * F['body_r']
     assert gap >= P['min_pipette_gap'], f'pipettes {gap:.1f} mm apart: lower positions or raise axis_r'
     assert F['axis_r'] - F['body_r'] - F['clearance'] < P['collar_apothem'], 'collar does not reach the handle'
     assert P['plinth_apothem'] > F['axis_r'] + P['tip_well'][0] + 4, 'tip wells must sit on the plinth'
+    assert P['hook_z'] - F['below_hook'] - F['tip_drop'] >= P['plinth_height'] + 10, 'a fitted tip would reach the plinth'
+    assert P['positions'] >= 3
+    j1, j2 = P['joint_z']
+    spans = [(0.0, j1, None), (j1, j2, j1), (j2, P['hook_z'], j2)]
     for bottom, apex in P['mast_windows']:
         assert apex - bottom > 2 * P['mast_window_half'], 'mast window too short for its gable'
-    assert P['positions'] >= 3
+        span = [s for s in spans if s[0] <= bottom and apex <= s[1]]
+        assert span, f'mast window {bottom}-{apex} crosses a joint'
+        z0, z1, socket = span[0]
+        assert socket is None or bottom >= socket + socket_height() + P['socket_floor'], f'window {bottom} opens into a socket'
+        assert z1 == P['hook_z'] or apex <= z1 - P['joint_band'], f'window {apex} leaves no solid band under the joint'
+    heights = (j1 + P['spigot_height'], j2 - j1 + P['spigot_height'], P['hook_z'] - j2)
+    assert max(heights) <= P['bed'][2], f'part heights {heights} exceed the bed'
+    assert 2 * P['plinth_apothem'] / math.cos(math.pi / (2 * P['positions'])) <= P['bed'][0] + 2, 'plinth exceeds the bed'
 
 
 # ------------------------------------------------------------------------------------------- primitives
@@ -158,6 +205,61 @@ def windows(half, bottom, apex):
     return union_all(at(gable(half, bottom, apex), d) for d in axes())
 
 
+# ------------------------------------------------------------------------------------------- joints
+def key_angle():
+    """A rounded n-gon at this angle has its corners on every other mast corner, where the wall is thickest."""
+    return P['first_angle_deg'] - 90.0 / P['positions']
+
+
+def key_faces():
+    n = P['positions']
+    return [key_angle() + 180.0 / n + i * 360.0 / n for i in range(n)]
+
+
+def key(inradius, corner, z0, z1):
+    n = P['positions']
+    body = cq.Workplane('XY').polygon(n, 2 * inradius / math.cos(math.pi / n)).extrude(z1 - z0).translate((0, 0, z0))
+    return at(body.edges('|Z').fillet(corner), key_angle())
+
+
+def spigot(z, ribs=True):
+    """Keyed spigot rising from a joint plane: chamfered lead-in and one vertical crush rib per face. The ribs
+    deform on assembly, so the fit stays snug across printers that print holes slightly large or small."""
+    a, h = P['spigot_inradius'], P['spigot_height']
+    body = key(a, P['spigot_corner'], z, z + h).faces('>Z').edges().chamfer(P['spigot_chamfer'])
+    if not ribs:
+        return body
+    r, reach = P['crush_rib']
+    top = z + h - P['spigot_chamfer'] - 1.0
+    x = a + reach - r
+    rib = (cq.Workplane('XY').circle(r).extrude(top - z).translate((x, 0, z))
+           .union(cq.Workplane('XY').add(cq.Solid.makeCone(r, 0.15, r - 0.15, cq.Vector(x, 0, top)))))
+    return body.union(checked(union_all(at(rib, d) for d in key_faces())))
+
+
+def socket(z):
+    """Keyed socket opening downward from a joint plane. Its ceiling is a faceted pyramid rising at
+    underside_deg from every face to a point, so it prints without bridging."""
+    c = P['joint_clearance']
+    a = P['spigot_inradius'] + c
+    top = z + P['spigot_height'] + 0.5
+    k = math.tan(math.radians(P['underside_deg']))
+    cavity = key(a, P['spigot_corner'] + c, z - 1, top + a * k + 1)
+    far = 100.0
+    plane = (cq.Workplane('XZ').polyline([(-far, z - 2), (a + (top - z + 2) / k, z - 2), (-far, top + (a + far) * k)])
+             .close().extrude(far, both=True))
+    for d in key_faces():
+        cavity = cavity.intersect(at(plane, d))
+    return checked(cavity)
+
+
+def mouth(part):
+    """The racks' 1.1 mm entry chamfer round the socket mouth: leads the spigot in and absorbs elephant's foot."""
+    edges = [e for w in part.faces('<Z').val().innerWires() for e in w.Edges()]
+    assert edges, 'socket mouth not found on the bed face'
+    return part.newObject(edges).chamfer(P['entry_chamfer'])
+
+
 # ------------------------------------------------------------------------------------------- elements
 def plinth():
     r, depth = P['tip_well']
@@ -173,10 +275,12 @@ def plinth():
     return body.cut(checked(union_all(at(well.translate((F['axis_r'], 0, 0)), d) for d in stations())))
 
 
-def mast():
-    body = prism(P['mast_apothem'], 0, P['canopy_underside_z'] + 8, top=False)
-    for bottom, apex in P['mast_windows']:
-        body = body.cut(checked(windows(P['mast_window_half'], bottom, apex)))
+def mast(z0, z1, top=True, bottom=True):
+    """One part's length of mast, with the window tiers that fall inside it."""
+    body = prism(P['mast_apothem'], z0, z1, top=top, bottom=bottom)
+    for low, apex in P['mast_windows']:
+        if z0 <= low and apex <= z1:
+            body = body.cut(checked(windows(P['mast_window_half'], low, apex)))
     return body
 
 
@@ -196,12 +300,14 @@ def collar():
     tool = gable(w, z0 - 40, apex, x_from, x_from + 80)
     ring = ring.cut(checked(union_all(at(tool, d + 180.0 / P['positions']) for d in stations())))
     # Webs: lower edge leaves the mast at web_underside_deg; outer edge stops short of the handle. Inside the
-    # mast the web starts flat, so that stub must sit in a solid mast band, never inside a mast window.
+    # mast the web starts flat, so that stub must sit in a solid mast band, never inside a mast window, and
+    # above the head's socket.
     m, r_out = P['mast_apothem'] - 1, F['axis_r'] - F['body_r'] - F['clearance'] - 0.4
     k = math.tan(math.radians(P['web_underside_deg']))
     wz0 = z0 + 1 - (r_out - m) * k
     for bottom, apex in P['mast_windows']:
         assert not bottom - 1 < wz0 < apex + 1, f'web root at z={wz0:.1f} falls inside a mast window'
+    assert wz0 > P['joint_z'][1] + socket_height(), f'web root at z={wz0:.1f} falls below the head socket ceiling'
     web = (cq.Workplane('XZ').polyline([(0, wz0), (m, wz0), (r_out, z0 + 1), (r_out, P['web_top']), (0, P['web_top'])])
            .close().extrude(t2, both=True))
     web = web.edges('|Y').fillet(P['window_fillet'])
@@ -258,16 +364,28 @@ def proxies():
     return union_all(pipette_envelope(d) for d in stations())
 
 
-# ------------------------------------------------------------------------------------------- assembly
-def build():
+# ------------------------------------------------------------------------------------------- parts
+def build_parts():
+    """The three printable parts, in their assembled position (see seats() for print orientation)."""
     check_parameters()
-    body = plinth().union(mast()).union(collar()).union(canopy())
-    body = body.cut(checked(union_all(pipette_envelope(d, F['clearance']) for d in stations())))
-    body = body.cut(checked(cradles())).cut(checked(hook_cuts()))
-    return body
+    j1, j2 = P['joint_z']
+    base = plinth().union(mast(0, j1, bottom=False)).union(spigot(j1))
+    column = mouth(mast(j1, j2).cut(socket(j1))).union(spigot(j2))
+    head = mast(j2, P['canopy_underside_z'] + 8, top=False).union(collar()).union(canopy())
+    head = head.cut(checked(union_all(pipette_envelope(d, F['clearance']) for d in stations())))
+    head = head.cut(checked(cradles())).cut(checked(hook_cuts()))
+    head = mouth(head.cut(socket(j2)))
+    return dict(base=base, column=column, head=head)
+
+
+def printable(name, shape):
+    """A part moved from its assembled position to its print position (bottom face on z = 0)."""
+    return shape.translate((0, 0, -seats()[name]))
 
 
 if __name__ == '__main__':
-    s = build().val()
-    bb = s.BoundingBox()
-    print(f'valid={s.isValid()} volume={s.Volume() / 1000:.2f} cm3 bbox={bb.xlen:.2f} x {bb.ylen:.2f} x {bb.zlen:.2f}')
+    for name, part in build_parts().items():
+        s = printable(name, part).val()
+        bb = s.BoundingBox()
+        print(f'{name}: valid={s.isValid()} volume={s.Volume() / 1000:.2f} cm3 '
+              f'bbox={bb.xlen:.2f} x {bb.ylen:.2f} x {bb.zlen:.2f}')

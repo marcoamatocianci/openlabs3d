@@ -14,7 +14,7 @@ function bindConfigurator(){
  let first=true,refreshing=false,needsSelection=false;
  const update=async()=>{
   const seq=++quoteSequence,previous=currentConfiguration(form);
-  price.dataset.ready='';add.disabled=buy.disabled=true;price.textContent='Checking availability…';error.textContent='';
+  price.dataset.ready='';delete price.dataset.unitPrice;add.disabled=buy.disabled=true;price.textContent='Checking availability…';error.textContent='';
   try{
    const fresh=await api('/listings/'+p.id.slice(4)+'/availability');
    if(seq!==quoteSequence||!form.isConnected)return;
@@ -33,10 +33,10 @@ function bindConfigurator(){
    if(grid.dataset.signature!==signature){grid.innerHTML=materialMarkup;grid.dataset.signature=signature;}
    grid.querySelectorAll('input').forEach(el=>el.checked=el.value===material);
    const swatches=form.querySelector('.swatches'),colorSignature=JSON.stringify(colors);
-   if(swatches.dataset.signature!==colorSignature){swatches.innerHTML=Object.entries(colors).map(([c,hex])=>`<label title="${esc(colorLabels[c]||c)}"><input type="radio" name="color" value="${esc(c)}"><span style="background:${hex}"></span><small>${esc(colorLabels[c]||c)}</small></label>`).join('');swatches.dataset.signature=colorSignature;}
+   if(swatches.dataset.signature!==colorSignature){swatches.innerHTML=Object.entries(colors).map(([c,hex])=>`<label title="${esc(colorName(c))}"><input type="radio" name="color" value="${esc(c)}"><span style="background:${hex}"></span><small>${esc(colorName(c))}</small></label>`).join('');swatches.dataset.signature=colorSignature;}
    swatches.querySelectorAll('input').forEach(el=>el.checked=el.value===color);
    form.querySelector('.color-options').hidden=!Object.keys(colors).length;
-   form.querySelector('#selected-color').textContent=colorLabels[color]||color;
+   form.querySelector('#selected-color').textContent=colorName(color);
    const changed=desired.material&&desired.material!==material||desired.color&&desired.color!==color;
    message.textContent=(!material||!color)&&desired.material?'Your saved configuration is no longer available. Choose an available material and color before purchasing.':!material?'Currently unavailable. No approved host has confirmed equipment, dimensions and colors for this product.':changed?'Choose your preferred available configuration.':'Available from compatible printing hosts.';
    if(!material||!color){needsSelection=!!desired.material;price.textContent='Choose an available configuration';return;}
@@ -50,7 +50,8 @@ function bindConfigurator(){
    viewer?.update(colors[c.color],c.material);
    const q=await obtainQuote(p.id.slice(4),c);
    if(seq!==quoteSequence||!form.isConnected)return;
-   price.dataset.ready='1';
+   // The exact unit price on screen: sent with Add to Cart / Buy Now as the price the buyer saw.
+   price.dataset.ready='1';price.dataset.unitPrice=q.unit_price_cents;
    price.innerHTML=`<div class="config-total"><span>Total <small>${q.quantity} ${q.quantity===1?'unit':'units'} · ${money(q.unit_price_cents/100)} each</small></span><strong>${money(q.total_cents/100)}</strong></div><details class="price-breakdown"><summary>Price breakdown</summary><dl><div><dt>Base unit price</dt><dd>${money(q.base_price_cents/100)}</dd></div><div><dt>Material adjustment</dt><dd>${money(q.material_adjustment_cents/100)}</dd></div><div><dt>Quantity discount</dt><dd>${q.discount_bps/100}%</dd></div></dl></details>`;
    add.disabled=!!form.dataset.purchasing;buy.disabled=!!form.dataset.purchasing;
   }catch(e){if(seq===quoteSequence&&form.isConnected){price.textContent='Configuration unavailable';error.textContent=e.message;}}
@@ -64,14 +65,8 @@ function bindConfigurator(){
  update();const host=$('#model-viewer');activeHost=host;if(o.model_url)import('./viewer.js?v=studio-3').then(m=>m.mountViewer(host,o.model_url,o.colors[currentConfiguration(form).color],currentConfiguration(form).material)).then(v=>{if(!host.isConnected){v?.dispose();return}viewer=v;if(v){host.querySelector('img')?.remove();const c=currentConfiguration(form);v.update(o.colors[c.color],c.material);$('#reset-view').onclick=()=>v.reset();$('#zoom-in').onclick=()=>v.zoom(.85);$('#zoom-out').onclick=()=>v.zoom(1.15)}}).catch(()=>{if(host.isConnected){document.querySelectorAll('.viewer-tools button').forEach(b=>b.disabled=true);host.querySelector('[role=status]')?.remove();host.insertAdjacentHTML('beforeend','<p role="alert">3D preview unavailable. You can still choose a configuration.</p>')}})
 }
 render=function(){viewer?.dispose();activeHost?.disposeViewer?.();viewer=null;quoteSequence++;priorRender();bindConfigurator()};
-changeCart=async function(index,value){const item=opsCart[index],quantity=Number(value);try{const q=await obtainQuote(item.id,{material:item.material,color:item.color||'',quantity});item.quantity=quantity;item.price_cents=q.unit_price_cents;sessionStorage.removeItem('ol3d-order-key');saveOpsCart();render()}catch(e){toast(e.message);render()}};
-const priorCart=cartPage;
-cartPage=function(){let html=priorCart();for(const i of opsCart){html=html.replace(`<h3>${esc(i.title)}</h3>`,`${i.image?`<img class="cart-thumbnail" src="${esc(i.image)}" alt="${esc(i.title)}">`:''}<h3>${esc(i.title)}</h3><p>Line total ${money(i.price_cents*i.quantity/100)}</p>`)}return html};
 render();
 const customerProduct=product;
 product=function(id){let html=customerProduct(id);const p=state.products.find(p=>p.id===id);if(account?.role==='admin'&&p?.configurator){const {discounts,max_quantity}=p.configurator,materials=p.configurator.pricing_materials||p.configurator.materials;html+=layout(`<details class="panel"><summary>Administrator pricing rules</summary><p>Material factors use basis points: 10000 keeps the stored base price. Discounts also use basis points. Enable only materials your fulfillment partners support.</p><form id="pricing-editor" data-id="${id.slice(4)}"><label>Product pricing rules<textarea name="rules" rows="8">${esc(JSON.stringify({materials,discounts,max_quantity},null,2))}</textarea></label><button class="secondary">Save pricing rules</button><p role="alert" id="pricing-error"></p></form></details>`)}return html};
 const configuredRender=render;
 render=function(){configuredRender();const f=$('#pricing-editor');if(f)f.onsubmit=async e=>{e.preventDefault();try{const p=await api(`/listings/${f.dataset.id}/pricing`,{method:'PUT',body:f.elements.rules.value});state.products=state.products.filter(x=>x.id!=='api-'+p.id);state.products.push(asProduct(p));render();toast('Pricing rules saved')}catch(e){$('#pricing-error').textContent=e.message}}};
-const configuredOperations=renderOperations;
-let cartRequest=0;
-renderOperations=async function(route){if(route!=='basket')return configuredOperations(route);const request=++cartRequest;$('#app').innerHTML=layout('<p role="status">Validating cart prices…</p>');try{const quotes=await Promise.all(opsCart.map(i=>obtainQuote(i.id,{material:i.material,color:i.color||'',quantity:i.quantity})));if(request!==cartRequest||location.hash!=='#basket')return;quotes.forEach((q,n)=>{opsCart[n].price_cents=q.unit_price_cents;opsCart[n].material=q.material});saveOpsCart();return configuredOperations(route)}catch(e){if(location.hash!=='#basket')return;await configuredOperations(route);$('#order-error').textContent=e.message;$('#order-form button').disabled=true}};

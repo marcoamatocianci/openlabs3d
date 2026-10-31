@@ -1,4 +1,4 @@
-from .availability import supports, combinations
+from .availability import supports, host_shades, matches
 """Persistent host, order and marketplace administration workflows."""
 import uuid
 from datetime import datetime, timezone
@@ -35,7 +35,9 @@ def active_host(auth, db):
 def job_data(job):
     item = job.item
     return {'id':job.id, 'order_id':job.order_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at,
-            'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents}}
+            'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents,
+                    # Which model this line is made from; the file itself is served by /api/jobs/{id}/cad.
+                    'listing_version':item.listing_version, 'cad_status':item.cad_status, 'cad_format':item.cad_path.rsplit('.',1)[-1].upper() if item.cad_path else '', 'cad_sha256':item.cad_sha256}}
 
 def orders_data(orders, db):
     """Serialize orders with a fixed number of queries (jobs, history, listings), whatever the page size."""
@@ -206,6 +208,7 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
     if len(products) != len(set(ids)): fail(409,'A product is no longer available')
     if any(products[i].currency != 'EUR' for i in ids): fail(422,'Unsupported currency')
     from .pricing import quote
+    from .manufacturing import snapshot
     quotes=[quote(products[line.listing_id],line.material,line.color,line.quantity) for line in body.items]
     if any(q['unit_price_cents'] != line.expected_price_cents for q,line in zip(quotes,body.items)): fail(409,'Price changed. Refresh the basket before ordering.')
     order = models.Order(reference='OL3D-'+uuid.uuid4().hex[:16].upper(), buyer_id=auth[0].id, idempotency_key=body.idempotency_key, contact=body.contact, address=body.address, total_cents=sum(q['total_cents'] for q in quotes), currency='EUR')
@@ -213,7 +216,8 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
         db.add(order); db.flush()
         for line,q in zip(body.items,quotes):
             p=products[line.listing_id]
-            item=models.OrderItem(color=line.color,color_hex=q['color_hex'],order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,manufacturing_dimensions=p.cad_dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
+            # Everything needed to make this line exactly as sold, independent of later listing edits.
+            item=models.OrderItem(color=line.color,color_hex=q['color_hex'],order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,manufacturing_dimensions=p.cad_dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'],**snapshot(p))
             db.add(item); db.flush()
             db.add(models.PrintingJob(order_id=order.id,item_id=item.id))
         log(db, auth[0].id, 'order.created', f'order:{order.id}')
@@ -260,8 +264,8 @@ def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
         if job.host_id != auth[0].id:
             # Same rule as supports(), evaluated once per product instead of once per job.
             listing_id=job.item.listing_id
-            if listing_id not in eligible: eligible[listing_id]=combinations(db.get(models.Listing,listing_id),auth[0].id)
-            if job.item.color not in eligible[listing_id].get(job.item.material,{}): continue
+            if listing_id not in eligible: eligible[listing_id]=host_shades(db.get(models.Listing,listing_id),auth[0].id)
+            if not matches(eligible[listing_id],job.item.material,job.item.color,job.item.color_hex): continue
         item=job_data(job)
         if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','completed'):
             order=db.get(models.Order,job.order_id)
@@ -274,7 +278,7 @@ def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
     active_host(auth,db)
     job=db.get(models.PrintingJob,job_id)
     if not job: fail(404,'Job not found')
-    if not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id): fail(403,'Your approved equipment cannot manufacture this material, color and product size')
+    if not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id,job.item.color_hex): fail(403,'Your approved equipment cannot manufacture this material, color and product size')
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
     order_active=exists(select(models.Order.id).where(models.Order.id==models.PrintingJob.order_id,models.Order.status!='cancelled'))
     changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.status=='available',models.PrintingJob.host_id.is_(None),host_active,order_active).values(status='accepted',host_id=auth[0].id,updated_at=datetime.now(timezone.utc))).rowcount

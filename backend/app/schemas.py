@@ -81,11 +81,11 @@ class AccountDeletion(BaseModel):
 class QuoteInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     material: str = Field(default="", max_length=200)
-    color: str = Field(default="", max_length=40)
+    color: str = Field(default="", max_length=48)
     quantity: int = Field(ge=1, le=50, strict=True)
 
 class OrderLine(QuoteInput):
-    color: str = Field(default="", max_length=40)
+    color: str = Field(default="", max_length=48)
     listing_id: int = Field(gt=0)
     quantity: int = Field(ge=1, le=50)
     expected_price_cents: int = Field(ge=0, le=100000000)

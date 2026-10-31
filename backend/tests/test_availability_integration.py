@@ -43,7 +43,9 @@ def workflow(tmp_path, monkeypatch):
     engine.dispose()
 
 def checkout_body(pid,color='black',material='PLA'):
-    return {'idempotency_key':secrets.token_hex(16),'contact':{'first_name':'Test','last_name':'User','phone':'123456789','country':'IT','city':'Torino','street':'Via Roma 1'},'direct':{'listing_id':pid,'material':material,'color':color,'quantity':1}}
+    from order_fixtures import with_confirmation
+    body={'idempotency_key':secrets.token_hex(16),'contact':{'first_name':'Test','last_name':'User','phone':'123456789','country':'IT','city':'Torino','street':'Via Roma 1'},'direct':{'listing_id':pid,'material':material,'color':color,'quantity':1}}
+    with TestClient(app) as client:return with_confirmation(client,body)
 
 def test_customization_cart_checkout_assignment(workflow):
     clients,ids,pid,sessions=workflow;b=clients['buyer']
@@ -131,7 +133,7 @@ def test_migration_preserves_legacy_equipment(tmp_path):
         row=db.execute('SELECT materials,material_colors,x FROM host_printers').fetchone()
         assert row==('["PLA"]','{}',200)
         assert db.execute('SELECT capabilities FROM host_printers').fetchone()==('["PLA"]',)
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='68a_order_color_snapshot'
+        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='71a_lab_avatars'
 
 def test_material_color_availability_tracks_product_and_host(workflow):
     clients,ids,pid,sessions=workflow

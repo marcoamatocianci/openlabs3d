@@ -19,7 +19,6 @@ services:
       - ./app.js:/srv/app.js:ro
       - ./marketplace.js:/srv/marketplace.js:ro
       - ./operations.js:/srv/operations.js:ro
-      - ./openlabs3d-logo.png:/srv/openlabs3d-logo.png:ro
       - caddy_data:/data
       - caddy_config:/config
     healthcheck:

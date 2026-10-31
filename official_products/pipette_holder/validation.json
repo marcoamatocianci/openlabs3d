@@ -2,92 +2,342 @@
   "product": "pipette_holder",
   "source": "pipette_holder/source/model.py",
   "units": "mm",
-  "print_orientation": "upright as modelled, ring and fins on the bed, no supports intended",
-  "files": {
-    "pipette_holder.stl": "bc12da10ff432aa72c886d74958d816559be8aa4e3ef534ca0462010bb0f161e",
-    "pipette_holder.3mf": "e03d634280669fc8e217f33b310b1e528224074d6565fc868f04d70aad9a484c"
-  },
-  "bounding_box_mm": {
-    "min": [
-      -82.053,
-      -72.0,
-      -0.0
-    ],
-    "max": [
-      82.053,
-      72.0,
-      212.0
-    ],
-    "size": [
-      164.107,
-      144.0,
-      212.0
-    ]
-  },
-  "volume_cm3": {
-    "brep_slab_integrated": 281.029,
-    "stl": 281.031,
-    "3mf": 281.031
-  },
-  "surface_area_cm2": 1074.6,
-  "triangles": 47578,
-  "mesh": {
-    "watertight": true,
-    "winding_consistent": true,
-    "is_volume": true,
-    "single_body": true,
-    "positive_triangle_areas": true,
-    "euler_number": -52,
-    "brep_valid": true,
-    "stl_3mf_bounds_equal": true,
-    "stl_3mf_volume_equal": true
-  },
-  "printability": {
-    "fits_bed": true,
-    "reference_bed_mm": [
-      250.0,
-      210.0,
-      220.0
-    ],
-    "bed_contact_area_cm2": 151.7,
-    "overhang_limit_deg_from_vertical": 45.0,
-    "overhang_area_over_limit_mm2": 3133.41,
-    "overhang_area_over_limit_plus_tessellation_tolerance_mm2": 0.0,
-    "overhang_area_over_50deg_mm2": 0.0,
-    "steepest_downward_face_deg": 46.0,
-    "floating_layers_0_2mm": 0,
-    "wall_thickness_mm": {
-      "sampled_points": 4000,
-      "p01": 1.97,
-      "p05": 2.9,
-      "median": 8.07,
-      "collar_wall": 6.0,
-      "web": 7.0,
-      "plinth": 4.0,
-      "canopy_rim": 5.8,
-      "note": "low percentiles sample the feather edges where 48-degree undersides meet vertical walls"
+  "assumed_bed_mm": [
+    180.0,
+    180.0,
+    180.0
+  ],
+  "print_orientation": "each part upright as modelled, flat face on the bed, no supports intended",
+  "parts": [
+    {
+      "part": "base",
+      "file": "parts/base.stl",
+      "sha256": {
+        "base.stl": "b12f714fca9e0587eb8ca1089c1f2d89e12d254e93f9804fadac491235e05769",
+        "base.3mf": "db20330b6d97e0f906958a284ac3b7f597bd786a6dbb701d39f4868658d8f4f0"
+      },
+      "dimensions_mm": [
+        164.107,
+        144.0,
+        76.0
+      ],
+      "volume_cm3": {
+        "brep_slab_integrated": 94.04,
+        "stl": 94.036,
+        "3mf": 94.036
+      },
+      "surface_area_cm2": 447.9,
+      "triangles": 28868,
+      "mesh": {
+        "watertight": true,
+        "winding_consistent": true,
+        "is_volume": true,
+        "single_body": true,
+        "positive_triangle_areas": true,
+        "euler_number": -14,
+        "brep_valid": true,
+        "stl_3mf_equal": true
+      },
+      "fits_bed": true,
+      "bed_contact_area_cm2": 151.7,
+      "overhang_area_over_limit_mm2": 361.14,
+      "overhang_area_over_limit_plus_tessellation_tolerance_mm2": 0.0,
+      "overhang_area_over_50deg_mm2": 0.0,
+      "steepest_downward_face_deg": 46.0,
+      "floating_layers_0_2mm": 0,
+      "wall_thickness_mm": {
+        "sampled_points": 4000,
+        "p01": 2.9,
+        "p05": 2.9,
+        "median": 5.79
+      },
+      "material_estimate": {
+        "method": "4 x 0.45 mm perimeters + 15 % gyroid-equivalent infill; not a slicer result",
+        "printed_volume_cm3": 82.6,
+        "PLA": {
+          "grams": 102.5,
+          "filament_m_1_75mm": 34.4
+        },
+        "PETG": {
+          "grams": 105.0,
+          "filament_m_1_75mm": 34.4
+        }
+      }
+    },
+    {
+      "part": "column",
+      "file": "parts/column.stl",
+      "sha256": {
+        "column.stl": "ddf2cc48e6b1c84031e79770ed4d61051555f558e86a82f57fb6c7e0e5130e7e",
+        "column.3mf": "21a298a00c9ca2d1f99c1a21c0d5c560ae30ff9566feea19ab4fa8fbca258b62"
+      },
+      "dimensions_mm": [
+        37.09,
+        34.0,
+        94.0
+      ],
+      "volume_cm3": {
+        "brep_slab_integrated": 47.681,
+        "stl": 47.676,
+        "3mf": 47.676
+      },
+      "surface_area_cm2": 166.8,
+      "triangles": 14854,
+      "mesh": {
+        "watertight": true,
+        "winding_consistent": true,
+        "is_volume": true,
+        "single_body": true,
+        "positive_triangle_areas": true,
+        "euler_number": -8,
+        "brep_valid": true,
+        "stl_3mf_equal": true
+      },
+      "fits_bed": true,
+      "bed_contact_area_cm2": 5.0,
+      "overhang_area_over_limit_mm2": 108.56,
+      "overhang_area_over_limit_plus_tessellation_tolerance_mm2": 0.0,
+      "overhang_area_over_50deg_mm2": 0.0,
+      "steepest_downward_face_deg": 46.0,
+      "floating_layers_0_2mm": 0,
+      "wall_thickness_mm": {
+        "sampled_points": 4000,
+        "p01": 4.65,
+        "p05": 5.27,
+        "median": 13.58
+      },
+      "material_estimate": {
+        "method": "4 x 0.45 mm perimeters + 15 % gyroid-equivalent infill; not a slicer result",
+        "printed_volume_cm3": 32.7,
+        "PLA": {
+          "grams": 40.5,
+          "filament_m_1_75mm": 13.6
+        },
+        "PETG": {
+          "grams": 41.5,
+          "filament_m_1_75mm": 13.6
+        }
+      }
+    },
+    {
+      "part": "head",
+      "file": "parts/head.stl",
+      "sha256": {
+        "head.stl": "095378b7c9dde5d7c7c4610bd0540f73ff5ce5a34a0fcb0a1110aa90cd44cace",
+        "head.3mf": "a9d342128c13376eab47c54be8f97f525fb46994722b8cd6d82e72bc1621d2a7"
+      },
+      "dimensions_mm": [
+        105.221,
+        93.0,
+        138.0
+      ],
+      "volume_cm3": {
+        "brep_slab_integrated": 195.986,
+        "stl": 195.99,
+        "3mf": 195.99
+      },
+      "surface_area_cm2": 622.1,
+      "triangles": 29424,
+      "mesh": {
+        "watertight": true,
+        "winding_consistent": true,
+        "is_volume": true,
+        "single_body": true,
+        "positive_triangle_areas": true,
+        "euler_number": -26,
+        "brep_valid": true,
+        "stl_3mf_equal": true
+      },
+      "fits_bed": true,
+      "bed_contact_area_cm2": 5.0,
+      "overhang_area_over_limit_mm2": 1184.36,
+      "overhang_area_over_limit_plus_tessellation_tolerance_mm2": 0.0,
+      "overhang_area_over_50deg_mm2": 0.0,
+      "steepest_downward_face_deg": 46.0,
+      "floating_layers_0_2mm": 0,
+      "wall_thickness_mm": {
+        "sampled_points": 4000,
+        "p01": 2.0,
+        "p05": 4.69,
+        "median": 11.43
+      },
+      "material_estimate": {
+        "method": "4 x 0.45 mm perimeters + 15 % gyroid-equivalent infill; not a slicer result",
+        "printed_volume_cm3": 124.6,
+        "PLA": {
+          "grams": 154.5,
+          "filament_m_1_75mm": 51.8
+        },
+        "PETG": {
+          "grams": 158.2,
+          "filament_m_1_75mm": 51.8
+        }
+      }
     }
+  ],
+  "joints": [
+    {
+      "joint": "base -> column",
+      "z_mm": 62.0,
+      "spigot_core_clears_socket": true,
+      "clearance_per_side_mm": 0.25,
+      "crush_rib_interference_mm": 0.2,
+      "crush_rib_overlap_mm3": 4.813,
+      "other_overlap_mm3": 0.0,
+      "engagement_mm": 14.0,
+      "orientations": 3
+    },
+    {
+      "joint": "column -> head",
+      "z_mm": 142.0,
+      "spigot_core_clears_socket": true,
+      "clearance_per_side_mm": 0.25,
+      "crush_rib_interference_mm": 0.2,
+      "crush_rib_overlap_mm3": 4.813,
+      "other_overlap_mm3": 0.0,
+      "engagement_mm": 14.0,
+      "orientations": 3
+    }
+  ],
+  "host_cad_dimensions_mm": [
+    93.0,
+    144.0,
+    164.107
+  ],
+  "kit": {
+    "file": "pipette_holder.3mf",
+    "objects": [
+      "base",
+      "column",
+      "head"
+    ],
+    "sha256": "58059462bca14a1c3527338a595b0f7783ba64e500e9f620a90408b00142828f"
   },
+  "assembled": {
+    "file": "assembly/pipette_holder_assembled.stl",
+    "bounding_box_mm": {
+      "min": [
+        -82.053,
+        -72.0,
+        -0.0
+      ],
+      "max": [
+        82.053,
+        72.0,
+        279.9
+      ],
+      "size": [
+        164.107,
+        144.0,
+        279.9
+      ]
+    },
+    "triangles": 71454
+  },
+  "assembled_dimensions_mm": [
+    164.107,
+    144.0,
+    280.0
+  ],
   "fit_checks_against_stand_in_pipette": {
     "envelope_intersection_mm3": 0.0,
     "handle_back_to_cradle_mm": 0.6,
     "hook_underside_to_deck_mm": 0.0,
-    "lower_end_to_tip_pad_mm": 4.701,
+    "lower_end_above_plinth_mm": 71.715,
+    "fitted_tip_end_above_plinth_mm": 12.317,
     "pipette_centre_spacing_mm": 100.5,
     "free_gap_between_handles_mm": 69.5
   },
   "stability": {
     "assumed_pipette_mass_g": 120.0,
-    "assumed_pipette_com_height_mm": 140.0,
+    "assumed_pipette_com_height_mm": 208.0,
     "holder_com_mm": [
       -0.0,
       -0.0,
-      109.7
+      147.7
     ],
     "footprint": "convex hull of the bed contact (hexagonal plinth)",
+    "bed_contact_area_cm2": 151.7,
     "centre_to_tipping_edge_mm": 71.3,
-    "reference_centre_to_tipping_edge_mm": 56.6,
+    "side_push_measured_at": "canopy deck (hook_z)",
     "cases": [
+      {
+        "pipettes": 0,
+        "mass_g": 298,
+        "com_mm": [
+          -0.0,
+          -0.0,
+          147.7
+        ],
+        "edge_distance_mm": 71.3,
+        "tilt_to_tip_deg": 25.8,
+        "side_push_to_tip_N": 0.74
+      },
+      {
+        "pipettes": 1,
+        "mass_g": 418,
+        "com_mm": [
+          -0.0,
+          16.7,
+          165.0
+        ],
+        "edge_distance_mm": 54.6,
+        "tilt_to_tip_deg": 18.3,
+        "side_push_to_tip_N": 0.8
+      },
+      {
+        "pipettes": 3,
+        "mass_g": 658,
+        "com_mm": [
+          -0.0,
+          -0.0,
+          180.7
+        ],
+        "edge_distance_mm": 71.3,
+        "tilt_to_tip_deg": 21.5,
+        "side_push_to_tip_N": 1.64
+      }
+    ]
+  },
+  "material_estimate": {
+    "method": "4 x 0.45 mm perimeters + 15 % gyroid-equivalent infill; not a slicer result",
+    "printed_volume_cm3": 239.9,
+    "PLA": {
+      "grams": 297.5,
+      "filament_m_1_75mm": 99.7
+    },
+    "PETG": {
+      "grams": 304.7,
+      "filament_m_1_75mm": 99.7
+    },
+    "solid_volume_cm3": 337.7,
+    "surface_area_cm2": 1236.8
+  },
+  "reference_comparison": {
+    "source": "exaple_product/mechanical-pipette-holder.stl (unchanged)",
+    "sha256": "c4cdbe9cad82788aae67844644b1ddac167677d1bd31f59e97d5315ed48c3b7b",
+    "size_mm": [
+      175.6,
+      153.9,
+      218.0
+    ],
+    "positions": 3,
+    "watertight": false,
+    "shells": 7,
+    "volume_cm3_section_integrated": 330.9,
+    "pla_grams_same_estimate": 188.3,
+    "centre_to_tipping_edge_mm": 56.6
+  },
+  "previous_version": {
+    "source": "previous/pipette_holder_v1 (single part)",
+    "size_mm": [
+      164.107,
+      144.0,
+      212.0
+    ],
+    "volume_cm3": 281.031,
+    "pla_grams_same_estimate": 256.2,
+    "stability_cases": [
       {
         "pipettes": 0,
         "mass_g": 256,
@@ -126,47 +376,19 @@
       }
     ]
   },
-  "material_estimate": {
-    "method": "4 x 0.45 mm perimeters + 15 % gyroid-equivalent infill; not a slicer result",
-    "printed_volume_cm3": 206.6,
-    "PLA": {
-      "grams": 256.2,
-      "filament_m_1_75mm": 85.9
-    },
-    "PETG": {
-      "grams": 262.3,
-      "filament_m_1_75mm": 85.9
-    }
-  },
-  "reference_comparison": {
-    "source": "exaple_product/mechanical-pipette-holder.stl (unchanged)",
-    "sha256": "c4cdbe9cad82788aae67844644b1ddac167677d1bd31f59e97d5315ed48c3b7b",
-    "size_mm": [
-      175.6,
-      153.9,
-      218.0
-    ],
-    "positions": 3,
-    "watertight": false,
-    "shells": 7,
-    "volume_cm3_section_integrated": 330.9,
-    "pla_grams_same_estimate": 188.3,
-    "centre_to_tipping_edge_mm": 56.6,
-    "this_design": {
-      "size_mm": [
-        164.1,
-        144.0,
-        212.0
-      ],
-      "volume_cm3": 281.0,
-      "pla_grams_same_estimate": 256.2,
-      "centre_to_tipping_edge_mm": 71.3
-    }
-  },
   "parameters": {
     "positions": 3,
     "first_angle_deg": 90.0,
-    "hook_z": 212.0,
+    "hook_z": 280.0,
+    "joint_z": [
+      62.0,
+      142.0
+    ],
+    "bed": [
+      180.0,
+      180.0,
+      180.0
+    ],
     "corner_radius": 7.0,
     "top_fillet": 1.6,
     "bed_chamfer": 0.8,
@@ -191,31 +413,42 @@
         54.0
       ],
       [
-        62.0,
-        96.0
+        90.0,
+        134.0
       ],
       [
-        112.0,
-        154.0
+        180.0,
+        222.0
       ],
       [
-        162.0,
-        184.0
+        230.0,
+        252.0
       ]
     ],
     "mast_window_half": 5.5,
+    "spigot_inradius": 8.0,
+    "spigot_corner": 3.0,
+    "spigot_height": 14.0,
+    "spigot_chamfer": 1.0,
+    "joint_clearance": 0.25,
+    "crush_rib": [
+      0.8,
+      0.45
+    ],
+    "socket_floor": 3.0,
+    "joint_band": 8.0,
     "collar_apothem": 46.5,
     "collar_wall": 6.0,
-    "collar_top": 172.0,
-    "collar_underside_z": 132.0,
-    "collar_vault_apex": 162.0,
+    "collar_top": 240.0,
+    "collar_underside_z": 200.0,
+    "collar_vault_apex": 230.0,
     "web_thickness": 7.0,
     "web_underside_deg": 50.0,
-    "web_top": 168.0,
+    "web_top": 236.0,
     "vault_margin": 0.8,
     "cradle_radius": 22.0,
     "canopy_apothem": 31.0,
-    "canopy_underside_z": 189.5,
+    "canopy_underside_z": 257.5,
     "nose_slot": [
       15.0,
       20.0,
@@ -233,6 +466,7 @@
     "nose_drop": 10.0,
     "above_hook": 45.0,
     "below_hook": 205.0,
+    "tip_drop": 60.0,
     "clearance": 0.6
   }
 }

@@ -45,7 +45,9 @@ function authPage() {
 
 /* Signed-in: one Account Settings page. */
 function avatarFieldHtml() {
-  return `<div class="avatar-field" id="avatar-field"><button type="button" class="avatar-button" id="avatar-pick" aria-describedby="avatar-help">${avatarHtml(account, 80, 'avatar-lg')}<span class="avatar-overlay" aria-hidden="true">${icon('camera')}</span><svg class="avatar-progress" viewBox="0 0 36 36" aria-hidden="true"><circle cx="18" cy="18" r="17" pathLength="100"/></svg><span class="sr-only">${account.avatar ? 'Change' : 'Upload'} profile picture</span></button><div class="avatar-copy"><strong>Profile picture</strong><p id="avatar-help">Drop an image here or choose a file. PNG, JPEG or WebP, up to 2 MB.</p><div class="avatar-actions"><button type="button" class="btn-ghost btn-sm" id="avatar-choose">${account.avatar ? 'Change picture' : 'Upload picture'}</button>${account.avatar ? '<button type="button" class="btn-ghost btn-sm danger-text" id="avatar-remove">Remove</button>' : ''}</div><p class="avatar-status" id="avatar-status" role="status" aria-live="polite"></p></div><input type="file" id="avatar-input" accept="image/png,image/jpeg,image/webp" hidden></div>`;
+  const picture = profilePictureFor(account);
+  // The design itself happens in the avatar editor (assets/avatar-editor.js); the page stays compact.
+  return `<div class="avatar-field" id="avatar-field"><button type="button" class="avatar-button" id="avatar-pick" aria-haspopup="dialog" aria-describedby="avatar-help">${avatarHtml(account, 80, 'avatar-lg')}<span class="avatar-overlay" aria-hidden="true">${icon('pencil')}</span><span class="sr-only">Change profile picture</span></button><div class="avatar-copy"><strong>Profile picture</strong><p id="avatar-help">${picture.kind === 'photo' ? 'Your uploaded photo.' : picture.kind === 'avatar' ? 'Your scientific avatar.' : 'Your initials, until you choose a picture.'} Upload a photo or create an avatar.</p><div class="avatar-actions"><button type="button" class="btn-ghost btn-sm" id="avatar-edit" aria-haspopup="dialog">${icon('pencil')}Change picture</button></div><p class="avatar-status" id="avatar-status" role="status" aria-live="polite"></p></div></div>`;
 }
 const settingsCard = (id, title, text, body, extra='') => `<section class="settings-card" id="settings-${id}" aria-labelledby="settings-${id}-title"><div class="settings-card-head"><div><h2 id="settings-${id}-title">${title}</h2><p>${text}</p></div>${extra}</div>${body}</section>`;
 const formFooter = label => `<div class="form-footer"><p class="form-status" role="status"></p><button class="primary" disabled>${label}</button></div>`;
@@ -88,37 +90,14 @@ function accountPage() {
 }
 
 /* Behaviour */
-function avatarStatus(text, kind='') { const s = $('#avatar-status'); if (s) { s.textContent = text; s.className = 'avatar-status ' + kind; } }
-function setAvatarProgress(fraction) { const circle = $('#avatar-field .avatar-progress circle'); if (circle) circle.style.strokeDashoffset = String(100 - 100 * fraction); }
 function refreshAvatarField() { const field = $('#avatar-field'); if (!field) return; field.outerHTML = avatarFieldHtml(); bindAvatar(); renderNavbar(); }
-function uploadAvatar(file) {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return avatarStatus('Choose a PNG, JPEG or WebP image.', 'error');
-  if (file.size > 2 * 1024 * 1024) return avatarStatus(`This image is ${(file.size / 1048576).toFixed(1)} MB. Choose one up to 2 MB.`, 'error');
-  const field = $('#avatar-field'), preview = URL.createObjectURL(file), avatar = field.querySelector('.avatar-lg');
-  avatar.querySelector('img')?.remove(); avatar.insertAdjacentHTML('beforeend', `<img src="${preview}" alt="">`);
-  field.classList.add('uploading'); setAvatarProgress(0); avatarStatus('Uploading…');
-  const data = new FormData(); data.append('file', file);
-  // XMLHttpRequest reports upload progress; fetch does not.
-  const xhr = new XMLHttpRequest(); xhr.open('POST', '/api/profile/avatar'); xhr.setRequestHeader('X-CSRF-Token', csrf);
-  xhr.upload.onprogress = e => { if (e.lengthComputable) { setAvatarProgress(e.loaded / e.total); avatarStatus(`Uploading… ${Math.round(e.loaded / e.total * 100)}%`); } };
-  xhr.onload = () => {
-    let body = {}; try { body = JSON.parse(xhr.responseText); } catch (e) {}
-    URL.revokeObjectURL(preview);
-    if (xhr.status >= 200 && xhr.status < 300) { account = body; refreshAvatarField(); avatarStatus('Profile picture updated.', 'success'); }
-    else { refreshAvatarField(); avatarStatus(typeof body.detail === 'string' ? body.detail : 'The image could not be uploaded.', 'error'); }
-  };
-  xhr.onerror = () => { URL.revokeObjectURL(preview); refreshAvatarField(); avatarStatus('Upload failed. Check your connection and try again.', 'error'); };
-  xhr.send(data);
-}
-async function removeAvatar() { if (!confirm('Remove your profile picture? Your initials are shown instead.')) return; try { account = await api('/profile/avatar', {method:'DELETE'}); refreshAvatarField(); avatarStatus('Profile picture removed.', 'success'); } catch (e) { avatarStatus(e.message, 'error'); } }
 function bindAvatar() {
-  const field = $('#avatar-field'), input = $('#avatar-input'); if (!field) return;
-  $('#avatar-pick').onclick = $('#avatar-choose').onclick = () => input.click();
-  input.onchange = () => { if (input.files[0]) uploadAvatar(input.files[0]); input.value = ''; };
+  const field = $('#avatar-field'); if (!field) return;
+  $('#avatar-pick').onclick = $('#avatar-edit').onclick = () => openAvatarEditor();
+  // Dropping an image opens the editor with that photo ready to save.
   field.ondragenter = field.ondragover = e => { e.preventDefault(); field.classList.add('dragging'); };
   field.ondragleave = e => { if (!field.contains(e.relatedTarget)) field.classList.remove('dragging'); };
-  field.ondrop = e => { e.preventDefault(); field.classList.remove('dragging'); const file = e.dataTransfer.files[0]; if (file) uploadAvatar(file); };
-  const remove = $('#avatar-remove'); if (remove) remove.onclick = removeAvatar;
+  field.ondrop = e => { e.preventDefault(); field.classList.remove('dragging'); const file = e.dataTransfer.files[0]; if (file) openAvatarEditor({file}); };
 }
 function bindProfileForm(form, extra={}) {
   const button = form.querySelector('.form-footer .primary'), status = form.querySelector('.form-status');
@@ -127,7 +106,7 @@ function bindProfileForm(form, extra={}) {
     e.preventDefault(); button.disabled = true; status.textContent = 'Saving…';
     try {
       account = await api('/profile', {method:'PATCH', body:JSON.stringify({username:account.username, ...Object.fromEntries(new FormData(form)), ...extra})});
-      status.textContent = 'Saved'; renderNavbar();
+      status.textContent = 'Saved'; renderNavbar(); refreshProfilePictures(account);
       // Keep an in-progress checkout in step with the saved contact details.
       try { const key = 'checkout-contact-' + account.id, draft = JSON.parse(sessionStorage.getItem(key) || '{}'); for (const k of ['first_name', 'last_name', 'phone']) draft[k] = account[k]; sessionStorage.setItem(key, JSON.stringify(draft)); } catch (e) {}
     } catch (err) { status.textContent = err.message; status.classList.add('error'); button.disabled = false; }

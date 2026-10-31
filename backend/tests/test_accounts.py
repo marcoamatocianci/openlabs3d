@@ -1,4 +1,4 @@
-from order_fixtures import provision_test_host
+from order_fixtures import provision_test_host, with_confirmation
 """Run independently: uses only an isolated temporary SQLite database and mailbox."""
 import os
 import tempfile
@@ -122,7 +122,7 @@ def test_cart_checkout_isolation():
         u=db.scalar(select(User).where(User.username=='BuyerAlpha'));u.email_verified=True
         p=Listing(owner_id=u.id,title='Test rack',price_cents=1000,material='PETG',status='approved',cad_dimensions='[10,10,10]');db.add(p);provision_test_host(db);db.commit();pid=p.id
     line={'listing_id':pid,'material':'PETG','color':'black','quantity':2}
-    assert a.put('/api/cart',json=line).status_code==200
+    r=a.put('/api/cart',json=line);assert r.status_code==200,r.text
     assert b.get('/api/cart').json()==[]
     aid=a.get('/api/cart').json()[0]['id']
     assert b.delete('/api/cart/'+str(aid)).status_code==404
@@ -132,6 +132,7 @@ def test_cart_checkout_isolation():
     assert b.get('/api/cart').json()[0]['quantity']==1
     contact={'first_name':'A','last_name':'Buyer','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Via Roma 1'}
     body={'idempotency_key':'direct-test-key-1234','contact':contact,'direct':{**line,'quantity':1}}
+    body=with_confirmation(a,body)
     response=a.post('/api/checkout',json=body);assert response.status_code==201,response.text
     assert response.json()['total_cents']==1000
     import json
@@ -143,7 +144,7 @@ def test_cart_checkout_isolation():
     invalid=a.post('/api/checkout',json={**body,'idempotency_key':'invalid-email-key-123','contact':{**contact,'email':'invalid'}})
     assert invalid.status_code==422
     contact={**contact,'email':'alternate@example.org','first_name':'Alternative'}
-    response=a.post('/api/checkout',json={'idempotency_key':'basket-test-key-1234','contact':contact});assert response.status_code==201,response.text
+    response=a.post('/api/checkout',json=with_confirmation(a,{'idempotency_key':'basket-test-key-1234','contact':contact}));assert response.status_code==201,response.text
     assert a.get('/api/cart').json()==[]
     assert len(b.get('/api/cart').json())==1
     assert 'Via Roma 1' in response.json()['address']
@@ -221,7 +222,7 @@ def test_cad_and_product_lifecycle(monkeypatch):
     with SessionLocal() as db:
         u=db.scalar(select(User).where(User.username=='CADBuyer'));u.email_verified=True;db.get(Listing,oid).cad_dimensions='[10,10,10]';provision_test_host(db);db.commit()
     contact={'first_name':'CAD','last_name':'Buyer','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Test 1'}
-    order=buyer.post('/api/checkout',json={'idempotency_key':'cad-historical-order','contact':contact,'direct':{'listing_id':oid,'material':'PLA','color':'black','quantity':1}});assert order.status_code==201,order.text
+    order=buyer.post('/api/checkout',json=with_confirmation(buyer,{'idempotency_key':'cad-historical-order','contact':contact,'direct':{'listing_id':oid,'material':'PLA','color':'black','quantity':1}}));assert order.status_code==201,order.text
     assert admin.post(f'/api/admin/products/{oid}/remove').status_code==200
     assert buyer.get(f'/api/listings/{oid}').status_code==404
     assert buyer.get('/api/orders').json()[0]['items'][0]['title']=='CAD rack'

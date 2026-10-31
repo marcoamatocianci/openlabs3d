@@ -12,7 +12,12 @@ class User(Base):
     display_name: Mapped[str] = mapped_column(String(100))
     username: Mapped[str] = mapped_column(String(32, collation='NOCASE'), unique=True, default=lambda: 'user_' + __import__('uuid').uuid4().hex[:20])
     theme: Mapped[str] = mapped_column(String(10), default='system', server_default='system')
+    # The sole active selection: initials, an uploaded file, or an SVG design.
+    profile_picture: Mapped[str] = mapped_column(Text, default='{"kind":"initials"}', server_default='{"kind":"initials"}')
+    # Retained only as migration archives, never read as active pictures.
     avatar: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    avatar_mode: Mapped[str] = mapped_column(String(10), default='photo', server_default='photo')
+    avatar_style: Mapped[str] = mapped_column(Text, default='', server_default='')
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
     first_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
     last_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
@@ -114,9 +119,16 @@ class Order(Base):
 
 class OrderItem(Base):
     manufacturing_dimensions: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
-    color: Mapped[str] = mapped_column(String(40), default='', server_default='')
+    # Colour key as purchased: a name, or name~rrggbb when hosts stock that name in several shades.
+    color: Mapped[str] = mapped_column(String(48), default='', server_default='')
     # Display colour offered when the order was placed; '' for lines ordered before it was recorded.
     color_hex: Mapped[str] = mapped_column(String(7), default='', server_default='')
+    # Manufacturing snapshot (see app/manufacturing.py): the listing revision and the exact,
+    # immutable CAD file sold. cad_status: pinned | unverified (order predates versioning) | none | missing.
+    listing_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    cad_path: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    cad_sha256: Mapped[str] = mapped_column(String(64), default='', server_default='')
+    cad_status: Mapped[str] = mapped_column(String(12), default='', server_default='')
     __tablename__ = 'order_items'
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey('orders.id', ondelete='RESTRICT'), index=True)
@@ -191,8 +203,11 @@ class CartItem(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey('users.id',ondelete='CASCADE'),index=True)
     listing_id: Mapped[int] = mapped_column(ForeignKey('listings.id',ondelete='CASCADE'))
     material: Mapped[str] = mapped_column(String(200))
-    color: Mapped[str] = mapped_column(String(40),default='')
+    color: Mapped[str] = mapped_column(String(48),default='')
     quantity: Mapped[int] = mapped_column(Integer)
+    # Unit price the buyer last saw and accepted for this line; NULL for lines saved before prices
+    # were recorded. Checkout refuses lines whose current price differs until the buyer accepts it.
+    confirmed_unit_price_cents: Mapped[int | None] = mapped_column(Integer, nullable=True)
     __table_args__=(UniqueConstraint('user_id','listing_id','material','color'),CheckConstraint('quantity BETWEEN 1 AND 50'))
 
 class Material(Base):

@@ -208,6 +208,7 @@ from fastapi import UploadFile, File
 from fastapi.responses import FileResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
 import io
+from .avatars import AvatarChoice, assign_picture, picture_data, PHOTO_NAME
 @router.post('/profile/avatar')
 async def upload_avatar(file: UploadFile=File(...),auth=Depends(mutate),db: Session=Depends(get_db)):
     data=await file.read(2*1024*1024+1)
@@ -220,20 +221,32 @@ async def upload_avatar(file: UploadFile=File(...),auth=Depends(mutate),db: Sess
     except (UnidentifiedImageError,OSError,ValueError,Image.DecompressionBombError):fail(422,'Invalid image')
     directory=config.UPLOAD_DIR.parent/'avatars';directory.mkdir(parents=True,exist_ok=True)
     name=secrets.token_hex(24)+'.webp';path=directory/name;path.write_bytes(output.getvalue())
-    old=auth[0].avatar;auth[0].avatar=name
+    old=picture_data(auth[0].profile_picture).get('file')
+    assign_picture(auth[0], {'kind':'photo','file':name})
     try:db.commit()
     except Exception:db.rollback();path.unlink(missing_ok=True);raise
     if old:(directory/old).unlink(missing_ok=True)
     return user_data(auth[0])
+@router.put('/profile/avatar-style')
+def save_avatar_style(body:AvatarChoice,auth=Depends(mutate),db: Session=Depends(get_db)):
+    """Replace the active picture atomically; uploads use the same selection property."""
+    assign_picture(auth[0], body.model_dump(exclude_none=True));db.commit()
+    return user_data(auth[0])
 @router.get('/profile/avatar')
-def get_avatar(auth=Depends(require)):
-    name=auth[0].avatar
-    if not name or not re.fullmatch(r'[a-f0-9]{48}\.webp',name):fail(404,'No avatar')
+def get_avatar(user_id:int|None=None,auth=Depends(require),db: Session=Depends(get_db)):
+    user=auth[0]
+    if user_id is not None and user_id!=user.id:
+        if user.role!='admin':fail(403,'This profile picture is not accessible')
+        user=db.get(models.User,user_id)
+        if user is None:fail(404,'User not found')
+    name=picture_data(user.profile_picture).get('file')
+    if not name or not re.fullmatch(PHOTO_NAME,name):fail(404,'No profile photo')
     path=config.UPLOAD_DIR.parent/'avatars'/name
-    if not path.is_file():fail(404,'No avatar')
+    if not path.is_file():fail(404,'No profile photo')
     return FileResponse(path,media_type='image/webp',headers={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff'})
 @router.delete('/profile/avatar')
 def delete_avatar(auth=Depends(mutate),db: Session=Depends(get_db)):
-    old=auth[0].avatar;auth[0].avatar='';db.commit()
+    old=picture_data(auth[0].profile_picture).get('file')
+    assign_picture(auth[0], {'kind':'initials'});db.commit()
     if old:(config.UPLOAD_DIR.parent/'avatars'/old).unlink(missing_ok=True)
     return user_data(auth[0])

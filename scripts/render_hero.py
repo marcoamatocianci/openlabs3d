@@ -43,10 +43,12 @@ PRODUCTS=ROOT/'official_products'
 def linear(hex_colour):
     c=[int(hex_colour[i:i+2],16)/255 for i in (1,3,5)]
     return [v/12.92 if v<=.04045 else ((v+.055)/1.055)**2.4 for v in c]
+# The hero is a touch livelier than the previews: filamentAlbedo() keeps 80 % of the chroma at -1.3 EV.
+HERO_CHROMA=1.0;HERO_EXPOSURE=-1.15
 def filament(hex_colour):
-    # Same as filamentAlbedo() in assets/product-visuals.js: real filament reads darker and less saturated.
+    # filamentAlbedo() in assets/product-visuals.js (real filament reads darker and less saturated), with HERO_CHROMA.
     a=linear(hex_colour);y=.2126*a[0]+.7152*a[1]+.0722*a[2]
-    return tuple(min(.8,max(.012,(y+(c-y)*.8)*.85)) for c in a)+(1,)
+    return tuple(min(.8,max(.012,(y+(c-y)*HERO_CHROMA)*.85)) for c in a)+(1,)
 
 # (file, sRGB filament colour, position in mm on the shared plane, yaw in degrees)
 # Yellow 15 mL rack forward and centred; the low orange microtube rack behind-left, the tall teal
@@ -137,8 +139,8 @@ import _cycles
 scene.cycles.samples=64 if PREVIEW else 256;scene.cycles.use_adaptive_sampling=True;scene.cycles.adaptive_threshold=.02 if PREVIEW else .01
 scene.cycles.use_denoising=bool(getattr(_cycles,'with_openimagedenoise',False));scene.cycles.max_bounces=6;scene.cycles.caustics_reflective=scene.cycles.caustics_refractive=False
 scene.render.film_transparent=True;scene.render.filter_size=1.2
-# Same tone mapping and exposure as the product previews.
-scene.view_settings.view_transform='Standard';scene.view_settings.look='None';scene.view_settings.exposure=-1.3
+# Same tone mapping as the product previews, slightly brighter (HERO_EXPOSURE).
+scene.view_settings.view_transform='Standard';scene.view_settings.look='None';scene.view_settings.exposure=HERO_EXPOSURE
 s=scene.render.image_settings;s.file_format='PNG';s.color_mode='RGBA';s.color_depth='16'
 OUT.mkdir(parents=True,exist_ok=True)
 scene.render.filepath=sys.argv[sys.argv.index('--preview')+1] if PREVIEW else str(RAW)

@@ -21,7 +21,7 @@ def index(): return FileResponse(ROOT/'index.html',headers={'Cache-Control':'no-
 @app.get('/{filename}')
 def public_file(filename:str):
     from fastapi import HTTPException
-    if filename not in ('app.js','marketplace.js','operations.js','collection.js','style.css','openlabs3d-logo.png','index.html'):raise HTTPException(404)
+    if filename not in ('app.js','marketplace.js','operations.js','collection.js','style.css','index.html'):raise HTTPException(404)
     return FileResponse(ROOT/filename,headers={"Cache-Control":"no-store"})
 if __name__=='__main__':
     import uvicorn

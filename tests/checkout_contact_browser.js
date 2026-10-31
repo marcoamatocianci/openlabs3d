@@ -25,7 +25,8 @@ async (page) => {
   const open = async (direct=false) => {
     await page.evaluate(async ({line,direct}) => {
       sessionStorage.removeItem('checkout-contact-'+account.id);
-      if(direct) sessionStorage.setItem('ol3d-direct',JSON.stringify({line,owner:account.id,key:uid()}));
+      // As the Buy Now button does: remember the line and the unit price the product page showed.
+      if(direct) sessionStorage.setItem('ol3d-direct',JSON.stringify({line,unit_price_cents:(await obtainQuote(line.listing_id,{material:line.material,color:line.color,quantity:line.quantity})).unit_price_cents,owner:account.id,key:uid()}));
       else await accountAction('/cart',line,'PUT');
       location.hash = direct ? 'checkout' : 'checkout-cart';
     }, {line:setup.line,direct});

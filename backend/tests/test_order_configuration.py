@@ -102,8 +102,8 @@ def test_order_pages_use_a_fixed_number_of_queries():
 def test_host_job_list_checks_each_product_once(monkeypatch):
     from app import operations
     calls = []
-    original = operations.combinations
-    monkeypatch.setattr(operations, 'combinations', lambda product, host_id=None: calls.append(product.id) or original(product, host_id))
+    original = operations.host_shades
+    monkeypatch.setattr(operations, 'host_shades', lambda product, host_id: calls.append(product.id) or original(product, host_id))
     buyer = TestClient(app); register(buyer, 'jobs-buyer@example.org')
     uid = buyer.get('/api/auth/me').json()['user']['id']
     with SessionLocal() as db:

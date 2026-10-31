@@ -15,7 +15,7 @@ const techLabel = t => t === 'RESIN' ? 'Resin' : 'FDM';
 const techLong = t => t === 'RESIN' ? 'Resin / vat photopolymerization' : 'FDM / FFF';
 const printerName = p => `${p.manufacturer || ''} ${p.model || ''}`.trim() || 'Unnamed printer';
 const volumeText = p => `${+p.x} × ${+p.y} × ${+p.z} mm`;
-const colorTitle = name => (typeof colorLabels !== 'undefined' && colorLabels[name]) || name.replace(/-/g, ' ').replace(/^./, c => c.toUpperCase());
+const colorTitle = name => colorName(name);
 const catalogueModel = p => printerCatalogue.find(m => m.id === p.model_id);
 const colorCount = p => (p.materials || []).reduce((n, m) => n + Object.keys(p.material_colors?.[m] || {}).length, 0);
 const printerReady = p => p.materials?.length && p.materials.every(m => Object.keys(p.material_colors?.[m] || {}).length);

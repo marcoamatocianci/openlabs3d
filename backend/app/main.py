@@ -22,6 +22,7 @@ from sqlalchemy.orm.exc import StaleDataError
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
 from . import config, models, schemas
+from .avatars import picture_data
 from .database import get_db
 
 app = FastAPI(title='OpenLabs3D API', docs_url='/api/docs', openapi_url='/api/openapi.json', redoc_url=None)
@@ -78,7 +79,7 @@ def new_session(user, response, db):
     db.commit()
     response.set_cookie('ol3d_session', token, httponly=True, secure=config.SECURE_COOKIE, samesite='lax', max_age=14*86400, path='/')
     return {'user': user_data(user), 'csrf_token': csrf}
-def user_data(user): return {key:getattr(user,key) for key in ('id','email','display_name','role','username','theme','avatar','email_verified','first_name','last_name','phone','country','city','region','postal_code','street','additional')}
+def user_data(user): return {**{key:getattr(user,key) for key in ('id','email','display_name','role','username','theme','email_verified','first_name','last_name','phone','country','city','region','postal_code','street','additional')}, 'profile_picture':picture_data(user.profile_picture)}
 def color_images(p):
     return {c:f'/assets/products/{p.collection_key}/{c}.png' for c in ('aqua-blue','signal-red','cream')} if p.collection_key else {}
 
