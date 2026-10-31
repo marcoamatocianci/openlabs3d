@@ -352,3 +352,43 @@ def test_shipping_requires_details_and_only_the_buyer_completes():
     # The completed job stays in the host's list, with its shipment.
     finished=next(j for j in host.get('/api/host/jobs').json() if j['id']==first)
     assert finished['status']=='completed' and finished['shipment']['carrier']=='DHL Express'
+
+
+def test_buyer_changes_delivery_address_until_something_ships():
+    import json
+    from app.models import Activity, Order, OrderItem, PrintingJob, Listing
+    buyer, other = TestClient(app), TestClient(app)
+    token=register(buyer,'address-buyer@example.org')
+    other_token=register(other,'address-other@example.org')
+    uid=buyer.get('/api/auth/me').json()['user']['id']
+    with SessionLocal() as db:
+        ids={}
+        listing=Listing(owner_id=uid,title='Address rack',price_cents=1200,material='PLA',status='approved');db.add(listing);db.flush()
+        for name,statuses,order_status in [('open',['printing','ready'],'printing'),('shipped',['ready','shipped'],'ready'),('done',['completed'],'completed'),('cancelled',['cancelled'],'cancelled')]:
+            o=Order(buyer_id=uid,reference=f'QA-ADDRESS-{name}',idempotency_key=f'qa-address-{name}',contact=CONTACT,address=ADDRESS,total_cents=1200,status=order_status)
+            db.add(o);db.flush()
+            for n,status in enumerate(statuses):
+                item=OrderItem(order_id=o.id,listing_id=listing.id,title='Rack',quantity=1,price_cents=1200,material='PLA',color='black',dimensions='10 mm')
+                db.add(item);db.flush();db.add(PrintingJob(order_id=o.id,item_id=item.id,status=status))
+            ids[name]=o.id
+        db.commit()
+    new={'first_name':'Ada','last_name':'Lovelace','phone':'+39 011 7654321','street':'Via Nuova 5','additional':'Lab 3','postal_code':'10121','city':'Torino','region':'TO','country':'it'}
+    def change(client,name,body=new,tok=token): return client.put(f'/api/orders/{ids[name]}/address',json=body,headers=headers(tok))
+    response=change(buyer,'open')
+    assert response.status_code==200, response.text
+    saved=json.loads(response.json()['address'])
+    assert saved['street']=='Via Nuova 5' and saved['country']=='IT' and saved['postal_code']=='10121'
+    assert 'order.address_changed' in [h['action'] for h in response.json()['history']]
+    with SessionLocal() as db:
+        assert db.scalar(select(Activity).where(Activity.action=='order.address_changed',Activity.subject==f'order:{ids["open"]}')).actor_id==uid
+    # Locked once a product has shipped or completed, and on cancelled orders.
+    for name in ('shipped','done','cancelled'):
+        assert change(buyer,name).status_code==409
+        with SessionLocal() as db: assert db.get(Order,ids[name]).address==ADDRESS
+    # Validation, ownership and CSRF.
+    assert change(buyer,'open',{**new,'street':''}).status_code==422
+    assert change(buyer,'open',{**new,'country':'XX'}).status_code==422
+    assert change(buyer,'open',{**new,'unexpected':'x'}).status_code==422
+    assert change(other,'open',tok=other_token).status_code==404
+    assert buyer.put(f'/api/orders/{ids["open"]}/address',json=new).status_code==403
+    assert buyer.put('/api/orders/999999/address',json=new,headers=headers(token)).status_code==404

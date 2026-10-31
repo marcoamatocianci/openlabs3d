@@ -48,20 +48,30 @@ function buyerOrderShipment(order, job) {
   const s = job.shipment || {}, tracking = s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number || '');
   return `<li class="bo-shipment"><div class="bo-shipment-copy"><strong>${esc(job.item.title)}</strong><span class="bo-meta">${esc(s.carrier || 'Carrier not provided')}${tracking ? ' · Tracking ' + tracking : ''}</span>${s.note ? `<span class="bo-meta">${esc(s.note)}</span>` : ''}${s.shipped_at ? `<span class="bo-meta">Shipped ${esc(safeDate(s.shipped_at))}</span>` : ''}</div><button type="button" class="btn btn-sm" data-received="${order.id}:${job.id}">Mark as received</button></li>`;
 }
+const buyerOrderJson = value => { try { const data = JSON.parse(value); return data && typeof data === 'object' ? data : {}; } catch (e) { return {}; } };
+// The address may change until any product of the order has shipped (the server enforces the same rule).
+const buyerOrderAddressLocked = order => order.status === 'cancelled' || order.jobs.some(j => ['shipped', 'completed'].includes(j.status));
+function buyerOrderContact(order) {
+  const c = buyerOrderJson(order.contact), lines = [[c.first_name, c.last_name].filter(Boolean).join(' '), c.email, c.phone].filter(Boolean);
+  return `<div class="bo-fact"><h3>Order contact</h3><p>${lines.map(esc).join('<br>') || 'Not provided'}</p></div>`;
+}
+function buyerOrderAddress(order) {
+  const lines = addressLines(buyerOrderJson(order.address)), locked = buyerOrderAddressLocked(order), hint = `bo-address-hint-${order.id}`;
+  const reason = order.status === 'cancelled' ? 'Cancelled orders cannot be changed.' : 'The address is fixed once a product has shipped.';
+  return `<div class="bo-fact"><div class="bo-fact-head"><h3>Delivery address</h3><button type="button" class="bo-address-edit" data-change-address="${order.id}" aria-label="Change delivery address"${locked ? ` disabled aria-describedby="${hint}"` : ''} title="${locked ? esc(reason) : 'Change delivery address'}">${icon('edit')}</button></div><address>${lines.map(esc).join('<br>') || 'Not provided'}</address>${locked ? `<p class="bo-meta" id="${hint}">${esc(reason)}</p>` : ''}</div>`;
+}
 function buyerOrderCard(order) {
   const count=order.items.reduce((sum,i)=>sum+i.quantity,0),preview=order.items.slice(0,2);
   const shipped=order.jobs.filter(j=>j.status==='shipped');
   const jobs=order.jobs.map(j=>`<li class="bo-job"><div><strong>${esc(j.item.title)}</strong>${buyerOrderConfig(j.item)}<span class="bo-meta">Quantity: ${j.item.quantity}</span><span class="bo-meta">${j.host_id?'Assigned printing host #'+j.host_id:j.status==='cancelled'?'No active assignment':'Waiting for a printing host'}</span>${j.shipment?`<span class="bo-meta">${esc(j.shipment.carrier)} · ${esc(j.shipment.tracking_number)}</span>`:''}</div><div>${buyerOrderBadge(j.status)}<span class="bo-meta">Updated ${esc(safeDate(j.updated_at))}</span></div></li>`).join('');
-  return `<article class="section-card bo-card" data-order-id="${order.id}" aria-labelledby="bo-title-${order.id}">
+  return `<article class="section-card bo-card" data-order-id="${order.id}" data-address="${esc(order.address)}" aria-labelledby="bo-title-${order.id}">
     <header class="bo-card-head"><div><h2 id="bo-title-${order.id}">${esc(order.reference)}</h2><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div>${buyerOrderBadge(order.status)}</header>
     <ul class="bo-products">${preview.map(i=>buyerOrderLine(i,order.currency)).join('')}</ul>
     ${order.items.length>2?`<p class="bo-more">+ ${order.items.length-2} more ${order.items.length===3?'product':'products'} in order details</p>`:''}
     ${shipped.length?`<section class="bo-shipments" aria-label="Shipped products"><h3>On its way</h3><p class="bo-meta">Confirm each product once it arrives; the order completes when everything is received.</p><ul>${shipped.map(j=>buyerOrderShipment(order,j)).join('')}</ul></section>`:''}
     <div class="bo-total"><span class="bo-meta">${count} ${count===1?'item':'items'} · ${order.items.length} ${order.items.length===1?'product':'products'}</span><span>Total <strong>${buyerOrderMoney(order.total_cents,order.currency)}</strong></span></div>
     <details class="bo-details"><summary aria-label="View details for ${esc(order.reference)}"><span class="bo-open-label">View details</span><span class="bo-close-label">Hide details</span>${icon('chevron')}</summary><div class="bo-detail-body">
-      <section><h3>Ordered products</h3><ul class="bo-products">${order.items.map(i=>buyerOrderLine(i,order.currency,true)).join('')}</ul></section>
-      <section><h3>Fulfillment</h3><p class="bo-meta">Products may be handled by different printing hosts. Payment and delivery are arranged directly with your host.</p><ul class="bo-jobs">${jobs||'<li>No fulfillment updates yet.</li>'}</ul></section>
-      <section><h3>Delivery & contact</h3><dl class="detail-grid"><div><dt>Order contact</dt><dd>${esc(deliveryText(order.contact))||'Not provided'}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(order.address))||'Not provided'}</dd></div></dl></section>
+      <section class="bo-fulfilment"><div class="bo-delivery">${buyerOrderContact(order)}${buyerOrderAddress(order)}</div><div class="bo-fulfilment-jobs"><h3>Fulfillment</h3><p class="bo-meta">Products may be handled by different printing hosts. Payment and delivery are arranged directly with your host.</p><ul class="bo-jobs">${jobs||'<li>No fulfillment updates yet.</li>'}</ul></div></section>
       <section><h3>Order updates</h3><ol class="bo-history">${order.history.map(e=>`<li><span>${esc(buyerOrderEvents[e.action]||'Order updated')}</span><time datetime="${esc(e.created_at)}">${esc(safeDate(e.created_at))}</time></li>`).join('')||'<li>No updates yet.</li>'}</ol></section>
     </div></details>
   </article>`;
@@ -94,7 +104,8 @@ async function renderBuyerOrders() {
   if(inPlace){buyerOrdersMarkTab(filters.category);region.setAttribute('aria-busy','true');$('#bo-status').textContent='Updating orders…';}
   else{buyerOrdersShown=null;$('#app').innerHTML=buyerOrdersShell('<div class="bo-toolbar" id="bo-toolbar"></div><div id="bo-results" aria-busy="true"><div class="bo-skeletons" role="status" aria-label="Loading orders"><span class="sr-only">Loading orders…</span>'+Array.from({length:3},()=>'<div class="bo-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>').join('')+'</div></div><p id="bo-status" class="sr-only" role="status"></p>');}
   try{
-    const data=await api('/orders?'+new URLSearchParams({...filters,paginated:true,per_page:10}));
+    // Country names for the delivery addresses; a code is shown if the list cannot be loaded.
+    const [data]=await Promise.all([api('/orders?'+new URLSearchParams({...filters,paginated:true,per_page:10})),ensureCountries().catch(()=>[])]);
     if(!current())return;
     const body=buyerOrdersBody(data,filters),toolbar=$('#bo-toolbar'),results=$('#bo-results');
     if(toolbar.innerHTML!==body.toolbar){
@@ -116,6 +127,31 @@ async function renderBuyerOrders() {
     $('#bo-retry').onclick=renderBuyerOrders;
   }
 }
+// Change delivery address: the current address prefilled, a saved address can be copied in.
+const ORDER_ADDRESS_KEYS = ['first_name', 'last_name', 'phone', 'street', 'additional', 'postal_code', 'city', 'region', 'country'];
+async function changeOrderAddress(button) {
+  const orderId = button.dataset.changeAddress, card = button.closest('.bo-card');
+  let saved = [], current = {};
+  try { [saved] = await Promise.all([api('/addresses'), ensureCountries()]); current = buyerOrderJson(card.dataset.address); } catch (e) { showError(e); return; }
+  const picker = saved.length ? uiSelect({id:'order-address-saved', label:'Use a saved address', className:'cf-select-field', value:'', options:[['', 'Keep the details below'], ...saved.map(a => [String(a.id), [a.label || 'Address', addressLines(a).slice(1, 3).join(', ')].filter(Boolean).join(' · ')])]}) : '';
+  const body = `${picker}<form class="ad-form" id="order-address-form" novalidate><div class="fields">${textField('first_name', current.first_name)}${textField('last_name', current.last_name)}${textField('phone', current.phone, {wide:true})}${textField('street', current.street, {required:true, wide:true})}${textField('additional', current.additional, {optional:true, wide:true})}${textField('postal_code', current.postal_code)}${textField('city', current.city, {required:true})}${textField('region', current.region)}${countryField(current.country, true)}</div></form><ul class="ad-notes"><li>Your printing host sees the new address straight away.</li><li>It can be changed until a product of this order has shipped.</li></ul>`;
+  const ok = await actionDialog({title:'Change delivery address', confirm:'Save address', busy:'Saving…', body, run:() => {
+    const form = $('#order-address-form');
+    if (!form.reportValidity()) throw Error('Enter the street, city and country.');
+    const d = Object.fromEntries(new FormData(form));
+    return api(`/orders/${orderId}/address`, {method:'PUT', body:JSON.stringify(Object.fromEntries(ORDER_ADDRESS_KEYS.map(k => [k, (d[k] || '').trim()])))});
+  }, setup:dialog => {
+    bindAccountFields(dialog);
+    dialog.querySelector('[data-select=order-address-saved] input[type=hidden]')?.addEventListener('change', e => {
+      const a = saved.find(x => String(x.id) === e.target.value); if (!a) return;
+      const form = dialog.querySelector('#order-address-form');
+      for (const k of ORDER_ADDRESS_KEYS) if (form.elements[k]) form.elements[k].value = a[k] || '';
+    });
+  }});
+  if (!ok) { if (button.isConnected) button.focus(); return; }
+  toast('Delivery address updated'); renderBuyerOrders();
+}
+document.addEventListener('click', e => { const button = e.target.closest('[data-change-address]'); if (button && !button.disabled) changeOrderAddress(button); });
 // Mark as received: confirmed in the site dialog, then the list refreshes in place.
 document.addEventListener('click', async e => {
   const button = e.target.closest('[data-received]'); if (!button) return;

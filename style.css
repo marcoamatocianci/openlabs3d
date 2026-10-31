@@ -945,6 +945,22 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
 .bo-shipment:first-child{border-top:0;padding-top:0}.bo-shipment-copy{display:flex;flex-direction:column;gap:2px;min-width:0}.bo-shipment-copy strong{font-size:13px;overflow-wrap:anywhere}
 .bo-shipment .btn{flex:none}
 @media(max-width:560px){.bo-shipments{margin:0 14px 14px}.bo-shipment{flex-direction:column;align-items:stretch}.bo-shipment .btn{min-height:44px}}
+/* Order details: contact and delivery address stacked on the left, fulfillment on the right. */
+.bo-fulfilment{display:grid;grid-template-columns:minmax(200px,1fr) minmax(0,2fr);gap:20px 28px}
+.bo-delivery{display:flex;flex-direction:column;gap:16px;min-width:0}
+.bo-fact h3{margin:0 0 6px!important}.bo-fact p,.bo-fact address{margin:0;font-size:13px;line-height:1.6;font-style:normal;overflow-wrap:anywhere}
+.bo-fact-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}.bo-fact-head h3{margin:0!important}
+.bo-fact .bo-meta{margin-top:4px}
+/* Change-address button: pastel red, semi-transparent darker border and lighter fill. */
+.bo-address-edit{display:grid;place-items:center;flex:none;width:32px;height:32px;padding:0;border:1px solid rgba(190,45,60,.42);border-radius:8px;background:rgba(230,57,70,.09);color:#b3303e;cursor:pointer;transition:background-color .15s,border-color .15s,transform .1s}
+.bo-address-edit .icon{width:16px;height:16px}
+.bo-address-edit:hover{background:rgba(230,57,70,.17);border-color:rgba(190,45,60,.62)}
+.bo-address-edit:active{transform:translateY(1px)}
+.bo-address-edit:disabled{opacity:.42;cursor:not-allowed;background:rgba(230,57,70,.05);border-color:rgba(190,45,60,.25)}
+:root[data-theme=dark] .bo-address-edit{border-color:rgba(255,140,150,.42);background:rgba(255,117,129,.1);color:#ffabb2}
+:root[data-theme=dark] .bo-address-edit:hover{background:rgba(255,117,129,.2);border-color:rgba(255,140,150,.65)}
+:root[data-theme=dark] .bo-address-edit:disabled{background:rgba(255,117,129,.05);border-color:rgba(255,140,150,.22)}
+@media(max-width:720px){.bo-fulfilment{grid-template-columns:1fr}.bo-address-edit{width:40px;height:40px}}
 .bo-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .bo-toolbar .chips{margin:0;flex-wrap:wrap}.bo-toolbar .chip{min-height:40px}
 .cf-select.bo-sort{flex:none;flex-direction:row;align-items:center;gap:10px;min-width:0}.bo-sort .cf-label{white-space:nowrap}.bo-sort .cf-menu{left:auto;right:0;min-width:160px}.bo-sort .cf-trigger{min-width:160px}
@@ -1223,6 +1239,7 @@ dialog.ad-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .ad-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 16px 4px 22px}
 .ad-head h2{margin:0;font-size:19px;letter-spacing:-.025em}.ad-head .icon{width:18px;height:18px}
 .ad-body{padding:10px 22px 4px}
+.ad{display:flex;flex-direction:column;max-height:calc(100dvh - 32px)}.ad-body{overflow-y:auto;overscroll-behavior:contain}
 .ad-job{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
 .ad-job-main{display:flex;flex-direction:column;gap:3px;min-width:0}.ad-job-main strong{font-size:14px;overflow-wrap:anywhere}
 .ad-job-meta{display:flex;align-items:center;gap:7px;font-size:12.5px;line-height:1.5;color:var(--subtle)}

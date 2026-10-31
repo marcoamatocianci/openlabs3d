@@ -59,12 +59,13 @@ with sync_playwright() as pw:
     ok(all(imgs.nth(i).evaluate("i => i.src.startsWith('data:image/')") for i in range(2)), 'previews are recoloured in the browser, not new renders')
     card.locator('summary').click()
     detail = card.locator('.bo-detail-body'); detail.scroll_into_view_if_needed(); ready(p)
-    lines = detail.locator('.bo-product')
-    ok(lines.count() == 3, 'order details list all three products')
+    ok(detail.locator('.bo-product').count() == 0, 'details do not repeat the product list shown above')
+    lines = detail.locator('.bo-job')
+    ok(lines.count() == 3, 'fulfilment lists all three products')
     violet = lines.nth(2)
     ok(violet.locator('.bo-config').inner_text() == 'PLA · Custom violet' and violet.locator('.bo-swatch').count() == 0, 'line without a snapshot shows its recorded colour name and no invented swatch')
-    ok(violet.locator('.bo-thumb[aria-label="Product preview unavailable"]').count() == 1, 'removed product falls back to a labelled placeholder')
-    ok(detail.locator('.bo-job .bo-config').count() == 3, 'fulfilment rows repeat each line configuration')
+    ok(detail.locator('.bo-job .bo-config').count() == 3, 'fulfilment rows show each line configuration')
+    ok('Italy' in detail.locator('.bo-delivery address').inner_text(), 'delivery address shows the country name')
     p.screenshot(path=str(OUT / 'orders-detail-1366-light.png'), full_page=True)
 
     # Legacy orders (before snapshots): neutral preview + recorded name, never a guessed colour.

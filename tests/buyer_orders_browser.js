@@ -31,11 +31,17 @@ async page => {
   await first.locator('summary').focus();await page.keyboard.press('Enter');
   check(await first.locator('details').getAttribute('open')!==null,'Keyboard details');
   const details=await first.locator('.bo-detail-body').innerText();
-  for(const value of ['Archived sample rack','PLA · Custom violet','€12.00 each','Quantity: 2','order-contact@example.org','Via Laboratory 12','Assigned printing host #4','Awaiting host acceptance','Completed']) {
+  for(const value of ['Archived sample rack','PLA · Custom violet','Quantity: 2','order-contact@example.org','Via Laboratory 12','Assigned printing host #4','Awaiting host acceptance','Completed']) {
     check(details.includes(value),'Missing snapshot/fulfillment detail: '+value);
   }
   check(!details.includes('Updated catalogue product')&&!details.includes('€99.00'),'Live listing leaked into snapshots');
-  check(await first.locator('[aria-label="Product preview unavailable"]').count()===1,'Archived preview fallback');
+  // Details no longer repeat the products listed above; contact and address sit beside fulfillment.
+  check(!details.includes('Ordered products')&&await first.locator('.bo-detail-body .bo-product').count()===0,'Duplicate product list removed');
+  const side=await first.locator('.bo-delivery').boundingBox(),jobs=await first.locator('.bo-fulfilment-jobs').boundingBox();
+  check(side.x<jobs.x&&await first.locator('.bo-delivery .bo-fact').count()===2,'Contact and address stacked on the left');
+  const contactBox=await first.locator('.bo-delivery .bo-fact').nth(0).boundingBox(),addressBox=await first.locator('.bo-delivery .bo-fact').nth(1).boundingBox();
+  check(addressBox.y>contactBox.y,'Address below the contact');
+  check(await first.locator('[data-change-address]').isDisabled()&&(await first.locator('.bo-delivery').innerText()).includes('fixed once a product has shipped'),'Address locked once a product is completed');
   await first.locator('summary').click();
   await page.screenshot({animations:'disabled',path:'.playwright-mcp/orders-desktop-bright.png'});
   await navigate(()=>page.getByRole('link',{name:'Next',exact:true}).click());
@@ -104,6 +110,26 @@ async page => {
   await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:/^In production/}).click());
   check((await page.locator('.bo-page').innerText()).includes('No orders in production'),'Contextual empty state');
   await page.unroute(pattern);
+  // A shipped order's address is locked.
+  await goto('orders?category=shipped&sort=newest');
+  await page.waitForFunction(()=>!document.querySelector('#bo-results[aria-busy]')&&document.querySelectorAll('.bo-shipments').length>0);
+  check(await page.locator('.bo-card').first().locator('[data-change-address]').isDisabled(),'Shipped orders cannot change address');
+  // Change the address of a pending order in the dialog.
+  await goto('orders?category=pending&sort=newest');
+  await page.waitForFunction(()=>!document.querySelector('#bo-results[aria-busy]')&&document.querySelector('#bo-toolbar .chip[aria-current]')?.textContent.startsWith('Pending'));
+  const pendingCard=page.locator('.bo-card').first();
+  await pendingCard.locator('summary').click();
+  await pendingCard.locator('[data-change-address]').click();
+  await page.locator('#action-dialog[open] #order-address-form').waitFor();
+  check(await page.locator('#action-dialog [name=street]').inputValue()==='Via Laboratory 12','Current address prefilled');
+  await page.locator('#action-dialog [name=street]').fill('');
+  await page.locator('#action-dialog').getByRole('button',{name:'Save address'}).click();
+  check((await page.locator('#action-dialog .ad-error').innerText()).includes('street'),'Street required');
+  await page.locator('#action-dialog [name=street]').fill('Via Nuova 5');
+  const saved=page.waitForResponse(r=>r.url().includes('/address')&&r.request().method()==='PUT'&&r.status()===200);
+  await page.locator('#action-dialog').getByRole('button',{name:'Save address'}).click();await saved;
+  await page.waitForFunction(()=>[...document.querySelectorAll('.bo-card address')].some(a=>a.textContent.includes('Via Nuova 5')));
+  check(true,'Address updated in place');
   // Mark as received: confirmed in the site dialog; the order completes and moves to Completed.
   await goto('orders?category=shipped&sort=newest');
   await page.waitForFunction(()=>!document.querySelector('#bo-results[aria-busy]')&&document.querySelectorAll('.bo-shipments').length>0);

@@ -240,7 +240,7 @@ function jobSummary(j, action) {
     <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Awaiting buyer confirmation</small>' : ''}</li>`).join('')}</ol>`;
 }
 /** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
-function actionDialog({title, body, confirm, busy, run}) {
+function actionDialog({title, body, confirm, busy, run, setup}) {
   return new Promise(resolve => {
     let d = $('#action-dialog');
     if (!d) { d = document.createElement('dialog'); d.id = 'action-dialog'; d.className = 'ad-dialog'; d.setAttribute('aria-labelledby', 'ad-title'); document.body.append(d); keepFocusInside(d); }
@@ -262,8 +262,9 @@ function actionDialog({title, body, confirm, busy, run}) {
     document.documentElement.classList.add('dialog-open');
     // Enter inside a form in the dialog confirms instead of submitting the page.
     d.querySelector('form')?.addEventListener('submit', e => { e.preventDefault(); button.click(); });
-    d.querySelector('form')?.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); button.click(); } });
-    d.showModal(); (d.querySelector('.ad-body input') || button).focus();
+    d.querySelector('form')?.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input:not(.cf-input):not(.country-search)')) { e.preventDefault(); button.click(); } });
+    setup?.(d);
+    d.showModal(); (d.querySelector('.ad-body input:not([type=hidden]), .ad-body .cf-trigger') || button).focus();
   });
 }
 // Overrides the browser confirm box from operations.js.

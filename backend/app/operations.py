@@ -262,6 +262,27 @@ def my_orders(auth=Depends(require), db: Session=Depends(get_db),
     return {'items':orders_data(orders,db), 'counts':counts, 'total':total,
             'page':page, 'pages':pages, 'per_page':per_page}
 
+# Once any product has left the host, the delivery address is fixed.
+ADDRESS_LOCKED = ('shipped','completed')
+
+@router.put('/orders/{order_id}/address')
+def change_order_address(order_id: int, body: dict, auth=Depends(mutate), db: Session=Depends(get_db)):
+    """The buyer corrects the delivery address of an order, while nothing in it has shipped."""
+    import json
+    from .accounts import Contact
+    from pydantic import ValidationError
+    order=db.get(models.Order,order_id)
+    if not order or order.buyer_id!=auth[0].id: fail(404,'Order not found')
+    try: address=Contact.model_validate(body)
+    except ValidationError as e: fail(422,e.errors()[0]['msg'].removeprefix('Value error, '))
+    if any(not getattr(address,k) for k in ('country','city','street')): fail(422,'Complete the delivery address')
+    shipped=exists(select(models.PrintingJob.id).where(models.PrintingJob.order_id==order_id,models.PrintingJob.status.in_(ADDRESS_LOCKED)))
+    # One conditional update, so a job marked shipped meanwhile cannot be overtaken by the change.
+    changed=db.execute(update(models.Order).where(models.Order.id==order_id,models.Order.status!='cancelled',~shipped).values(address=json.dumps(address.model_dump(),ensure_ascii=False))).rowcount
+    if changed!=1: fail(409,'The delivery address can no longer be changed for this order' if order.status!='cancelled' else 'Cancelled orders cannot be changed')
+    log(db,auth[0].id,'order.address_changed',f'order:{order_id}'); db.commit(); db.refresh(order)
+    return order_data(order,db)
+
 @router.get('/host/jobs')
 def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
     active_host(auth,db)
