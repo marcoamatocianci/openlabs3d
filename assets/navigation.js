@@ -29,8 +29,8 @@ const WORKSPACES = {
   admin:{label:'Admin workspace', groups:[
     {items:[{href:'admin', label:'Overview', match:route => route === 'admin'}]},
     {label:'Marketplace', items:[{href:'admin/products', label:'Products', match:route => routeIn(route, 'admin/products', 'admin/create-official', 'edit-listing')}, {href:'admin/printers', label:'Printers'}, {href:'admin/materials', label:'Materials'}, {href:'admin/categories', label:'Categories'}]},
-    {label:'People', items:[{href:'admin/users', label:'Users'}, {href:'admin/hosts', label:'Printing hosts'}, {href:'admin/pending', label:'Approvals', count:'approvals'}]},
-    {label:'Operations', items:[{href:'admin/orders', label:'Orders'}]},
+    {label:'People', items:[{href:'admin/users', label:'Users'}, {href:'admin/hosts', label:'Printing hosts'}]},
+    {label:'Operations', items:[{href:'admin/pending', label:'Approvals', count:'approvals'}, {href:'admin/orders', label:'Orders'}]},
     {label:'System', items:[{href:'admin/activity', label:'Activity logs'}, {href:'admin/settings', label:'Settings'}]}]},
   host:{label:'Host workspace', groups:[{items:[
     {href:'host', label:'Overview', match:route => route === 'host'}, {href:'host/jobs', label:'Printing jobs', count:'jobs'},

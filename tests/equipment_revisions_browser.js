@@ -70,7 +70,9 @@ async (page) => {
   assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Approved equipment unchanged while pending');
 
   // Administrator rejects, host resubmits, administrator approves.
-  await a.goto(base+'/#admin/pending');await a.getByRole('heading',{name:'Before / Currently approved'}).waitFor();
+  await a.goto(base+'/#admin/pending?type=equipment');await a.locator('.approval-card').first().waitFor();
+  assert((await a.locator('.approval-card').first().innerText()).includes('Waiting'),'Approval card shows how long it has waited');
+  await a.locator('.approval-details > summary').first().click();await a.getByRole('heading',{name:'Before / Currently approved'}).waitFor();
   assert(await a.getByRole('heading',{name:'After / Proposed equipment'}).count()===1,'Before/After visible');
   a.on('dialog',d=>d.accept(d.type()==='prompt'?'Verify printer calibration':undefined));
   const rejected=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/reject'));
@@ -82,6 +84,7 @@ async (page) => {
   const resubmitted=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
   await h.getByRole('button',{name:'Submit for approval',exact:true}).click();assert((await resubmitted).ok(),'Resubmitted');
   await a.reload();await a.getByRole('button',{name:'Approve equipment update'}).waitFor();
+  assert(await a.locator('.approvals-tabs .segment[aria-pressed=true]').innerText().then(t=>t.startsWith('Equipment updates')),'Equipment tab selected');
   const accepted=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/approve'));
   await a.getByRole('button',{name:'Approve equipment update'}).click();assert((await accepted).ok(),'Approved');
   assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');
