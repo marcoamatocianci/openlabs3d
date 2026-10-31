@@ -256,3 +256,37 @@ def test_delete_draft_removes_only_the_draft(workflow):
     after=h.delete('/api/host/equipment-revision').json()
     assert after['id']==rid and after['status']=='rejected'
     assert h.get('/api/host/equipment').json()==original
+
+
+def test_printer_suggestions_include_revisions_and_can_be_verified(workflow):
+    clients,ids,pid,sessions=workflow;h,a,b=clients['host'],clients['admin'],clients['buyer']
+    custom={'manufacturer':'Voron','model':'2.4 R2','technology':'FDM','x':350,'y':350,'z':340,'quantity':1}
+    proposal=proposed(h);proposal['printers'].append(custom)
+    rid=h.put('/api/host/equipment-application',json={**proposal,'submit':True}).json()['id']
+    # Applications too: a registered printer typed by hand (no catalogue entry).
+    with sessions() as db:
+        db.add(models.HostPrinter(user_id=ids['other'],manufacturer='Custom',model='Garage',technology='FDM',x=100,y=100,z=100,quantity=1,capabilities='[]'));db.commit()
+    assert b.get('/api/admin/printer-suggestions').status_code==403
+    listed={s['model']:s for s in a.get('/api/admin/printer-suggestions').json()}
+    assert listed['2.4 R2']['origin']=='revision' and listed['2.4 R2']['revision_id']==rid and listed['2.4 R2']['suggested_by']
+    assert listed['Garage']['origin']=='application'
+    voron=listed['2.4 R2']['approve']
+    # Verify specs: technology, build volume and source are required; materials must match the technology.
+    assert a.post('/api/'+voron.lstrip('/'),json={'verify':True,'technology':'FDM','x':350,'y':350,'z':340}).status_code==422
+    assert a.post('/api/'+voron.lstrip('/'),json={'verify':True,'technology':'FDM','x':350,'y':350,'z':340,'source':'https://vorondesign.com','materials':['Tough Resin']}).status_code==422
+    r=a.post('/api/'+voron.lstrip('/'),json={'verify':True,'technology':'FDM','x':350,'y':350,'z':330,'source':'https://vorondesign.com','materials':['PLA','ABS'],'limitations':'Enclosed'})
+    assert r.status_code==200,r.text and r.json()['verified']
+    entry=next(m for m in b.get('/api/printer-catalogue').json() if m['model']=='2.4 R2')
+    assert entry['verified'] and entry['z']==330 and entry['materials']==['ABS','PLA'] and entry['limitations']=='Enclosed'
+    assert '2.4 R2' not in [s['model'] for s in a.get('/api/admin/printer-suggestions').json()]
+    # The pending revision now refers to the catalogue entry, with its verified materials.
+    printer=h.get('/api/host/equipment-revision').json()['proposal']['printers'][-1]
+    assert printer['model_id']==entry['id'] and printer['capabilities']==['ABS','PLA']
+    assert a.post(f'/api/admin/equipment-revisions/{rid}/approve',json={}).status_code==200
+    assert next(p for p in h.get('/api/host/equipment').json() if p['model']=='2.4 R2')['capabilities']==['ABS','PLA']
+    # Add as unverified: no body.
+    garage=next(s for s in a.get('/api/admin/printer-suggestions').json() if s['model']=='Garage')['approve']
+    assert not a.post('/api/'+garage.lstrip('/')).json()['verified']
+    assert 'Garage' not in [s['model'] for s in a.get('/api/admin/printer-suggestions').json()]
+    with sessions() as db:
+        assert {e.action for e in db.scalars(select(models.Activity).where(models.Activity.action.like('printer.%')))}=={'printer.verified','printer.suggestion_approved'}

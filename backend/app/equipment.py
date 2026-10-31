@@ -154,19 +154,84 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
     if body.submit:host.submitted_at=datetime.now(timezone.utc)
     db.commit()
     return {'status':host.status,'printers':[printer_data(p) for p in equipment],'total':sum(p.quantity for p in equipment)}
+class SuggestionReview(BaseModel):
+    """Approve as unverified (no body), or verify the specifications: then every field is checked by an administrator."""
+    model_config=ConfigDict(extra='forbid',str_strip_whitespace=True)
+    verify:bool=False
+    technology:Literal['FDM','RESIN']|None=None
+    x:float|None=Field(default=None,gt=0,le=5000,allow_inf_nan=False)
+    y:float|None=Field(default=None,gt=0,le=5000,allow_inf_nan=False)
+    z:float|None=Field(default=None,gt=0,le=5000,allow_inf_nan=False)
+    materials:list[str]=Field(default_factory=list,max_length=20)
+    source:str=Field(default='',max_length=1000)
+    limitations:str=Field(default='',max_length=2000)
+
+def catalogue_model_for(db,spec,body,actor):
+    """The catalogue entry for a suggested printer: created (unverified, or verified with the reviewed
+    specifications), or the existing entry for that manufacturer and model, updated when verified."""
+    body=body or SuggestionReview()
+    existing=db.scalar(select(models.PrinterModel).where(models.PrinterModel.manufacturer==spec['manufacturer'],models.PrinterModel.model==spec['model']))
+    if not existing:
+        existing=models.PrinterModel(manufacturer=spec['manufacturer'],model=spec['model'],technology=spec['technology'],x=spec['x'],y=spec['y'],z=spec['z'],materials='[]',
+                                     source='Administrator-reviewed host suggestion',verified=False,limitations='User-provided specifications; manufacturer verification pending.')
+        db.add(existing)
+    if body.verify:
+        if None in (body.technology,body.x,body.y,body.z):fail(422,'Enter technology and build volume to verify the specifications')
+        if not body.source:fail(422,'Enter the source of the verified specifications')
+        valid=set(db.scalars(select(models.Material.name).where(models.Material.technology==body.technology)))
+        if not set(body.materials)<=valid:fail(422,'Select materials of the chosen technology')
+        for k in ('technology','x','y','z','source','limitations'):setattr(existing,k,getattr(body,k))
+        existing.materials=json.dumps(sorted(set(body.materials)));existing.verified=True
+    db.flush()
+    from .operations import log
+    log(db,actor,'printer.verified' if body.verify else 'printer.suggestion_approved',f'printer_model:{existing.id}',f"{existing.manufacturer} {existing.model}")
+    return existing
+
 @router.post('/admin/printer-suggestions/{printer_id}/approve')
-def approve_suggestion(printer_id:int,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
+def approve_suggestion(printer_id:int,body:SuggestionReview|None=None,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
     p=db.get(models.HostPrinter,printer_id)
     if not p or p.model_id:fail(404,'Unreviewed suggestion not found')
-    existing=db.scalar(select(models.PrinterModel).where(models.PrinterModel.manufacturer==p.manufacturer,models.PrinterModel.model==p.model))
-    if not existing:
-        existing=models.PrinterModel(**{k:getattr(p,k) for k in ('manufacturer','model','technology','x','y','z','materials')},source='Administrator-reviewed host suggestion',verified=False,limitations='User-provided specifications; manufacturer verification pending.')
-        db.add(existing);db.flush()
-    p.model_id=existing.id;db.commit();return printer_data(existing)
+    model=catalogue_model_for(db,{k:getattr(p,k) for k in ('manufacturer','model','technology','x','y','z')},body,auth[0].id)
+    # Every registered printer of that model links to the entry; verified materials become its capabilities.
+    for q in db.scalars(select(models.HostPrinter).where(models.HostPrinter.manufacturer==model.manufacturer,models.HostPrinter.model==model.model,models.HostPrinter.model_id.is_(None))):
+        q.model_id=model.id
+        if model.verified:q.capabilities=model.materials
+    db.commit();return printer_data(model)
+
+@router.post('/admin/printer-suggestions/revision/{revision_id}/{index}/approve')
+def approve_revision_suggestion(revision_id:int,index:int,body:SuggestionReview|None=None,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
+    """A printer typed by hand in a pending equipment revision of an approved host."""
+    r=db.get(models.EquipmentRevision,revision_id)
+    proposal=json.loads(r.proposal) if r and r.status=='pending' else {}
+    printers=proposal.get('printers',[])
+    if not 0<=index<len(printers) or printers[index].get('model_id'):fail(404,'Unreviewed suggestion not found')
+    model=catalogue_model_for(db,printers[index],body,auth[0].id)
+    for p in printers:
+        if (p['manufacturer'],p['model'])==(model.manufacturer,model.model) and not p.get('model_id'):
+            p['model_id']=model.id
+            if model.verified:p['capabilities']=json.loads(model.materials)
+    r.proposal=json.dumps(proposal)
+    db.commit();return printer_data(model)
 
 @router.get('/admin/printer-suggestions')
 def suggestions(auth=Depends(admin),db:Session=Depends(get_db)):
-    return [printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.model_id.is_(None)))]
+    """Printers not in the catalogue: from host applications (registered printers) and from pending
+    equipment revisions of approved hosts. One entry per manufacturer and model."""
+    result,seen=[],set()
+    for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.model_id.is_(None)).order_by(models.HostPrinter.id)):
+        key=(p.manufacturer.casefold(),p.model.casefold())
+        if key in seen:continue
+        seen.add(key);user=db.get(models.User,p.user_id)
+        result.append({**printer_data(p),'origin':'application','suggested_by':user.username if user else '','approve':f'/admin/printer-suggestions/{p.id}/approve'})
+    for r in db.scalars(select(models.EquipmentRevision).where(models.EquipmentRevision.status=='pending').order_by(models.EquipmentRevision.created_at)):
+        user=db.get(models.User,r.user_id)
+        for i,p in enumerate(json.loads(r.proposal).get('printers',[])):
+            key=(p['manufacturer'].casefold(),p['model'].casefold())
+            if p.get('model_id') or key in seen:continue
+            seen.add(key)
+            result.append({**{k:p[k] for k in ('manufacturer','model','technology','x','y','z','quantity')},'materials':[],'origin':'revision','revision_id':r.id,
+                           'suggested_by':user.username if user else '','approve':f'/admin/printer-suggestions/revision/{r.id}/{i}/approve'})
+    return result
 
 
 def equipment_payload(p):

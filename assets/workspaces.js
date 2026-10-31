@@ -173,8 +173,9 @@ const adminPages = {
     const [models, suggestions] = await Promise.all([api('/printer-catalogue'), api('/admin/printer-suggestions')]);
     const volume = p => `${p.x} × ${p.y} × ${p.z} mm`;
     const model = p => `<article class="list-row" data-search="${esc([p.manufacturer, p.model, p.technology].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(p.manufacturer + ' ' + p.model)}</span><span class="row-meta">${esc(p.limitations || '')}</span></div><span class="row-value">${esc(volume(p))}<small>${p.technology === 'FDM' ? 'FDM / FFF' : 'Resin'}</small></span><span class="row-status">${p.verified ? statusBadge('approved', 'Verified specs') : statusBadge('pending', 'Unverified')}</span><div class="row-actions">${p.source?.startsWith('http') ? `<a class="btn-ghost btn-sm" href="${esc(p.source)}" target="_blank" rel="noopener">Source ↗</a>` : ''}</div></article>`;
-    const suggestion = p => `<article class="list-row"><div class="row-main"><span class="row-title">${esc(p.manufacturer + ' ' + p.model)}</span><span class="row-meta">Suggested by a printing host · user-provided specifications</span></div><span class="row-value">${esc(volume(p))}</span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" onclick="approvePrinterSuggestion(${p.id})">Add as unverified</button></div></article>`;
-    return {title:'Printers', body:`<section class="section-card"><header class="card-head"><h2>Suggested by hosts <span class="count">${suggestions.length}</span></h2></header>${suggestions.length ? `<div class="list">${suggestions.map(suggestion).join('')}</div>` : emptyState('No suggestions', 'Printers that hosts enter manually appear here for review.')}</section>` + toolbar(`<h2 class="toolbar-title">Catalogue <span class="count">${models.length}</span></h2>`, searchBox('printer-list', 'Search printers')) + filteredList('printer-list', models.map(model), 'No printers', 'The printer catalogue is empty.', 'No printers match your search.')};
+    printerSuggestions = suggestions;
+    const suggestion = (p, n) => `<article class="list-row"><div class="row-main"><span class="row-title">${esc(p.manufacturer + ' ' + p.model)}</span><span class="row-meta">${esc([p.origin === 'revision' ? 'Equipment update' : 'Host application', p.suggested_by ? 'by ' + p.suggested_by : '', 'user-provided specifications'].filter(Boolean).join(' · '))}</span></div><span class="row-value">${esc(volume(p))}<small>${p.technology === 'FDM' ? 'FDM / FFF' : 'Resin'}</small></span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" onclick="approvePrinterSuggestion(${n})">Add as unverified</button><button type="button" class="btn btn-sm" onclick="verifyPrinterSuggestion(${n})">Verify specs</button></div></article>`;
+    return {title:'Printers', body:`<section class="section-card"><header class="card-head"><h2>Suggested by hosts <span class="count">${suggestions.length}</span></h2></header>${suggestions.length ? `<div class="list" data-suggestions>${suggestions.map(suggestion).join('')}</div>` : `<div data-suggestions>${emptyState('No suggestions', 'Printers that hosts enter manually, in applications or equipment updates, appear here for review.')}</div>`}</section>` + toolbar(`<h2 class="toolbar-title">Catalogue <span class="count">${models.length}</span></h2>`, searchBox('printer-list', 'Search printers')) + filteredList('printer-list', models.map(model), 'No printers', 'The printer catalogue is empty.', 'No printers match your search.')};
   },
   async 'admin/materials'() {
     const items = await api('/materials');
@@ -199,7 +200,26 @@ function deleteUserDialog(id) {
 }
 async function setListingType(id, type) { try { await accountAction(`/admin/products/${id}/${type}`, {}); render(); } catch (e) { showError(e); } }
 async function manageProduct(id, action) { if (!confirm(action === 'remove' ? 'Remove this product from the marketplace? Historical orders and assets are kept.' : 'Unpublish this product? It returns to draft.')) return; try { const r = await accountAction(`/admin/products/${id}/${action}`, {}); toast(r.message); await refreshPublic(); render(); } catch (e) { showError(e); } }
-async function approvePrinterSuggestion(id) { if (!confirm('Add this printer to the catalogue as user-provided and unverified?')) return; try { await accountAction('/admin/printer-suggestions/' + id + '/approve', {}); toast('Printer added to the catalogue'); render(); } catch (e) { showError(e); } }
+let printerSuggestions = [];
+async function approvePrinterSuggestion(n) {
+  const p = printerSuggestions[n];
+  const ok = await actionDialog({title:'Add as unverified?', confirm:'Add to catalogue', busy:'Adding…', body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(p.manufacturer + ' ' + p.model)}</strong><span class="ad-job-meta">${esc(`${p.x} × ${p.y} × ${p.z} mm · ${p.technology}`)}</span></div></div><ul class="ad-notes"><li>The printer joins the catalogue with the host's specifications, marked unverified.</li><li>No materials are assumed: hosts cannot offer any until the specifications are verified.</li></ul>`, run:() => api(p.approve, {method:'POST'})});
+  if (ok) { toast('Printer added to the catalogue'); render(); }
+}
+// Verify specs: the administrator checks every field; the entry is saved as verified.
+async function verifyPrinterSuggestion(n) {
+  const p = printerSuggestions[n], materials = await api('/materials');
+  const checks = tech => materials.filter(m => m.technology === tech).map(m => `<label class="check"><input type="checkbox" name="materials" value="${esc(m.name)}"> ${esc(m.name)}</label>`).join('');
+  const body = `<form class="ad-form" id="verify-printer" novalidate><p class="muted">${esc(p.manufacturer + ' ' + p.model)} · suggested ${p.origin === 'revision' ? 'in an equipment update' : 'in a host application'}${p.suggested_by ? ' by ' + esc(p.suggested_by) : ''}</p><div class="fields">${uiSelect({name:'technology', label:'Technology', value:p.technology, className:'cf-select-field wide', options:[['FDM', 'FDM / FFF'], ['RESIN', 'Resin']]})}<label>Build volume X (mm)<input name="x" type="number" min="1" max="5000" step="0.01" required value="${p.x}"></label><label>Y (mm)<input name="y" type="number" min="1" max="5000" step="0.01" required value="${p.y}"></label><label>Z (mm)<input name="z" type="number" min="1" max="5000" step="0.01" required value="${p.z}"></label><label class="wide">Source<input name="source" type="url" required placeholder="https://manufacturer.example/specs"></label><fieldset class="wide verify-materials"><legend>Supported materials</legend><div data-material-checks>${checks(p.technology)}</div></fieldset><label class="wide">Limitations <span class="optional">(optional)</span><textarea name="limitations" rows="2" maxlength="2000"></textarea></label></div></form>`;
+  const ok = await actionDialog({title:'Verify printer specifications', confirm:'Save as verified', busy:'Saving…', body, setup:d => {
+    d.querySelector('[data-select=technology] input[type=hidden]').addEventListener('change', e => { d.querySelector('[data-material-checks]').innerHTML = checks(e.target.value); });
+  }, run:() => {
+    const form = $('#verify-printer'); if (!form.reportValidity()) throw Error('Enter the build volume and the source of the specifications.');
+    const d = new FormData(form);
+    return api(p.approve, {method:'POST', body:JSON.stringify({verify:true, technology:uiSelectValue(form.querySelector('[data-select=technology]')), x:+d.get('x'), y:+d.get('y'), z:+d.get('z'), source:d.get('source').trim(), limitations:d.get('limitations').trim(), materials:d.getAll('materials')})});
+  }});
+  if (ok) { toast('Printer verified and added to the catalogue'); render(); }
+}
 
 /* Printing host workspace */
 const nextJobStep = {accepted:['printing', 'Start printing'], printing:['ready', 'Mark ready'], ready:['shipped', 'Mark shipped']};

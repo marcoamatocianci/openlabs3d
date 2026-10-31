@@ -1308,3 +1308,5 @@ dialog.ad-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .listing-type-official{background:var(--info-bg);color:var(--info-fg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--info-fg) 30%,transparent)}
 .listing-type-community{background:var(--neutral-bg);color:var(--neutral-fg)}
 a.segment{text-decoration:none}
+
+.verify-materials{border:1px solid var(--line);border-radius:8px;padding:8px 12px;margin:0 0 12px}.verify-materials legend{font-size:12px;padding:0 4px}.verify-materials [data-material-checks]{display:grid;grid-template-columns:1fr 1fr;gap:2px 12px}.verify-materials label{margin:0}
