@@ -32,9 +32,13 @@ def active_host(auth, db):
     if auth[0].role != 'host' or not host: fail(403, 'An approved active host account is required')
     return host
 
+def shipment_data(job):
+    if not job.shipped_at: return None
+    return {'carrier':job.carrier, 'tracking_number':job.tracking_number, 'tracking_url':job.tracking_url, 'note':job.shipping_note, 'shipped_at':job.shipped_at}
+
 def job_data(job):
     item = job.item
-    return {'id':job.id, 'order_id':job.order_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at,
+    return {'id':job.id, 'order_id':job.order_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at, 'shipment':shipment_data(job),
             'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents,
                     # Which model this line is made from; the file itself is served by /api/jobs/{id}/cad.
                     'listing_version':item.listing_version, 'cad_status':item.cad_status, 'cad_format':item.cad_path.rsplit('.',1)[-1].upper() if item.cad_path else '', 'cad_sha256':item.cad_sha256}}
@@ -76,9 +80,11 @@ def sync_order(db, order_id):
     order = db.get(models.Order, order_id)
     if order.status == 'cancelled': return
     statuses = list(db.scalars(select(models.PrintingJob.status).where(models.PrintingJob.order_id == order_id)))
+    # The order reaches a stage once every job has: completed only after the buyer confirmed each one.
     if statuses and all(s == 'completed' for s in statuses): order.status = 'completed'
-    elif statuses and all(s in ('ready','completed') for s in statuses): order.status = 'ready'
-    elif any(s in ('printing','ready','completed') for s in statuses): order.status = 'printing'
+    elif statuses and all(s in ('shipped','completed') for s in statuses): order.status = 'shipped'
+    elif statuses and all(s in ('ready','shipped','completed') for s in statuses): order.status = 'ready'
+    elif any(s in ('printing','ready','shipped','completed') for s in statuses): order.status = 'printing'
     elif statuses and all(s == 'accepted' for s in statuses): order.status = 'accepted'
     else: order.status = 'pending'
 
@@ -171,7 +177,7 @@ def hosts(status: str='', auth=Depends(admin), db: Session=Depends(get_db)):
         # Read-only: the applicant's registered printers, so administrators can review them before deciding.
         from .equipment import printer_data
         printers=[printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==host.user_id).order_by(models.HostPrinter.id))]
-        result.append({**host_data(host), 'equipment':printers, 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
+        result.append({**host_data(host), 'equipment':printers, 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready','shipped')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
     return result
 
 @router.post('/admin/hosts/{host_id}/{decision}')
@@ -230,7 +236,7 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
         return order_data(existing,db)
     return order_data(order,db)
 
-ORDER_GROUPS = {'pending':('pending','accepted'), 'in-progress':('printing','ready'),
+ORDER_GROUPS = {'pending':('pending','accepted'), 'in-progress':('printing','ready','shipped'),
                 'completed':('completed',), 'cancelled':('cancelled',)}
 
 @router.get('/orders')
@@ -267,7 +273,7 @@ def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
             if listing_id not in eligible: eligible[listing_id]=host_shades(db.get(models.Listing,listing_id),auth[0].id)
             if not matches(eligible[listing_id],job.item.material,job.item.color,job.item.color_hex): continue
         item=job_data(job)
-        if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','completed'):
+        if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','shipped','completed'):
             order=db.get(models.Order,job.order_id)
             item['fulfillment']={'contact':order.contact,'address':order.address}
         result.append(item)
@@ -289,14 +295,33 @@ def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
 @router.post('/host/jobs/{job_id}/status')
 def update_job(job_id: int, body: schemas.JobTransition, auth=Depends(mutate), db: Session=Depends(get_db)):
     active_host(auth,db)
-    previous={'printing':'accepted','ready':'printing','completed':'ready'}[body.status]
+    previous={'printing':'accepted','ready':'printing','shipped':'ready'}[body.status]
     job=db.get(models.PrintingJob,job_id)
     if not job or job.host_id != auth[0].id: fail(404,'Job not found')
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
-    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.host_id==auth[0].id,models.PrintingJob.status==previous,host_active).values(status=body.status,updated_at=datetime.now(timezone.utc))).rowcount
+    moment=datetime.now(timezone.utc); values={'status':body.status,'updated_at':moment}
+    if body.status=='shipped':
+        values.update(carrier=body.carrier,tracking_number=body.tracking_number,tracking_url=body.tracking_url,shipping_note=body.note,shipped_at=moment)
+    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.host_id==auth[0].id,models.PrintingJob.status==previous,host_active).values(**values)).rowcount
     if changed != 1: fail(409,'Invalid job transition')
-    sync_order(db,job.order_id); log(db,auth[0].id,f'job.{body.status}',f'job:{job_id}'); db.commit(); db.refresh(job)
+    detail=f'{body.carrier} · {body.tracking_number}' if body.status=='shipped' else ''
+    sync_order(db,job.order_id); log(db,auth[0].id,f'job.{body.status}',f'job:{job_id}',detail); db.commit(); db.refresh(job)
     return job_data(job)
+
+@router.post('/orders/{order_id}/jobs/{job_id}/received')
+def confirm_received(order_id: int, job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
+    """The buyer confirms a shipped job arrived: it is completed, and the order with it once every job is."""
+    order=db.get(models.Order,order_id)
+    if not order or order.buyer_id!=auth[0].id: fail(404,'Order not found')
+    job=db.get(models.PrintingJob,job_id)
+    if not job or job.order_id!=order_id: fail(404,'Job not found')
+    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.status=='shipped').values(status='completed',updated_at=datetime.now(timezone.utc))).rowcount
+    if changed != 1: fail(409,'Only a shipped item can be marked as received')
+    log(db,auth[0].id,'job.completed',f'job:{job_id}','Receipt confirmed by the buyer')
+    sync_order(db,order_id)
+    if order.status=='completed': log(db,auth[0].id,'order.completed',f'order:{order_id}')
+    db.commit(); db.refresh(order)
+    return order_data(order,db)
 
 @router.get('/admin/orders')
 def all_orders(auth=Depends(admin), db: Session=Depends(get_db)):
@@ -382,4 +407,4 @@ def overview(auth=Depends(admin), db: Session=Depends(get_db)):
     def count(model,*where): return db.scalar(select(func.count()).select_from(model).where(*where))
     return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'), 'pending_equipment':count(models.EquipmentRevision,models.EquipmentRevision.status=='pending'),
             'products':count(models.Listing), **{f'products_{s}':count(models.Listing,models.Listing.status==s) for s in ('approved','pending','draft','rejected')},
-            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}
+            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','shipped','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}

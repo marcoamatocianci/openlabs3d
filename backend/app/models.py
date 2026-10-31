@@ -115,7 +115,7 @@ class Order(Base):
     currency: Mapped[str] = mapped_column(String(3), default='EUR')
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     items: Mapped[list['OrderItem']] = relationship(cascade='all, delete-orphan')
-    __table_args__ = (UniqueConstraint('buyer_id', 'idempotency_key'), CheckConstraint("status IN ('pending','accepted','printing','ready','completed','cancelled')"), CheckConstraint('total_cents >= 0'))
+    __table_args__ = (UniqueConstraint('buyer_id', 'idempotency_key'), CheckConstraint("status IN ('pending','accepted','printing','ready','shipped','completed','cancelled')"), CheckConstraint('total_cents >= 0'))
 
 class OrderItem(Base):
     manufacturing_dimensions: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
@@ -148,8 +148,14 @@ class PrintingJob(Base):
     host_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(20), default='available', index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    # Shipment entered by the host when marking the job shipped; the buyer then confirms receipt (completed).
+    carrier: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    tracking_number: Mapped[str] = mapped_column(String(80), default='', server_default='')
+    tracking_url: Mapped[str] = mapped_column(String(500), default='', server_default='')
+    shipping_note: Mapped[str] = mapped_column(String(500), default='', server_default='')
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     item: Mapped[OrderItem] = relationship()
-    __table_args__ = (CheckConstraint("status IN ('available','accepted','printing','ready','completed','cancelled')"),)
+    __table_args__ = (CheckConstraint("status IN ('available','accepted','printing','ready','shipped','completed','cancelled')"),)
 
 class Activity(Base):
     __tablename__ = 'activity_log'

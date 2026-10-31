@@ -133,7 +133,10 @@ def test_migration_preserves_legacy_equipment(tmp_path):
         row=db.execute('SELECT materials,material_colors,x FROM host_printers').fetchone()
         assert row==('["PLA"]','{}',200)
         assert db.execute('SELECT capabilities FROM host_printers').fetchone()==('["PLA"]',)
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='71a_lab_avatars'
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+        head=ScriptDirectory.from_config(Config(str(root/'alembic.ini'))).get_current_head()
+        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]==head
 
 def test_material_color_availability_tracks_product_and_host(workflow):
     clients,ids,pid,sessions=workflow

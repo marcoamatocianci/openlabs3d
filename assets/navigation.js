@@ -186,7 +186,7 @@ function workspacePage(kind, title, body, action='') {
 }
 
 /* Small building blocks reused by workspace and account pages. */
-const statusTones = {approved:'success', published:'success', completed:'success', active:'success', pending:'warning', available:'warning', rejected:'danger', cancelled:'danger', suspended:'danger', accepted:'info', printing:'info', ready:'info'};
+const statusTones = {approved:'success', published:'success', completed:'success', active:'success', pending:'warning', available:'warning', rejected:'danger', cancelled:'danger', suspended:'danger', accepted:'info', printing:'info', ready:'info', shipped:'info'};
 const statusText = status => { const text = String(status).replaceAll('_', ' '); return text.charAt(0).toUpperCase() + text.slice(1); };
 const statusBadge = (status, label) => `<span class="status status-${statusTones[status] || 'neutral'}">${esc(label || statusText(status))}</span>`;
 function filterChips(label, options, selected) { return `<nav class="chips" aria-label="${esc(label)}">${options.map(o => { const on = o.value === selected; return `<a class="chip ${on ? 'active' : ''}" href="#${o.href}" ${on ? 'aria-current="true"' : ''}>${esc(o.label)}${o.count != null ? `<span>${o.count}</span>` : ''}</a>`; }).join('')}</nav>`; }

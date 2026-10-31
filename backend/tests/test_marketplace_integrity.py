@@ -200,7 +200,9 @@ def test_manufacturing_files_follow_the_current_assignment():
     assert host_b.get(url).status_code == 200 and host_a.get(url).status_code == 404
     for status in ('printing', 'ready'):
         host_b.post(f'/api/host/jobs/{job}/status', json={'status': status}); assert host_b.get(url).status_code == 200
-    host_b.post(f'/api/host/jobs/{job}/status', json={'status': 'completed'})
+    assert host_b.post(f'/api/host/jobs/{job}/status', json={'status': 'shipped', 'carrier': 'Courier', 'tracking_number': 'T1'}).status_code == 200
+    assert host_b.get(url).status_code == 403, 'shipped jobs no longer need the file'
+    assert buyer_c.post(f"/api/orders/{order['id']}/jobs/{job}/received").status_code == 200
     assert host_b.get(url).status_code == 403, 'completed jobs no longer need the file'
     assert admin_c.get(url).status_code == 200, 'administrators keep access'
     # Cancellation and loss of host approval.

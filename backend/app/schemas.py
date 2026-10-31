@@ -1,6 +1,7 @@
 from typing import Literal
 from typing import Annotated
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+import re
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 class Register(BaseModel):
     email: EmailStr
@@ -120,7 +121,26 @@ class OrderInput(BaseModel):
 
 
 class JobTransition(BaseModel):
-    status: Literal['printing', 'ready', 'completed']
+    # Hosts move a job up to shipped; only the buyer completes it, by confirming receipt.
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    status: Literal['printing', 'ready', 'shipped']
+    carrier: str = Field(default='', max_length=80)
+    tracking_number: str = Field(default='', max_length=80)
+    tracking_url: str = Field(default='', max_length=500)
+    note: str = Field(default='', max_length=500)
+    @field_validator('tracking_url')
+    @classmethod
+    def web_address(cls, value):
+        if value and not re.fullmatch(r'https?://[^\s<>"]+', value): raise ValueError('Tracking link must start with http:// or https://')
+        return value
+    @model_validator(mode='after')
+    def shipment(self):
+        if self.status == 'shipped':
+            if not self.carrier: raise ValueError('Enter the carrier or delivery method')
+            if not self.tracking_number: raise ValueError('Enter the tracking number')
+        elif any((self.carrier, self.tracking_number, self.tracking_url, self.note)):
+            raise ValueError('Shipment details are only accepted when marking a job shipped')
+        return self
 
 class CategoryInput(BaseModel):
     name: str = Field(min_length=1, max_length=100)

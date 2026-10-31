@@ -49,9 +49,16 @@ def test_host_order_and_job_workflow():
     assigned=next(j for j in host.get('/api/host/jobs').json() if j['id']==job_id)
     assert __import__('json').loads(assigned['fulfillment']['address'])['street']=='Test address'
     assert host.post(f'/api/host/jobs/{job_id}/accept',headers=headers(host_token)).status_code==409
-    assert host.post(f'/api/host/jobs/{job_id}/status',json={'status':'completed'},headers=headers(host_token)).status_code==409
-    for status in ('printing','ready','completed'):
+    # Hosts can no longer complete a job: only the buyer does, by confirming receipt.
+    assert host.post(f'/api/host/jobs/{job_id}/status',json={'status':'completed'},headers=headers(host_token)).status_code==422
+    assert host.post(f'/api/host/jobs/{job_id}/status',json={'status':'shipped','carrier':'DHL','tracking_number':'1'},headers=headers(host_token)).status_code==409
+    for status in ('printing','ready'):
         assert host.post(f'/api/host/jobs/{job_id}/status',json={'status':status},headers=headers(host_token)).status_code==200
+    ship_job(host,host_token,job_id)
+    assert buyer.get('/api/orders').json()[0]['status']=='shipped'
+    received=buyer.post(f'/api/orders/{order.json()["id"]}/jobs/{job_id}/received',headers=headers(buyer_token))
+    assert received.status_code==200, received.text
+    assert received.json()['status']=='completed' and received.json()['jobs'][0]['status']=='completed'
     assert buyer.get('/api/orders').json()[0]['status']=='completed'
     assert admin.post(f'/api/admin/orders/{order.json()["id"]}/cancel',headers=headers(admin_token)).status_code==409
     assert admin.get('/api/admin/overview').json()['orders_completed']>=1
@@ -220,6 +227,12 @@ def structured_application(client,token):
     return client.get('/api/host/application')
 
 
+def ship_job(client,token,job_id,**extra):
+    body={'status':'shipped','carrier':'DHL Express','tracking_number':'JD0146000032','tracking_url':'https://www.dhl.com/track?id=JD0146000032','note':'Left with reception',**extra}
+    response=client.post(f'/api/host/jobs/{job_id}/status',json=body,headers=headers(token))
+    assert response.status_code==200, response.text
+    return response.json()
+
 def stock(client,token):
     """After approval the host stocks materials and colors directly, without a revision."""
     printer=client.get('/api/host/equipment').json()[0]
@@ -267,3 +280,74 @@ def test_buyer_order_pages_filters_and_snapshots():
     assert buyer.get(path+'&category=unknown').status_code==422
     assert buyer.get('/api/orders?paginated=true&per_page=1000').status_code==422
     assert len(buyer.get('/api/orders').json())==6  # Original client contract remains valid.
+
+
+def test_shipping_requires_details_and_only_the_buyer_completes():
+    from app.models import Activity
+    buyer, host, stranger = [TestClient(app) for _ in range(3)]
+    buyer_token=register(buyer,'shipping-buyer@example.org',host=True)
+    host_token=register(host,'shipping-host@example.org')
+    stranger_token=register(stranger,'shipping-stranger@example.org')
+    admin,admin_token=admin_client()
+    host_id=structured_application(host,host_token).json()['id']
+    assert admin.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(admin_token)).status_code==200
+    stock(host,host_token)
+    lines=[]
+    for title in ('Shipping rack','Shipping holder'):
+        listing=buyer.post('/api/listings',json={'title':title,'description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
+        upload_test_cad(buyer,listing['id'],buyer_token)
+        buyer.post(f'/api/listings/{listing["id"]}/submit',headers=headers(buyer_token))
+        assert admin.post(f'/api/admin/listings/{listing["id"]}/approve',headers=headers(admin_token)).status_code==200
+        lines.append({'listing_id':listing['id'],'quantity':1,'color':'black','expected_price_cents':1200})
+    order=buyer.post('/api/orders',json={'idempotency_key':'shipping_test_key_123','contact':CONTACT,'address':ADDRESS,'items':lines},headers=headers(buyer_token))
+    assert order.status_code==201, order.text
+    order=order.json()
+    first,second=[j['id'] for j in order['jobs']]
+    order_id=order['id']
+    for job in (first,second):
+        assert host.post(f'/api/host/jobs/{job}/accept',headers=headers(host_token)).status_code==200
+        for status in ('printing','ready'):
+            assert host.post(f'/api/host/jobs/{job}/status',json={'status':status},headers=headers(host_token)).status_code==200
+    def status(body): return host.post(f'/api/host/jobs/{first}/status',json=body,headers=headers(host_token)).status_code
+    # Shipment details are required, validated, and accepted only with the shipped status.
+    assert status({'status':'shipped'})==422
+    assert status({'status':'shipped','carrier':'DHL'})==422
+    assert status({'status':'shipped','tracking_number':'123'})==422
+    assert status({'status':'shipped','carrier':'DHL','tracking_number':'123','tracking_url':'javascript:alert(1)'})==422
+    assert status({'status':'ready','carrier':'DHL'})==422
+    # The buyer cannot confirm a job that has not shipped.
+    assert buyer.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(buyer_token)).status_code==409
+    shipped=ship_job(host,host_token,first)
+    assert shipped['status']=='shipped'
+    assert shipped['shipment']['carrier']=='DHL Express' and shipped['shipment']['tracking_number']=='JD0146000032'
+    assert shipped['shipment']['tracking_url'].startswith('https://') and shipped['shipment']['note']=='Left with reception' and shipped['shipment']['shipped_at']
+    assert host.post(f'/api/host/jobs/{first}/status',json={'status':'shipped','carrier':'DHL','tracking_number':'2'},headers=headers(host_token)).status_code==409
+    # One of two jobs shipped: the order is still in production; the buyer sees the tracking details.
+    mine=buyer.get('/api/orders').json()[0]
+    assert mine['status']=='ready'
+    assert next(j for j in mine['jobs'] if j['id']==first)['shipment']['tracking_number']=='JD0146000032'
+    assert next(j for j in mine['jobs'] if j['id']==second)['shipment'] is None
+    ship_job(host,host_token,second,tracking_url='',note='')
+    assert buyer.get('/api/orders').json()[0]['status']=='shipped'
+    assert admin.get('/api/admin/overview').json()['orders_shipped']>=1
+    assert admin.post(f'/api/admin/orders/{order_id}/cancel',headers=headers(admin_token)).status_code==409
+    # Only the buyer of this order confirms receipt, one job at a time.
+    assert stranger.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(stranger_token)).status_code==404
+    assert host.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(host_token)).status_code==404
+    assert buyer.post(f'/api/orders/{order_id}/jobs/{first}/received').status_code==403
+    assert buyer.post(f'/api/orders/{order_id + 999}/jobs/{first}/received',headers=headers(buyer_token)).status_code==404
+    partial=buyer.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(buyer_token))
+    assert partial.status_code==200 and partial.json()['status']=='shipped'
+    assert buyer.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(buyer_token)).status_code==409
+    done=buyer.post(f'/api/orders/{order_id}/jobs/{second}/received',headers=headers(buyer_token)).json()
+    assert done['status']=='completed' and {j['status'] for j in done['jobs']}=={'completed'}
+    assert [h['action'] for h in done['history']].count('job.completed')==2 and 'order.completed' in [h['action'] for h in done['history']]
+    buyer_id=buyer.get('/api/auth/me').json()['user']['id']
+    with SessionLocal() as db:
+        events={(a.action,a.subject):a for a in db.scalars(select(Activity).where(Activity.subject.in_([f'job:{first}',f'job:{second}',f'order:{order_id}'])))}
+        assert events[('job.shipped',f'job:{first}')].detail=='DHL Express · JD0146000032'
+        assert events[('job.completed',f'job:{first}')].actor_id==buyer_id
+        assert events[('order.completed',f'order:{order_id}')].actor_id==buyer_id
+    # The completed job stays in the host's list, with its shipment.
+    finished=next(j for j in host.get('/api/host/jobs').json() if j['id']==first)
+    assert finished['status']=='completed' and finished['shipment']['carrier']=='DHL Express'

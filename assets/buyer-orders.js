@@ -4,8 +4,8 @@ let buyerOrdersRequest = 0, buyerOrdersShown = null;
 // Filters, sort and pages change only the hash query: keep the scroll position (see app.js).
 inPageRoutes.add('#orders');
 const buyerOrderCategories = [['all','All orders'],['pending','Pending'],['in-progress','In progress'],['completed','Completed'],['cancelled','Cancelled']];
-const buyerOrderLabels = {pending:'Awaiting host acceptance',accepted:'Accepted · awaiting printing',printing:'Production in progress',ready:'Ready for delivery',completed:'Completed',cancelled:'Cancelled',available:'Awaiting host acceptance'};
-const buyerOrderTone = {pending:'warning',accepted:'warning',printing:'info',ready:'info',completed:'success',cancelled:'danger',available:'warning'};
+const buyerOrderLabels = {pending:'Awaiting host acceptance',accepted:'Accepted · awaiting printing',printing:'Production in progress',ready:'Ready for delivery',shipped:'Shipped',completed:'Completed',cancelled:'Cancelled',available:'Awaiting host acceptance'};
+const buyerOrderTone = {pending:'warning',accepted:'warning',printing:'info',ready:'info',shipped:'info',completed:'success',cancelled:'danger',available:'warning'};
 const buyerOrderBadge = status => `<span class="status status-${buyerOrderTone[status] || 'neutral'}">${esc(buyerOrderLabels[status] || 'Status unavailable')}</span>`;
 const buyerOrderDate = value => parseServerDate(value).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
 const buyerOrderMoney = (cents,currency) => new Intl.NumberFormat(undefined,{style:'currency',currency}).format(cents/100);
@@ -42,7 +42,7 @@ function buyerOrderThumbFailed(img) {
 function buyerOrderLine(item,currency,detail=false) {
   return `<li class="bo-product">${buyerOrderThumb(item)}<div class="bo-product-copy"><h3>${esc(item.title)}</h3>${buyerOrderConfig(item)}<span class="bo-meta">Quantity: ${item.quantity}${detail?' · '+buyerOrderMoney(item.price_cents,currency)+' each':''}</span></div><strong class="bo-line-price">${buyerOrderMoney(item.price_cents*item.quantity,currency)}</strong></li>`;
 }
-const buyerOrderEvents = {'order.created':'Order requested','order.cancelled':'Order cancelled','job.accepted':'A printing host accepted a product','job.printing':'Printing started for a product','job.ready':'A product is ready for delivery','job.completed':'A product was completed','job.reopened':'A product is awaiting a new host'};
+const buyerOrderEvents = {'order.created':'Order requested','order.cancelled':'Order cancelled','job.accepted':'A printing host accepted a product','job.printing':'Printing started for a product','job.ready':'A product is ready for delivery','job.shipped':'A product was shipped','job.completed':'A product was received','order.completed':'Order completed','job.reopened':'A product is awaiting a new host'};
 function buyerOrderCard(order) {
   const count=order.items.reduce((sum,i)=>sum+i.quantity,0),preview=order.items.slice(0,2);
   const jobs=order.jobs.map(j=>`<li class="bo-job"><div><strong>${esc(j.item.title)}</strong>${buyerOrderConfig(j.item)}<span class="bo-meta">Quantity: ${j.item.quantity}</span><span class="bo-meta">${j.host_id?'Assigned printing host #'+j.host_id:j.status==='cancelled'?'No active assignment':'Waiting for a printing host'}</span></div><div>${buyerOrderBadge(j.status)}<span class="bo-meta">Updated ${esc(safeDate(j.updated_at))}</span></div></li>`).join('');
