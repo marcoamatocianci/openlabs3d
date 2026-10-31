@@ -115,6 +115,8 @@ class Order(Base):
 class OrderItem(Base):
     manufacturing_dimensions: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
     color: Mapped[str] = mapped_column(String(40), default='', server_default='')
+    # Display colour offered when the order was placed; '' for lines ordered before it was recorded.
+    color_hex: Mapped[str] = mapped_column(String(7), default='', server_default='')
     __tablename__ = 'order_items'
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey('orders.id', ondelete='RESTRICT'), index=True)
@@ -244,3 +246,39 @@ class EquipmentRevision(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     __table_args__ = (CheckConstraint("status IN ('draft','pending','approved','rejected')"),
         Index('uq_equipment_open_revision', 'user_id', unique=True, sqlite_where=text("status IN ('draft','pending')")))
+
+
+class CustomRequest(Base):
+    """A buyer's description of a tool to design or manufacture. Reviewed and quoted by administrators;
+    never an order: no listing, price, host assignment or payment is created from it."""
+    __tablename__ = 'custom_requests'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'), index=True)
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(120))
+    application: Mapped[str] = mapped_column(Text)
+    dimensions: Mapped[str] = mapped_column(Text)
+    compatibility: Mapped[str] = mapped_column(Text, default='')
+    quantity: Mapped[int] = mapped_column(Integer)
+    material: Mapped[str] = mapped_column(String(60), default='')
+    conditions: Mapped[str] = mapped_column(Text, default='[]')
+    requirements: Mapped[str] = mapped_column(Text, default='')
+    status: Mapped[str] = mapped_column(String(20), default='submitted', index=True)
+    admin_notes: Mapped[str] = mapped_column(Text, default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, index=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+    user: Mapped[User] = relationship()
+    files: Mapped[list['CustomRequestFile']] = relationship(order_by='CustomRequestFile.id', cascade='all, delete-orphan')
+    __table_args__ = (UniqueConstraint('user_id', 'idempotency_key'), CheckConstraint('quantity BETWEEN 1 AND 10000'),
+        CheckConstraint("status IN ('submitted','under_review','quoted','closed')"))
+
+class CustomRequestFile(Base):
+    __tablename__ = 'custom_request_files'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    request_id: Mapped[int] = mapped_column(ForeignKey('custom_requests.id', ondelete='CASCADE'), index=True)
+    filename: Mapped[str] = mapped_column(String(255))
+    storage_path: Mapped[str] = mapped_column(String(80), unique=True)
+    kind: Mapped[str] = mapped_column(String(10))
+    size: Mapped[int] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    __table_args__ = (CheckConstraint("kind IN ('model','image','document')"),)

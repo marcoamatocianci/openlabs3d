@@ -14,7 +14,7 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import select, func, or_, cast, Float
+from sqlalchemy import select, func, or_
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
@@ -187,8 +187,8 @@ def logout(response: Response, auth = Depends(mutate), db: Session = Depends(get
     db.delete(auth[1]); db.commit(); response.delete_cookie('ol3d_session', path='/'); return {'ok':True}
 
 @app.get('/api/listings')
-def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: bool = False, page: int = 1, per_page: int = 12, material: str = '', max_price_cents: int | None = None, max_width: float | None = None, db: Session = Depends(get_db)):
-    if page < 1 or not 1 <= per_page <= 50 or sort not in ('newest','oldest','price_asc','price_desc') or (max_price_cents is not None and max_price_cents < 0) or (max_width is not None and not 0 < max_width <= 100000): fail(422, 'Invalid filters, pagination or sort')
+def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: bool = False, page: int = 1, per_page: int = 12, material: str = '', max_price_cents: int | None = None, db: Session = Depends(get_db)):
+    if page < 1 or not 1 <= per_page <= 50 or sort not in ('newest','oldest','price_asc','price_desc') or (max_price_cents is not None and max_price_cents < 0): fail(422, 'Invalid filters, pagination or sort')
     query = select(models.Listing).where(models.Listing.status == 'approved', models.Listing.removed.is_(False))
     if featured: query = query.where(models.Listing.featured.is_(True))
     if q: query = query.where(or_(*[c.icontains(q[:200], autoescape=True) for c in (models.Listing.title, models.Listing.description, models.Listing.compatibility)]))
@@ -196,7 +196,6 @@ def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: b
     if material: query = query.where(models.Listing.material.icontains(material[:200], autoescape=True))
     if max_price_cents is not None: query = query.where(models.Listing.price_cents <= max_price_cents)
     # Dimensions are free text. Only a leading numeric width can be compared.
-    if max_width is not None: query = query.where(models.Listing.dimensions.op('GLOB')('[0-9]*'), cast(models.Listing.dimensions, Float) <= max_width)
     total = db.scalar(select(func.count()).select_from(query.subquery()))
     order = {'newest':models.Listing.published_at.desc(), 'oldest':models.Listing.published_at.asc(), 'price_asc':models.Listing.price_cents.asc(), 'price_desc':models.Listing.price_cents.desc()}[sort]
     items = db.scalars(query.options(selectinload(models.Listing.images),selectinload(models.Listing.owner)).order_by(order, models.Listing.id.desc()).offset((page-1)*per_page).limit(per_page)).all()
@@ -397,3 +396,5 @@ def seed_equipment_catalogue():
     with SessionLocal() as db:seed_equipment(db)
 from .cad import router as cad_router
 app.include_router(cad_router)
+from .custom_requests import router as custom_requests_router
+app.include_router(custom_requests_router)

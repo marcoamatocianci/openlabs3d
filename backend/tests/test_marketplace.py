@@ -128,7 +128,7 @@ def test_catalogue_filters_before_pagination():
                            status='approved', published_at=datetime.now(timezone.utc)))
         db.commit()
     client = TestClient(app)
-    response = client.get('/api/listings', params={'category':'Filter test', 'material':'petg', 'max_price_cents':1500, 'max_width':30, 'per_page':1})
+    response = client.get('/api/listings', params={'category':'Filter test', 'material':'petg', 'max_price_cents':1500, 'per_page':1})
     assert response.status_code == 200
     assert response.json()['total'] == 1
     assert response.json()['items'][0]['title'] == 'Filtered 0'

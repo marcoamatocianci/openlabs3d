@@ -53,6 +53,9 @@ function avatarHtml(user, size=32, extra='') {
 }
 
 /* Topbar: brand · primary navigation · actions · account menu. */
+// The supplied lockup already spells the name, so the text is kept for assistive technology only.
+// Both theme variants are tiny WebPs; CSS shows the one matching [data-theme].
+const BRAND_LOGO = '<img class="brand-logo brand-logo-light" src="assets/brand/openlabs3d-logo.webp" width="431" height="96" alt="" decoding="async"><img class="brand-logo brand-logo-dark" src="assets/brand/openlabs3d-logo-dark.webp" width="431" height="96" alt="" decoding="async">';
 function navbarHtml(route) {
   const config = NAVIGATION[navRole()], count = opsCart.reduce((n, i) => n + i.quantity, 0);
   const primary = config.primary.map(item => { const active = itemActive(item, route); return `<a class="nav-link ${active ? 'active' : ''}" href="#${item.href}" ${active ? 'aria-current="page"' : ''}>${esc(item.label)}${countBadge(item.count)}</a>`; }).join('');
@@ -60,7 +63,7 @@ function navbarHtml(route) {
   const cart = `<a class="nav-icon cart-link ${cartActive ? 'active' : ''}" href="#basket" ${cartActive ? 'aria-current="page"' : ''} ${config.cart ? '' : 'hidden'}>${icon('cart')}<span class="sr-only">Basket</span><b id="count" class="count-badge" ${count ? '' : 'hidden'}>${count}</b></a>`;
   // Until the session check returns, leave the account area empty instead of flashing "Sign in".
   const actions = !authChecked ? '' : account ? userMenuHtml(config, route) : `<a class="nav-link ${route === 'account' ? 'active' : ''}" href="#account" ${route === 'account' ? 'aria-current="page"' : ''}>Sign in</a><a class="btn btn-sm nav-cta" href="#account?mode=register">Create account</a>`;
-  return `<div class="topbar-inner"><button type="button" class="nav-icon nav-toggle" data-nav-toggle aria-controls="primary-nav" aria-expanded="${navState.mobile}" aria-label="${navState.mobile ? 'Close menu' : 'Open menu'}">${icon(navState.mobile ? 'close' : 'menu')}</button><a class="brand" href="#home"><span class="logo-image"><img src="openlabs3d-logo.png" alt=""></span><span id="brand">${esc(publicSettings.marketplace_name || 'OpenLabs3D')}</span></a><nav id="primary-nav" class="primary-nav ${navState.mobile ? 'open' : ''}" aria-label="Main">${primary}</nav><div class="topbar-actions">${cart}${actions}</div></div>`;
+  return `<div class="topbar-inner"><button type="button" class="nav-icon nav-toggle" data-nav-toggle aria-controls="primary-nav" aria-expanded="${navState.mobile}" aria-label="${navState.mobile ? 'Close menu' : 'Open menu'}">${icon(navState.mobile ? 'close' : 'menu')}</button><a class="brand" href="#home">${BRAND_LOGO}<span id="brand" class="sr-only">${esc(publicSettings.marketplace_name || 'OpenLabs3D')}</span></a><nav id="primary-nav" class="primary-nav ${navState.mobile ? 'open' : ''}" aria-label="Main">${primary}</nav><div class="topbar-actions">${cart}${actions}</div></div>`;
 }
 function userMenuHtml(config, route) {
   const active = config.menu.some(item => itemActive(item, route));
@@ -85,7 +88,7 @@ async function refreshNavBadges(force=false) {
   if (!force && Date.now() - navCountsAt < 15000) return;
   navCountsAt = Date.now(); const owner = account.id;
   try {
-    if (account.role === 'admin') { const o = await api('/admin/overview'); if (account?.id === owner) setNavCount('approvals', o.pending_hosts + o.products_pending + (o.pending_equipment || 0)); }
+    if (account.role === 'admin') { const o = await api('/admin/overview'); if (account?.id === owner) { setNavCount('approvals', o.pending_hosts + o.products_pending + (o.pending_equipment || 0)); setNavCount('requests', o.custom_requests_new || 0); } }
     else { const jobs = await api('/host/jobs'); if (account?.id === owner) setNavCount('jobs', jobs.filter(j => j.status === 'available').length); }
     renderNavbar();
   } catch (e) { console.warn('Navigation counts unavailable', e); }
@@ -95,6 +98,7 @@ async function refreshNavBadges(force=false) {
 const dropdownItems = menu => [...menu.querySelectorAll('a[href],button:not([disabled])')];
 function setDropdown(trigger, open) {
   const menu = document.getElementById(trigger.getAttribute('aria-controls')); if (!menu) return;
+  if (open && trigger.closest('#topbar') && navState.mobile) setMobileNav(false);
   trigger.setAttribute('aria-expanded', open); menu.hidden = !open;
 }
 function closeDropdowns(except) { document.querySelectorAll('[data-dropdown][aria-expanded="true"]').forEach(t => { if (t !== except) setDropdown(t, false); }); }
@@ -160,7 +164,7 @@ function sidebarHtml(kind, route) {
 function workspacePage(kind, title, body, action='') {
   const route = currentRoute(), {group} = activeWorkspaceItem(kind, route);
   document.title = `${title} · ${WORKSPACES[kind].label} · ${publicSettings.marketplace_name || 'OpenLabs3D'}`;
-  return `<div class="workspace">${sidebarHtml(kind, route)}<section class="ws-main" aria-labelledby="ws-title"><header class="ws-head"><div>${group?.label ? `<p class="ws-crumb">${esc(group.label)}</p>` : ''}<h1 id="ws-title">${esc(title)}</h1></div>${action ? `<div class="ws-actions">${action}</div>` : ''}</header>${body}</section></div>`;
+  return `<div class="workspace">${sidebarHtml(kind, route)}<section class="ws-main" aria-labelledby="ws-title"><header class="ws-head"><div>${group?.label ? `<p class="ws-crumb eyebrow-dot">${esc(group.label)}</p>` : ''}<h1 id="ws-title">${esc(title)}</h1></div>${action ? `<div class="ws-actions">${action}</div>` : ''}</header>${body}</section></div>`;
 }
 
 /* Small building blocks reused by workspace and account pages. */

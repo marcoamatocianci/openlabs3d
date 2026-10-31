@@ -1,9 +1,10 @@
-from .availability import supports
+from .availability import supports, combinations
 """Persistent host, order and marketplace administration workflows."""
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Request, Response, Query
+from typing import Literal
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
 from sqlalchemy import select, update, delete, func, exists
 from sqlalchemy.exc import IntegrityError
@@ -34,16 +35,39 @@ def active_host(auth, db):
 def job_data(job):
     item = job.item
     return {'id':job.id, 'order_id':job.order_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at,
-            'item':{'color':item.color, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents}}
+            'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents}}
 
-def order_data(order, db):
-    jobs = db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.order_id == order.id).order_by(models.PrintingJob.id)).all()
-    subjects=[f'order:{order.id}', *[f'job:{job.id}' for job in jobs]]
-    events=db.scalars(select(models.Activity).where(models.Activity.subject.in_(subjects)).order_by(models.Activity.created_at,models.Activity.id)).all()
-    return {'id':order.id, 'reference':order.reference, 'buyer_id':order.buyer_id, 'status':order.status, 'total_cents':order.total_cents, 'currency':order.currency, 'created_at':order.created_at,
-            'contact':order.contact, 'address':order.address,
-            'items':[{'color':i.color, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material} for i in order.items],
-            'jobs':[job_data(j) for j in jobs], 'history':[{'action':e.action,'created_at':e.created_at} for e in events]}
+def orders_data(orders, db):
+    """Serialize orders with a fixed number of queries (jobs, history, listings), whatever the page size."""
+    from .visuals import visual_data
+    if not orders: return []
+    ids = [o.id for o in orders]
+    jobs = db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.order_id.in_(ids)).order_by(models.PrintingJob.id)).all()
+    by_order = {}
+    for job in jobs: by_order.setdefault(job.order_id, []).append(job)
+    subjects = [f'order:{i}' for i in ids] + [f'job:{job.id}' for job in jobs]
+    history = {}
+    for e in db.scalars(select(models.Activity).where(models.Activity.subject.in_(subjects)).order_by(models.Activity.created_at, models.Activity.id)):
+        history.setdefault(e.subject, []).append(e)
+    listing_ids = {i.listing_id for o in orders for i in o.items}
+    listings = {p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(listing_ids)))}
+    thumbnails = {}
+    for p in listings.values():
+        # Only publicly viewable products get a preview URL; the image route enforces the same rule.
+        visual = visual_data(p) if p.status == 'approved' and not p.removed else {}
+        thumbnails[p.id] = visual.get('thumbnail', '') if visual.get('status') == 'ready' else ''
+    def item_data(i):
+        return {'color':i.color, 'color_hex':i.color_hex, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material, 'thumbnail':thumbnails.get(i.listing_id, '')}
+    result = []
+    for order in orders:
+        order_jobs = by_order.get(order.id, [])
+        events = sorted([e for s in [f'order:{order.id}', *[f'job:{j.id}' for j in order_jobs]] for e in history.get(s, [])], key=lambda e: (e.created_at, e.id))
+        result.append({'id':order.id, 'reference':order.reference, 'buyer_id':order.buyer_id, 'status':order.status, 'total_cents':order.total_cents, 'currency':order.currency, 'created_at':order.created_at,
+            'contact':order.contact, 'address':order.address, 'items':[item_data(i) for i in order.items],
+            'jobs':[job_data(j) for j in order_jobs], 'history':[{'action':e.action,'created_at':e.created_at} for e in events]})
+    return result
+
+def order_data(order, db): return orders_data([order], db)[0]
 
 def sync_order(db, order_id):
     db.flush()
@@ -63,9 +87,10 @@ def delete_account(user, actor, db):
         (models.Listing, models.Listing.owner_id),
         (models.Order, models.Order.buyer_id),
         (models.PrintingJob, models.PrintingJob.host_id),
+        (models.CustomRequest, models.CustomRequest.user_id),
     )
     if any(db.scalar(select(model.id).where(column == user_id).limit(1)) is not None for model, column in dependencies):
-        fail(409, 'This account has listings, orders or printing jobs and cannot be deleted while those records exist. Contact the site administrator.')
+        fail(409, 'This account has listings, orders, printing jobs or custom requests and cannot be deleted while those records exist. Contact the site administrator.')
     # Preserve the activity history without retaining a foreign key to the deleted user.
     db.execute(update(models.Activity).where(models.Activity.actor_id == user_id).values(actor_id=None))
     db.execute(update(models.EquipmentRevision).where(models.EquipmentRevision.reviewed_by == user_id).values(reviewed_by=None))
@@ -167,9 +192,9 @@ def decide_host(host_id: int, decision: str, body: schemas.Reject, auth=Depends(
 def create_order(body: schemas.OrderInput, auth=Depends(mutate), db: Session=Depends(get_db)):
     return persist_order(body,auth,db)
 
-def persist_order(body,auth,db,commit=True):
+def persist_order(body,auth,db,commit=True,contact_email=None):
     import json
-    contact=json.loads(body.contact);contact['email']=auth[0].email
+    contact=json.loads(body.contact);contact['email']=contact_email or auth[0].email
     body.contact=json.dumps(contact,ensure_ascii=False)
     if not auth[0].email_verified: fail(403, 'Verify your email before ordering')
     if auth[0].role=='admin': fail(403, 'Use marketplace order management')
@@ -188,7 +213,7 @@ def persist_order(body,auth,db,commit=True):
         db.add(order); db.flush()
         for line,q in zip(body.items,quotes):
             p=products[line.listing_id]
-            item=models.OrderItem(color=line.color,order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,manufacturing_dimensions=p.cad_dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
+            item=models.OrderItem(color=line.color,color_hex=q['color_hex'],order_id=order.id,listing_id=p.id,title=p.title,material=q['material'],dimensions=p.dimensions,manufacturing_dimensions=p.cad_dimensions,quantity=line.quantity,price_cents=q['unit_price_cents'])
             db.add(item); db.flush()
             db.add(models.PrintingJob(order_id=order.id,item_id=item.id))
         log(db, auth[0].id, 'order.created', f'order:{order.id}')
@@ -201,20 +226,42 @@ def persist_order(body,auth,db,commit=True):
         return order_data(existing,db)
     return order_data(order,db)
 
+ORDER_GROUPS = {'pending':('pending','accepted'), 'in-progress':('printing','ready'),
+                'completed':('completed',), 'cancelled':('cancelled',)}
+
 @router.get('/orders')
-def my_orders(auth=Depends(require), db: Session=Depends(get_db)):
+def my_orders(auth=Depends(require), db: Session=Depends(get_db),
+              paginated:bool=False, category:Literal['all','pending','in-progress','completed','cancelled']='all',
+              sort:Literal['newest','oldest']='newest', page:int=Query(1,ge=1), per_page:int=Query(10,ge=1,le=50)):
     if auth[0].role=='admin': fail(403, 'Use marketplace order management')
-    orders=db.scalars(select(models.Order).options(selectinload(models.Order.items)).where(models.Order.buyer_id==auth[0].id).order_by(models.Order.created_at.desc())).all()
-    return [order_data(o,db) for o in orders]
+    owned=models.Order.buyer_id==auth[0].id
+    query=select(models.Order).options(selectinload(models.Order.items)).where(owned)
+    direction=lambda column: column.asc() if sort=='oldest' else column.desc()
+    query=query.order_by(direction(models.Order.created_at),direction(models.Order.id))
+    # Preserve the original list contract for existing clients. The buyer UI opts into bounded pages.
+    if not paginated:
+        return orders_data(db.scalars(query).all(),db)
+    by_status=dict(db.execute(select(models.Order.status,func.count()).where(owned).group_by(models.Order.status)).all())
+    counts={'all':sum(by_status.values()), **{key:sum(by_status.get(s,0) for s in statuses) for key,statuses in ORDER_GROUPS.items()}}
+    if category!='all':query=query.where(models.Order.status.in_(ORDER_GROUPS[category]))
+    total=counts[category]
+    pages=max(1,(total+per_page-1)//per_page)
+    page=min(page,pages)
+    orders=db.scalars(query.offset((page-1)*per_page).limit(per_page)).all()
+    return {'items':orders_data(orders,db), 'counts':counts, 'total':total,
+            'page':page, 'pages':pages, 'per_page':per_page}
 
 @router.get('/host/jobs')
 def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
-    host=active_host(auth,db)
-    materials={s.strip().casefold() for s in host.materials.split(',') if s.strip()}
+    active_host(auth,db)
     jobs=db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where((models.PrintingJob.status=='available') | (models.PrintingJob.host_id==auth[0].id)).order_by(models.PrintingJob.id.desc())).all()
-    result=[]
+    result=[];eligible={}
     for job in jobs:
-        if job.host_id != auth[0].id and not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id): continue
+        if job.host_id != auth[0].id:
+            # Same rule as supports(), evaluated once per product instead of once per job.
+            listing_id=job.item.listing_id
+            if listing_id not in eligible: eligible[listing_id]=combinations(db.get(models.Listing,listing_id),auth[0].id)
+            if job.item.color not in eligible[listing_id].get(job.item.material,{}): continue
         item=job_data(job)
         if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','completed'):
             order=db.get(models.Order,job.order_id)
@@ -224,10 +271,9 @@ def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
 
 @router.post('/host/jobs/{job_id}/accept')
 def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
-    host=active_host(auth,db)
+    active_host(auth,db)
     job=db.get(models.PrintingJob,job_id)
     if not job: fail(404,'Job not found')
-    materials={s.strip().casefold() for s in host.materials.split(',') if s.strip()}
     if not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id): fail(403,'Your approved equipment cannot manufacture this material, color and product size')
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
     order_active=exists(select(models.Order.id).where(models.Order.id==models.PrintingJob.order_id,models.Order.status!='cancelled'))
@@ -251,7 +297,7 @@ def update_job(job_id: int, body: schemas.JobTransition, auth=Depends(mutate), d
 @router.get('/admin/orders')
 def all_orders(auth=Depends(admin), db: Session=Depends(get_db)):
     orders=db.scalars(select(models.Order).options(selectinload(models.Order.items)).order_by(models.Order.created_at.desc())).all()
-    return [order_data(o,db) for o in orders]
+    return orders_data(orders,db)
 
 @router.post('/admin/orders/{order_id}/cancel')
 def cancel_order(order_id: int, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
@@ -332,4 +378,4 @@ def overview(auth=Depends(admin), db: Session=Depends(get_db)):
     def count(model,*where): return db.scalar(select(func.count()).select_from(model).where(*where))
     return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'), 'pending_equipment':count(models.EquipmentRevision,models.EquipmentRevision.status=='pending'),
             'products':count(models.Listing), **{f'products_{s}':count(models.Listing,models.Listing.status==s) for s in ('approved','pending','draft','rejected')},
-            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available')}
+            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}

@@ -226,3 +226,44 @@ def stock(client,token):
     assert {'PLA','PETG'}<=set(printer['capabilities'])
     response=client.put(f"/api/host/printers/{printer['id']}/availability",json={'materials':['PLA','PETG'],'material_colors':{'PLA':{'black':'#000000'},'PETG':{'black':'#000000'}}},headers=headers(token))
     assert response.status_code==200,response.text
+
+
+def test_buyer_order_pages_filters_and_snapshots():
+    from datetime import datetime, timedelta
+    from app.models import Order, OrderItem, Listing
+    from app.main import rate
+    rate.clear()
+    buyer,other=TestClient(app),TestClient(app)
+    register(buyer,'history-buyer@example.org')
+    register(other,'history-other@example.org')
+    uid=buyer.get('/api/auth/me').json()['user']['id']
+    other_id=other.get('/api/auth/me').json()['user']['id']
+    with SessionLocal() as db:
+        p=Listing(owner_id=uid,title='Changed listing',price_cents=9999,material='PETG',status='archived',removed=True)
+        db.add(p);db.flush()
+        for n,status in enumerate(['pending','accepted','printing','ready','completed','cancelled']):
+            o=Order(buyer_id=uid,reference=f'QA-HISTORY-{n}',idempotency_key=f'qa-history-{n}',contact=CONTACT,address=ADDRESS,total_cents=2400,status=status,created_at=datetime(2026,1,1)+timedelta(days=n))
+            db.add(o);db.flush()
+            db.add(OrderItem(order_id=o.id,listing_id=p.id,title='Original rack',quantity=2,price_cents=1200,material='PLA',color='orange',dimensions='10 mm'))
+        db.add(Order(buyer_id=other_id,reference='QA-HISTORY-PRIVATE',idempotency_key='private-history',contact=CONTACT,address=ADDRESS,total_cents=0))
+        db.commit()
+    path='/api/orders?paginated=true&per_page=2'
+    data=buyer.get(path).json()
+    assert data['counts']=={'all':6,'pending':2,'in-progress':2,'completed':1,'cancelled':1}
+    assert data['pages']==3 and len(data['items'])==2
+    assert [o['status'] for o in data['items']]==['cancelled','completed']
+    assert buyer.get(path+'&page=2').json()['items'][0]['status']=='ready'
+    assert buyer.get(path+'&sort=oldest').json()['items'][0]['status']=='pending'
+    assert buyer.get(path+'&page=999').json()['page']==3
+    for category,statuses in [('pending',['pending','accepted']),('in-progress',['printing','ready']),('completed',['completed']),('cancelled',['cancelled'])]:
+        filtered=buyer.get(path+'&category='+category+'&sort=oldest').json()
+        assert [o['status'] for o in filtered['items']]==statuses
+        assert filtered['counts']==data['counts']
+    item=data['items'][0]['items'][0]
+    assert (item['title'],item['material'],item['color'],item['quantity'],item['price_cents'])==('Original rack','PLA','orange',2,1200)
+    assert other.get(path).json()['counts']['all']==1
+    assert other.get(path).json()['items'][0]['reference']=='QA-HISTORY-PRIVATE'
+    assert TestClient(app).get(path).status_code==401
+    assert buyer.get(path+'&category=unknown').status_code==422
+    assert buyer.get('/api/orders?paginated=true&per_page=1000').status_code==422
+    assert len(buyer.get('/api/orders').json())==6  # Original client contract remains valid.

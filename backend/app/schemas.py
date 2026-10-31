@@ -131,3 +131,28 @@ class SettingsInput(BaseModel):
     marketplace_name: str = Field(min_length=1, max_length=100)
     contact: str = Field(default='', max_length=200)
     host_applications_open: bool = True
+
+CUSTOM_CONDITIONS = ('heat', 'cold', 'chemicals', 'cleaning', 'sterilization', 'mechanical', 'uv')
+CustomRequestStatus = Literal['submitted', 'under_review', 'quoted', 'closed']
+
+class CustomRequestInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    idempotency_key: str = Field(min_length=16, max_length=80, pattern=r'^[a-zA-Z0-9_-]+$')
+    title: str = Field(min_length=3, max_length=120)
+    application: str = Field(min_length=20, max_length=5000)
+    dimensions: str = Field(min_length=3, max_length=2000)
+    compatibility: str = Field(default='', max_length=2000)
+    quantity: int = Field(ge=1, le=10000)
+    material: str = Field(default='', max_length=60)
+    conditions: list[Literal[CUSTOM_CONDITIONS]] = Field(default_factory=list, max_length=len(CUSTOM_CONDITIONS))
+    requirements: str = Field(default='', max_length=3000)
+    @field_validator('conditions')
+    @classmethod
+    def distinct(cls, value):
+        if len(set(value)) != len(value): raise ValueError('Each condition may only be listed once')
+        return value
+
+class CustomRequestReview(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    status: CustomRequestStatus | None = None
+    admin_notes: str | None = Field(default=None, max_length=5000)

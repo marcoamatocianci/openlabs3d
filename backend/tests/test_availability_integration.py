@@ -131,7 +131,7 @@ def test_migration_preserves_legacy_equipment(tmp_path):
         row=db.execute('SELECT materials,material_colors,x FROM host_printers').fetchone()
         assert row==('["PLA"]','{}',200)
         assert db.execute('SELECT capabilities FROM host_printers').fetchone()==('["PLA"]',)
-        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='66a_printer_capabilities'
+        assert db.execute('SELECT version_num FROM alembic_version').fetchone()[0]=='68a_order_color_snapshot'
 
 def test_material_color_availability_tracks_product_and_host(workflow):
     clients,ids,pid,sessions=workflow

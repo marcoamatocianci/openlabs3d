@@ -14,13 +14,15 @@ const tintCache=new Map();
 const RENDER_ALBEDO=.55,REFLECTION=.06,LINEAR=Array.from({length:256},(_,v)=>{const c=v/255;return c<=.04045?c/12.92:((c+.055)/1.055)**2.4});
 // Swatch hex values are display colors; real filament reads slightly darker and less saturated.
 function filamentAlbedo(hex){const a=hex.slice(1).match(/../g).map(v=>LINEAR[parseInt(v,16)]),y=.2126*a[0]+.7152*a[1]+.0722*a[2];return a.map(c=>Math.min(.8,Math.max(.012,(y+(c-y)*.8)*.85)))}
+// data-tint-size caps the recoloured image (in px) for small thumbnails: same look, far fewer pixels.
+const tintKey=(source,color,size)=>source+color+(size?'@'+size:'');
 function tintProductImage(img){
- const color=img.dataset.color,source=img.dataset.source;
+ const color=img.dataset.color,source=img.dataset.source,size=+img.dataset.tintSize||0;
  if(!color||!source||img.dataset.tinted===color)return;
- const key=source+color;
+ const key=tintKey(source,color,size);
  try{
   let tinted=tintCache.get(key);
-  if(!tinted){const canvas=document.createElement('canvas');canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height),albedo=filamentAlbedo(color);
+  if(!tinted){const scale=size?Math.min(1,size/Math.max(img.naturalWidth,img.naturalHeight)):1,canvas=document.createElement('canvas');canvas.width=Math.round(img.naturalWidth*scale);canvas.height=Math.round(img.naturalHeight*scale);const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);const pixels=ctx.getImageData(0,0,canvas.width,canvas.height),albedo=filamentAlbedo(color);
    // Linear-light recolor of the neutral render: diffuse light scales with the filament albedo, while a
    // small achromatic share (dielectric reflection) stays grey, so dark plastics keep their sheen.
    const gain=albedo.map(a=>REFLECTION+(1-REFLECTION)*a/RENDER_ALBEDO),encode=new Uint8ClampedArray(4096);for(let k=0;k<4096;k++){const c=k/4095;encode[k]=255*(c<=.0031308?c*12.92:1.055*c**(1/2.4)-.055)}

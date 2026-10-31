@@ -6,6 +6,9 @@ from pathlib import Path
 from PIL import Image,ImageFilter
 from .mesh import inspect_mesh
 _lock=threading.Lock()
+# Sources are content-addressed, so a render already queued or running for the same file produces the
+# same output: further requests (repeated "regenerate" clicks, re-uploads) are dropped, not re-run.
+_pending=set();_pending_lock=threading.Lock()
 def thumbnail(im,size=640):
     """Same image as render.png, downscaled cleanly: Lanczos (alpha-premultiplied by Pillow) and a light
     unsharp mask on colour only, so edges stay crisp without haloing the transparent outline."""
@@ -15,6 +18,14 @@ def thumbnail(im,size=640):
 def render_asset(source, output=None):
     source=Path(source);output=Path(output) if output else source.parent.parent/'renders'/source.stem
     output.mkdir(parents=True,exist_ok=True)
+    key=str(output.resolve())
+    with _pending_lock:
+        if key in _pending:return True
+        _pending.add(key)
+    try:return _render(source,output)
+    finally:
+        with _pending_lock:_pending.discard(key)
+def _render(source,output):
     with _lock:
         try:
             dimensions,triangles=inspect_mesh(source.read_bytes(),source.suffix.lower(),True)

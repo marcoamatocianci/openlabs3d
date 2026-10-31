@@ -24,4 +24,4 @@ def quote(p, material, color, quantity):
     adjusted=(p.price_cents*o['materials'][material]+5000)//10000
     discount=max((int(v) for k,v in o['discounts'].items() if quantity>=int(k)),default=0)
     unit=(adjusted*(10000-discount)+5000)//10000
-    return dict(material=material,color=color,quantity=quantity,base_price_cents=p.price_cents,material_adjustment_cents=adjusted-p.price_cents,discount_bps=discount,unit_price_cents=unit,total_cents=unit*quantity,currency=p.currency)
+    return dict(material=material,color=color,color_hex=o['colors_by_material'][material][color],quantity=quantity,base_price_cents=p.price_cents,material_adjustment_cents=adjusted-p.price_cents,discount_bps=discount,unit_price_cents=unit,total_cents=unit*quantity,currency=p.currency)

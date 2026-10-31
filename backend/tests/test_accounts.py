@@ -134,13 +134,22 @@ def test_cart_checkout_isolation():
     body={'idempotency_key':'direct-test-key-1234','contact':contact,'direct':{**line,'quantity':1}}
     response=a.post('/api/checkout',json=body);assert response.status_code==201,response.text
     assert response.json()['total_cents']==1000
+    import json
+    assert json.loads(response.json()['contact'])['email']=='buyeralpha@example.org'
     assert a.get('/api/cart').json()[0]['quantity']==2
     assert a.post('/api/checkout',json=body).json()['id']==response.json()['id']
     assert b.post('/api/checkout',json={**body,'idempotency_key':'unverified-key-123'}).status_code==403
+    profile=a.get('/api/auth/me').json()['user']
+    invalid=a.post('/api/checkout',json={**body,'idempotency_key':'invalid-email-key-123','contact':{**contact,'email':'invalid'}})
+    assert invalid.status_code==422
+    contact={**contact,'email':'alternate@example.org','first_name':'Alternative'}
     response=a.post('/api/checkout',json={'idempotency_key':'basket-test-key-1234','contact':contact});assert response.status_code==201,response.text
     assert a.get('/api/cart').json()==[]
     assert len(b.get('/api/cart').json())==1
     assert 'Via Roma 1' in response.json()['address']
+    snapshot=json.loads(response.json()['contact'])
+    assert snapshot['email']=='alternate@example.org' and snapshot['first_name']=='Alternative'
+    assert a.get('/api/auth/me').json()['user']==profile
 
 def test_equipment():
     from app.equipment import seed_equipment

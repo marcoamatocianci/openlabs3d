@@ -1,7 +1,7 @@
 """Owner-scoped carts and structured checkout use the existing order engine."""
 import json
 from fastapi import APIRouter,Depends,HTTPException
-from pydantic import BaseModel,Field,ConfigDict
+from pydantic import BaseModel,Field,ConfigDict,EmailStr
 from sqlalchemy import select,delete
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.orm import Session
@@ -14,10 +14,13 @@ from .accounts import Contact
 router=APIRouter(prefix='/api')
 class CartLine(schemas.QuoteInput):
     listing_id:int=Field(gt=0)
+class CheckoutContact(Contact):
+    email:EmailStr|None=None
+
 class Checkout(BaseModel):
     model_config=ConfigDict(extra='forbid')
     idempotency_key:str=Field(min_length=16,max_length=80,pattern=r'^[a-zA-Z0-9_-]+$')
-    contact:Contact
+    contact:CheckoutContact
     address_id:int|None=None
     direct:CartLine|None=None
 
@@ -92,7 +95,7 @@ def checkout(body:Checkout,auth=Depends(mutate),db:Session=Depends(get_db)):
     snapshot={key:getattr(address,key) for key in Contact.model_fields}
     order=schemas.OrderInput(idempotency_key=body.idempotency_key,contact=json.dumps({'first_name':contact.first_name,'last_name':contact.last_name,'phone':contact.phone,'email':auth[0].email},ensure_ascii=False),address=json.dumps(snapshot,ensure_ascii=False),items=validated)
     # The existing order engine revalidates availability and prices and snapshots lines.
-    result=persist_order(order,auth,db,commit=False)
+    result=persist_order(order,auth,db,commit=False,contact_email=contact.email)
     if not body.direct:
         # Remove only the purchased configuration and quantity; leave concurrent edits intact.
         for line in lines:db.execute(delete(models.CartItem).where(models.CartItem.user_id==auth[0].id,models.CartItem.listing_id==line.listing_id,models.CartItem.material==line.material,models.CartItem.color==line.color,models.CartItem.quantity==line.quantity))
