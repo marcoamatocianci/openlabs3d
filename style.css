@@ -1294,3 +1294,11 @@ dialog.ad-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
  .ad-foot{padding-bottom:calc(16px + env(safe-area-inset-bottom))}.ad-foot .btn-ghost,.ad-foot .primary{flex:1 1 0;min-height:44px}
 }
 @media(prefers-reduced-motion:reduce){dialog.ad-dialog[open]{animation:none}}
+
+/* Account settings: host equipment summary (read-only). */
+.es-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 28px}
+.es-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.es-printer{display:flex;align-items:center;gap:10px}.es-printer>span{display:flex;flex-direction:column;gap:2px;min-width:0}
+.es-printer strong,.es-material strong{font-size:13.5px}.es-printer small{display:flex;gap:8px;align-items:center;color:var(--subtle);font-size:12px}
+.es-material{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
+@media(max-width:720px){.es-grid{grid-template-columns:1fr}}

@@ -111,13 +111,28 @@ function securitySection() {
 function dangerSection() {
   return `<details class="settings-card danger-zone" id="settings-delete"><summary><span><strong>Delete account</strong><span class="muted">Permanently remove your account and sign out everywhere.</span></span>${icon('chevron')}</summary><div class="settings-card-body"><p>Accounts with listings, orders, printing jobs or custom requests cannot be deleted while those records exist. Your host application and active sessions are removed.</p><form class="delete-account-form" data-id="${account.id}" data-self="true"><label>Confirm with your password<input name="password" type="password" maxlength="128" autocomplete="current-password" required></label><p class="delete-account-error form-error" role="alert"></p><button class="danger">Delete my account</button></form></div></details>`;
 }
+/* Host only: read-only summary filled from approved equipment and the material inventory (edited in My equipment). */
+function equipmentSummarySection() {
+  return settingsCard('equipment', 'Printing equipment', 'Filled in automatically from your approved equipment and materials.', '<div class="settings-card-body" id="equipment-summary"><p class="muted" role="status">Loading equipment…</p></div>', '<a class="btn-ghost btn-sm" href="#my-printers">Edit in My equipment</a>');
+}
+async function fillEquipmentSummary() {
+  const box = $('#equipment-summary'); if (!box) return;
+  try {
+    const [printers, inventory] = await Promise.all([api('/host/equipment'), api('/host/materials')]);
+    if (!box.isConnected) return;
+    const units = printers.reduce((n, p) => n + p.quantity, 0), materials = Object.entries(inventory.material_colors);
+    const rows = printers.map(p => `<li class="es-printer">${printerArt(p, 'sm')}<span><strong>${esc(printerName(p))}${p.quantity > 1 ? ` <span class="eq-qty">× ${p.quantity}</span>` : ''}</strong><small><span class="eq-tech">${techLabel(p.technology)}</span> ${volumeText(p)}</small></span></li>`).join('');
+    const stock = materials.map(([m, colors]) => `<li class="es-material"><strong>${esc(m)}</strong><span class="eq-dots">${Object.entries(colors).map(([n, h]) => colorDot(h, n)).join('') || '<span class="eq-muted">No colors</span>'}</span></li>`).join('');
+    box.innerHTML = `<div class="es-grid"><section><p class="eq-label">Printers · ${printers.length} model${printers.length === 1 ? '' : 's'}, ${units} unit${units === 1 ? '' : 's'}</p>${rows ? `<ul class="es-list">${rows}</ul>` : '<p class="eq-muted">No approved printers yet.</p>'}</section><section><p class="eq-label">Materials &amp; colors</p>${stock ? `<ul class="es-list">${stock}</ul>` : '<p class="eq-muted">No materials listed yet.</p>'}</section></div>`;
+  } catch (e) { box.innerHTML = `<p class="form-error">${esc(e.message)}</p>`; }
+}
 function accountPage() {
   if (!account) return authPage();
   document.title = 'Account settings · ' + (publicSettings.marketplace_name || 'OpenLabs3D');
   const checkout = sessionStorage.getItem('checkout-return-' + account.id);
   const banners = (!account.email_verified ? `<div class="banner warning" role="status"><span><strong>Verify your email address.</strong> A verified email is required to order, apply as a printing host or create listings.</span><button type="button" class="btn-ghost btn-sm" id="resend-verification">Resend email</button></div>` : '')
     + (checkout ? `<div class="banner info" id="checkout-banner"><span>Your checkout is saved. Return to it when your details are complete.</span><a class="btn btn-sm" href="#${checkout === 'checkout' ? 'checkout' : 'checkout-cart'}">Return to checkout</a><button type="button" class="icon-btn" id="dismiss-checkout" aria-label="Dismiss">${icon('close')}</button></div>` : '');
-  return layout(`<div class="settings"><header class="settings-head"><h1>Account settings</h1><p class="muted">Your profile, contact details and delivery addresses in one place.</p></header>${banners}${profileSection()}${contactSection()}${addressSection()}${securitySection()}${dangerSection()}</div>`);
+  return layout(`<div class="settings"><header class="settings-head"><h1>Account settings</h1><p class="muted">Your profile, contact details and delivery addresses in one place.</p></header>${banners}${profileSection()}${account.role === 'host' ? equipmentSummarySection() : ''}${contactSection()}${addressSection()}${securitySection()}${dangerSection()}</div>`);
 }
 
 /* Behaviour */
@@ -176,7 +191,7 @@ function bindAddresses() {
 function bindAccountPage() {
   bindMarketplace(); bindAccountFields(); bindOperations();
   if (!account) { if (new URLSearchParams(location.hash.split('?')[1] || '').get('mode') === 'register') $('#real-register input')?.focus(); return; }
-  bindAvatar(); bindProfileForm($('#account-profile')); bindProfileForm($('#account-contact')); bindAddresses();
+  bindAvatar(); bindProfileForm($('#account-profile')); bindProfileForm($('#account-contact')); bindAddresses(); fillEquipmentSummary();
   $('#address-add').hidden = !savedAddresses?.length;
   $('#app .settings').addEventListener('click', e => {
     const trigger = e.target.closest('[data-reveal]'); if (!trigger) return;
