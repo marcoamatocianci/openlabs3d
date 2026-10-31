@@ -9,7 +9,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Literal
 import pycountry
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from pydantic import BaseModel, EmailStr, Field, ConfigDict, field_validator
 from sqlalchemy import select, delete, update
 from sqlalchemy.exc import IntegrityError
@@ -104,6 +104,24 @@ def consume(db, token, purpose):
 @router.get('/countries')
 def countries(): return sorted([{'code':c.alpha_2,'name':c.name} for c in pycountry.countries],key=lambda c:c['name'])
 
+# Regions and cities for the address forms (GeoNames, CC BY 4.0; built by scripts/build_locations.py).
+_locations=None
+def locations_data():
+    global _locations
+    if _locations is None:
+        import gzip, json
+        from pathlib import Path
+        with gzip.open(Path(__file__).parent/'geodata'/'locations.json.gz','rt',encoding='utf-8') as source: _locations=json.load(source)
+    return _locations
+@router.get('/countries/{code}/locations')
+def country_locations(code: str, response: Response):
+    code=code.upper()
+    if not pycountry.countries.get(alpha_2=code): fail(404,'Unknown country')
+    entry=locations_data().get(code,{'regions':{},'cities':[]})
+    response.headers['Cache-Control']='public, max-age=86400'
+    return {'regions':[{'code':k,'name':v} for k,v in entry['regions'].items()],'cities':[{'name':n,'region':r} for n,r in entry['cities']],
+            'source':'GeoNames (CC BY 4.0)'}
+
 @router.get('/auth/username')
 def available(username: str, auth=Depends(current), db: Session=Depends(get_db)):
     if not re.fullmatch(r'[A-Za-z0-9_]{3,32}',username): return {'available':False}
@@ -147,8 +165,10 @@ def change_password(body: PasswordChange, request: Request, auth=Depends(mutate)
 
 @router.patch('/profile')
 def profile(body: Profile, auth=Depends(mutate), db: Session=Depends(get_db)):
-    for key,value in body.model_dump(exclude_unset=True).items():
+    for key,value in body.model_dump(exclude_unset=True,exclude={'display_name'}).items():
         if value is not None: setattr(auth[0],key,value)
+    # One public name: the username. The legacy display_name column is kept in step, never edited.
+    auth[0].display_name=auth[0].username
     try: db.commit()
     except IntegrityError: db.rollback();fail(409,'Username is already in use')
     return user_data(auth[0])
@@ -160,6 +180,8 @@ def addresses(auth=Depends(require), db: Session=Depends(get_db)):
 @router.put('/addresses/{address_id}')
 def save_address(address_id: int, body: Address, auth=Depends(mutate), db: Session=Depends(get_db)):
     if any(not getattr(body,k) for k in ('first_name','last_name','phone','country','city','street')): fail(422,'Complete the recipient and address information')
+    if not body.postal_code: fail(422,'Enter the postal code')
+    if not body.region: fail(422,'Enter the region or province')
     row=db.get(models.UserAddress,address_id) if address_id else models.UserAddress(user_id=auth[0].id)
     if not row or row.user_id!=auth[0].id: fail(404,'Address not found')
     data=body.model_dump()

@@ -1,27 +1,29 @@
 /* Reusable dropdown in the marketplace filter style (.cf-select / .cf-trigger / .cf-menu).
    uiSelect() returns the markup; one set of document listeners drives every [data-select] root on the page.
    Add className 'cf-select-field' inside forms so the label and height match the other fields.
-   Modes: a listbox button (default), a searchable combobox (searchable:true) and a popover holding any
+   Modes: a listbox button (default), a searchable combobox (searchable:true; freeText:true also keeps typed
+   text that matches no option, e.g. a city missing from the list) and a popover holding any
    controls ([data-select-popover], e.g. the catalogue price slider).
    Choosing an option writes the hidden input and dispatches input + change on it, so forms and listeners see it. */
 let uiSelectSeq = 0;
 const uiEsc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
-const uiFold = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Search key: accents, case and separators are ignored ("ile de" finds "Île-de-France").
+const uiFold = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[-_'’.,/]+/g, ' ').replace(/\s+/g, ' ');
 const UI_CHEVRON = '<svg class="cf-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
 function uiSelectOptionsMarkup(id, options, value) {
   return options.map(([v, l], i) => `<li role="option" id="${id}-o-${i}" data-value="${uiEsc(v)}" aria-selected="${String(v) === String(value)}">${uiEsc(l)}</li>`).join('');
 }
 /* options: [[value, label], ...]. A searchable select may start empty (value not in options); a plain one falls back to the first option. */
-function uiSelect({name, label = '', ariaLabel = '', options, value = '', id, searchable = false, placeholder = 'Search…', required = false, describedBy = '', className = '', attrs = ''}) {
+function uiSelect({name, label = '', ariaLabel = '', options, value = '', id, searchable = false, freeText = false, placeholder = 'Search…', required = false, describedBy = '', className = '', attrs = ''}) {
   id = id || `sel-${name || 'x'}-${++uiSelectSeq}`;
-  const current = options.find(([v]) => String(v) === String(value)) || (searchable ? null : options[0]);
+  const current = options.find(([v]) => String(v) === String(value)) || (searchable ? (freeText && value ? [value, value, true] : null) : options[0]);
   const described = describedBy ? ` aria-describedby="${uiEsc(describedBy)}"` : '';
   const labelled = label ? `aria-labelledby="${id}-l"` : `aria-label="${uiEsc(ariaLabel)}"`;
-  const menu = `<ul class="cf-menu" id="${id}-m" role="listbox" tabindex="-1" ${labelled} hidden>${uiSelectOptionsMarkup(id, options, current?.[0])}${searchable ? '<li class="cf-no-match" role="presentation" hidden>No matches</li>' : ''}</ul>`;
+  const menu = `<ul class="cf-menu" id="${id}-m" role="listbox" tabindex="-1" ${labelled} hidden>${uiSelectOptionsMarkup(id, options, current?.[2] ? null : current?.[0])}${searchable ? `<li class="cf-no-match" role="presentation" hidden>${freeText ? 'Not in the list: what you type is kept' : 'No matches'}</li>` : ''}</ul>`;
   const hidden = `<input type="hidden"${name ? ` name="${uiEsc(name)}"` : ''} value="${uiEsc(current?.[0] ?? '')}">`;
   if (searchable) {
-    return `<div class="cf-select is-searchable ${className}" data-select="${uiEsc(name || id)}" data-searchable ${attrs}>${label ? `<label class="cf-label" id="${id}-l" for="${id}-i">${uiEsc(label)}</label>` : ''}<div class="cf-combo"><input id="${id}-i" class="cf-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-m" ${label ? '' : `aria-label="${uiEsc(ariaLabel)}"`} placeholder="${uiEsc(placeholder)}" value="${uiEsc(current?.[1] ?? '')}" autocomplete="off" spellcheck="false"${described}${required ? ' required' : ''}><button type="button" class="cf-combo-toggle" tabindex="-1" aria-label="Show options" aria-controls="${id}-m">${UI_CHEVRON}</button></div>${menu}${hidden}</div>`;
+    return `<div class="cf-select is-searchable ${className}" data-select="${uiEsc(name || id)}" data-searchable${freeText ? ' data-free-text' : ''} ${attrs}>${label ? `<label class="cf-label" id="${id}-l" for="${id}-i">${uiEsc(label)}</label>` : ''}<div class="cf-combo"><input id="${id}-i" class="cf-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-m" ${label ? '' : `aria-label="${uiEsc(ariaLabel)}"`} placeholder="${uiEsc(placeholder)}" value="${uiEsc(current?.[1] ?? '')}" autocomplete="off" spellcheck="false"${described}${required ? ' required' : ''}><button type="button" class="cf-combo-toggle" tabindex="-1" aria-label="Show options" aria-controls="${id}-m">${UI_CHEVRON}</button></div>${menu}${hidden}</div>`;
   }
   return `<div class="cf-select ${className}" data-select="${uiEsc(name || id)}" ${attrs}>${label ? `<span class="cf-label" id="${id}-l">${uiEsc(label)}</span>` : ''}<button type="button" class="cf-trigger" id="${id}-t" aria-haspopup="listbox" aria-expanded="false" aria-controls="${id}-m" ${label ? `aria-labelledby="${id}-l ${id}-t"` : `aria-label="${uiEsc(ariaLabel)}"`}${described}><span class="cf-value">${uiEsc(current?.[1] ?? '')}</span>${UI_CHEVRON}</button>${menu}${hidden}</div>`;
 }
@@ -37,10 +39,13 @@ function uiSelectSet(target, value, {silent = false} = {}) {
   const all = [...root.querySelectorAll('.cf-menu [role=option]')];
   const option = all.find(o => o.dataset.value === String(value)) || (root.hasAttribute('data-searchable') ? null : all[0]);
   all.forEach(o => o.setAttribute('aria-selected', String(o === option)));
-  const text = option?.textContent ?? '', input = root.querySelector('.cf-input');
+  // A free-text select keeps a value that is not among its options.
+  const free = !option && root.hasAttribute('data-free-text') ? String(value ?? '').trim() : '';
+  const text = option?.textContent ?? free, input = root.querySelector('.cf-input'), next = option?.dataset.value ?? free;
+  delete root.dataset.dirty;
   if (input) input.value = text; else root.querySelector('.cf-value').textContent = text;
-  const hidden = root.querySelector('input[type=hidden]'), changed = hidden.value !== (option?.dataset.value ?? '');
-  hidden.value = option?.dataset.value ?? '';
+  const hidden = root.querySelector('input[type=hidden]'), changed = hidden.value !== next;
+  hidden.value = next;
   if (!silent && changed) { hidden.dispatchEvent(new Event('input', {bubbles:true})); hidden.dispatchEvent(new Event('change', {bubbles:true})); }
 }
 /* Replace the options, e.g. for a list that depends on another field. Keeps the value when it is still offered. */
@@ -51,13 +56,19 @@ function uiSelectSetOptions(target, options, value = uiSelectValue(target)) {
   uiSelectSet(root, value, {silent:String(value) === uiSelectValue(root)});
 }
 
-function uiSelectClose(root, focus = false) {
+function uiSelectClose(root, focus = false, {discard = false} = {}) {
   if (!root || !root.classList.contains('is-open')) { if (focus && root) uiSelectFocusOwner(root).focus(); return; }
   root.querySelector('.cf-menu').hidden = true; root.classList.remove('is-open');
   const owner = uiSelectFocusOwner(root); owner.setAttribute('aria-expanded', 'false'); owner.removeAttribute('aria-activedescendant');
-  // A searchable select never keeps half-typed text: it shows the chosen option again.
   const input = root.querySelector('.cf-input');
-  if (input) { input.value = root.querySelector('[role=option][aria-selected=true]')?.textContent ?? ''; uiSelectFilter(root, ''); }
+  // Free text: leaving the field keeps what was typed (an exactly matching option is selected instead).
+  if (input && root.hasAttribute('data-free-text') && root.dataset.dirty && !discard) {
+    const typed = input.value.trim(), match = [...root.querySelectorAll('.cf-menu [role=option]')].find(o => uiFold(o.textContent) === uiFold(typed));
+    uiSelectSet(root, match ? match.dataset.value : typed);
+  }
+  delete root.dataset.dirty;
+  // Otherwise a searchable select never keeps half-typed text: it shows the chosen value again.
+  if (input) { input.value = root.querySelector('[role=option][aria-selected=true]')?.textContent ?? (root.hasAttribute('data-free-text') ? root.querySelector('input[type=hidden]').value : ''); uiSelectFilter(root, ''); }
   if (focus) owner.focus();
 }
 function uiSelectOpen(root) {
@@ -88,7 +99,9 @@ function uiSelectFilter(root, query) {
   options.forEach(o => { o.hidden = !!q && !uiFold(o.textContent).includes(q); });
   const visible = uiSelectOptions(root), empty = root.querySelector('.cf-no-match');
   if (empty) empty.hidden = visible.length > 0;
-  if (root.classList.contains('is-open')) uiSelectActivate(root, q ? visible[0] : (visible.find(o => o.getAttribute('aria-selected') === 'true') || visible[0]));
+  // Highlight the best match: exact, then starting with the text, then any match.
+  const best = q && (visible.find(o => uiFold(o.textContent) === q) || visible.find(o => uiFold(o.textContent).startsWith(q)) || visible[0]);
+  if (root.classList.contains('is-open')) uiSelectActivate(root, q ? best : (visible.find(o => o.getAttribute('aria-selected') === 'true') || visible[0]));
 }
 function uiSelectMove(root, key) {
   const options = uiSelectOptions(root); if (!options.length) return;
@@ -126,15 +139,15 @@ document.addEventListener('focusin', e => {
 });
 document.addEventListener('input', e => {
   const input = e.target.closest?.('[data-searchable] .cf-input'); if (!input) return;
-  const root = input.closest('[data-select]'); uiSelectOpen(root); uiSelectFilter(root, input.value);
+  const root = input.closest('[data-select]'); uiSelectOpen(root); root.dataset.dirty = '1'; uiSelectFilter(root, input.value);
 });
 document.addEventListener('keydown', e => {
   const input = e.target.closest?.('[data-searchable] .cf-input');
   if (input) {
     const root = input.closest('[data-select]'), open = root.classList.contains('is-open');
     if (['ArrowDown', 'ArrowUp'].includes(e.key)) { e.preventDefault(); if (open) uiSelectMove(root, e.key); else uiSelectOpen(root); }
-    else if (e.key === 'Enter' && open) { e.preventDefault(); const active = root.querySelector('.cf-menu .is-active:not([hidden])'); if (active) uiSelectChoose(root, active); }
-    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); uiSelectClose(root); }
+    else if (e.key === 'Enter' && open) { e.preventDefault(); const active = root.querySelector('.cf-menu .is-active:not([hidden])'); if (active) uiSelectChoose(root, active); else if (root.hasAttribute('data-free-text')) uiSelectClose(root, true); }
+    else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); uiSelectClose(root, false, {discard:true}); }
     else if (e.key === 'Tab') uiSelectClose(root);
     return;
   }

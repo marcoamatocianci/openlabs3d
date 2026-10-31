@@ -134,7 +134,7 @@ async function changeOrderAddress(button) {
   let saved = [], current = {};
   try { [saved] = await Promise.all([api('/addresses'), ensureCountries()]); current = buyerOrderJson(card.dataset.address); } catch (e) { showError(e); return; }
   const picker = saved.length ? uiSelect({id:'order-address-saved', label:'Use a saved address', className:'cf-select-field', value:'', options:[['', 'Keep the details below'], ...saved.map(a => [String(a.id), [a.label || 'Address', addressLines(a).slice(1, 3).join(', ')].filter(Boolean).join(' · ')])]}) : '';
-  const body = `${picker}<form class="ad-form" id="order-address-form" novalidate><div class="fields">${textField('first_name', current.first_name)}${textField('last_name', current.last_name)}${textField('phone', current.phone, {wide:true})}${textField('street', current.street, {required:true, wide:true})}${textField('additional', current.additional, {optional:true, wide:true})}${textField('postal_code', current.postal_code)}${textField('city', current.city, {required:true})}${textField('region', current.region)}${countryField(current.country, true)}</div></form><ul class="ad-notes"><li>Your printing host sees the new address straight away.</li><li>It can be changed until a product of this order has shipped.</li></ul>`;
+  const body = `${picker}<form class="ad-form" id="order-address-form" novalidate><div class="fields">${textField('first_name', current.first_name)}${textField('last_name', current.last_name)}${textField('phone', current.phone, {wide:true})}${textField('street', current.street, {required:true, wide:true})}${textField('additional', current.additional, {optional:true, wide:true})}${countryField(current.country, true)}${regionField(current.region)}${cityField(current.city, {required:true})}${textField('postal_code', current.postal_code)}</div></form><ul class="ad-notes"><li>Your printing host sees the new address straight away.</li><li>It can be changed until a product of this order has shipped.</li></ul>`;
   const ok = await actionDialog({title:'Change delivery address', confirm:'Save address', busy:'Saving…', body, run:() => {
     const form = $('#order-address-form');
     if (!form.reportValidity()) throw Error('Enter the street, city and country.');
@@ -145,7 +145,8 @@ async function changeOrderAddress(button) {
     dialog.querySelector('[data-select=order-address-saved] input[type=hidden]')?.addEventListener('change', e => {
       const a = saved.find(x => String(x.id) === e.target.value); if (!a) return;
       const form = dialog.querySelector('#order-address-form');
-      for (const k of ORDER_ADDRESS_KEYS) if (form.elements[k]) form.elements[k].value = a[k] || '';
+      // Country first (it resets region and city), then region, then city.
+      for (const k of ['country', 'region', 'city', ...ORDER_ADDRESS_KEYS.filter(k => !['country', 'region', 'city'].includes(k))]) { const select = form.querySelector(`[data-location=${k}]`); if (select) uiSelectSet(select, a[k] || ''); else if (form.elements[k]) form.elements[k].value = a[k] || ''; }
     });
   }});
   if (!ok) { if (button.isConnected) button.focus(); return; }

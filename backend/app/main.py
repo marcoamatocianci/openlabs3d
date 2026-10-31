@@ -86,7 +86,7 @@ def color_images(p):
 from .pricing import options, quote, Rules
 
 def listing_data(p):
-    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'cad_format':p.cad_path.rsplit('.',1)[-1].upper() if p.cad_path else '', 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
+    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'cad_format':p.cad_path.rsplit('.',1)[-1].upper() if p.cad_path else '', 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.username or p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
 def get_listing(db, listing_id):
     p = db.scalar(select(models.Listing).options(selectinload(models.Listing.images), selectinload(models.Listing.owner)).where(models.Listing.id==listing_id))
     if not p or p.removed: fail(404, 'Listing not found')
@@ -130,8 +130,7 @@ def health(db: Session = Depends(get_db)):
 @app.post('/api/auth/register', status_code=201)
 def register(body: schemas.Register, request: Request, response: Response, db: Session = Depends(get_db)):
     session_limit(request, 'register')
-    name = body.display_name.strip() or body.username
-    user = models.User(email=str(body.email).lower(), username=body.username, display_name=name, password_hash=hasher.hash(body.password), role='buyer')
+    user = models.User(email=str(body.email).lower(), username=body.username, display_name=body.username, password_hash=hasher.hash(body.password), role='buyer')
     db.add(user)
     try: db.commit()
     except IntegrityError: db.rollback(); fail(409, 'Email or username is already in use')

@@ -10,14 +10,27 @@ const countryLabel = code => accountCountries.find(c => c.code === code)?.name |
 function textField(key, value='', {required=false, optional=false, wide=false}={}) {
   return `<label class="${wide ? 'wide' : ''}">${contactNames[key]}${optional ? ' <span class="optional">optional</span>' : ''}<input name="${key}" type="${key === 'phone' ? 'tel' : 'text'}" maxlength="${fieldLimits[key]}" autocomplete="${fieldAutocomplete[key]}" value="${esc(value || '')}" ${required ? 'required' : ''} ${key === 'phone' ? 'placeholder="+39 011 1234567"' : ''}></label>`;
 }
+/* Country, region and city: searchable dropdowns (assets/select.js). Regions and cities follow the chosen
+   country, cities the chosen region (GeoNames data from /api/countries/{code}/locations). Region and city
+   also accept text that is not in the list. */
 function countryField(value='', required=false) {
-  return `<label>Country<input type="search" placeholder="Search countries" class="country-search" aria-label="Search countries"><select name="country" aria-label="Country" autocomplete="country" ${required ? 'required' : ''}><option value="">Select country</option>${accountCountries.map(c => `<option value="${c.code}" ${c.code === value ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`;
+  return uiSelect({name:'country', label:'Country', value, required, searchable:true, placeholder:'Search countries…', className:'cf-select-field', attrs:'data-location="country"', options:accountCountries.map(c => [c.code, c.name])});
 }
+function regionField(value='', {required=false}={}) {
+  return uiSelect({name:'region', label:contactNames.region + (required ? '' : ' (optional)'), value, required, searchable:true, freeText:true, placeholder:'Search regions…', className:'cf-select-field', attrs:'data-location="region"', options:value ? [[value, value]] : []});
+}
+function cityField(value='', {required=false}={}) {
+  return uiSelect({name:'city', label:contactNames.city + (required ? '' : ' (optional)'), value, required, searchable:true, freeText:true, placeholder:'Search cities…', className:'cf-select-field', attrs:'data-location="city"', options:value ? [[value, value]] : []});
+}
+const locationCache = {};
+function ensureLocations(code) {
+  if (!code) return Promise.resolve({regions:[], cities:[]});
+  return locationCache[code] ||= api(`/countries/${encodeURIComponent(code)}/locations`).catch(e => { delete locationCache[code]; throw e; });
+}
+
 function passwordField(name='password', label='Password') { return `<label>${label}<input name="${name}" type="password" minlength="8" maxlength="128" required autocomplete="new-password" data-policy></label><button type="button" class="btn-ghost btn-sm password-toggle">Show password</button><p class="password-rules" aria-live="polite">At least 8 characters · One uppercase letter · One number</p>`; }
-// Small self-hosted city hint list; manual entry is always supported.
-const cityHints = {IT:['Torino','Milano','Roma','Napoli','Bologna','Firenze','Genova','Padova'], FR:['Paris','Lyon','Marseille'], DE:['Berlin','Hamburg','Munich'], GB:['London','Cambridge','Oxford','Edinburgh'], US:['New York','Boston','Chicago','San Francisco'], ES:['Madrid','Barcelona','Valencia'], CH:['Zürich','Geneva','Basel']};
 function bindAccountFields(root=document) {
-  root.querySelectorAll('.country-search:not([data-bound])').forEach(input => { input.dataset.bound = 1; input.oninput = () => { for (const option of input.nextElementSibling.options) option.hidden = !!option.value && !option.textContent.toLowerCase().includes(input.value.toLowerCase()); }; });
+  root.querySelectorAll('[data-location=country]:not([data-bound])').forEach(bindLocationFields);
   root.querySelectorAll('[data-policy]:not([data-bound])').forEach(input => {
     input.dataset.bound = 1; const form = input.closest('form');
     input.oninput = () => { const checks = [input.value.length >= 8, /[A-Z]/.test(input.value), /[0-9]/.test(input.value)]; input.setCustomValidity(checks.every(Boolean) ? '' : 'Use at least 8 characters, an uppercase letter and a number.'); form.querySelector('.password-rules').textContent = checks.map((ok, i) => `${ok ? '✓' : '○'} ${['8 characters', 'Uppercase letter', 'Number'][i]}`).join(' · '); };
@@ -27,13 +40,31 @@ function bindAccountFields(root=document) {
     input.dataset.bound = 1; let timer, seq = 0;
     input.addEventListener('input', () => { clearTimeout(timer); const n = ++seq; input.setCustomValidity(''); timer = setTimeout(async () => { try { const r = await api('/auth/username?username=' + encodeURIComponent(input.value)); if (n !== seq) return; input.setCustomValidity(r.available ? '' : 'Username is unavailable or invalid'); input.closest('form').querySelector('.username-status').textContent = r.available ? 'Username available' : 'Username unavailable or invalid'; } catch (e) { showError(e); } }, 300); });
   });
-  root.querySelectorAll('form').forEach(form => {
-    const country = form.elements.country, city = form.elements.city;
-    if (!country || !city || city.dataset.hints) return;
-    const id = 'city-hints-' + (++cityHintSeq); city.dataset.hints = id; city.setAttribute('list', id); city.insertAdjacentHTML('afterend', `<datalist id="${id}"></datalist>`);
-    const update = () => { document.getElementById(id).innerHTML = (cityHints[country.value] || []).map(c => `<option value="${esc(c)}">`).join(''); };
-    country.addEventListener('change', update); update();
+
+}
+function bindLocationFields(countryRoot) {
+  countryRoot.dataset.bound = 1;
+  const scope = countryRoot.closest('form, fieldset, .fields') || countryRoot.parentElement;
+  const region = scope.querySelector('[data-location=region]'), city = scope.querySelector('[data-location=city]');
+  let data = {regions:[], cities:[]}, seq = 0;
+  const regionCode = () => data.regions.find(r => r.name === uiSelectValue(region))?.code;
+  const fillCities = () => { if (!city) return; const code = regionCode(); uiSelectSetOptions(city, [...new Set(data.cities.filter(c => !code || c.region === code).map(c => c.name))].map(n => [n, n])); };
+  const load = async (reset) => {
+    const n = ++seq, code = uiSelectValue(countryRoot);
+    if (reset) { if (region) uiSelectSet(region, ''); if (city) uiSelectSet(city, ''); }
+    try { data = await ensureLocations(code); } catch (e) { data = {regions:[], cities:[]}; }
+    if (n !== seq) return;
+    if (region) uiSelectSetOptions(region, data.regions.map(r => [r.name, r.name]));
+    fillCities();
+  };
+  countryRoot.querySelector('input[type=hidden]').addEventListener('change', () => load(true));
+  region?.querySelector('input[type=hidden]').addEventListener('change', () => {
+    // A city that belongs to another region is cleared; one typed by hand is kept.
+    const code = regionCode(), known = data.cities.find(c => c.name === uiSelectValue(city));
+    if (city && code && known && !data.cities.some(c => c.name === known.name && c.region === code)) uiSelectSet(city, '');
+    fillCities();
   });
+  load(false);
 }
 async function accountAction(path, body, method='POST') { const r = await api(path, {method, body:JSON.stringify(body)}); if (r.message) toast(r.message); return r; }
 
@@ -53,10 +84,10 @@ const settingsCard = (id, title, text, body, extra='') => `<section class="setti
 const formFooter = label => `<div class="form-footer"><p class="form-status" role="status"></p><button class="primary" disabled>${label}</button></div>`;
 const revealButton = (target, label) => `<button type="button" class="btn-ghost btn-sm" data-reveal="${target}" aria-expanded="false" aria-controls="${target}">${label}</button>`;
 function profileSection() {
-  return settingsCard('profile', 'Profile', 'How you appear on OpenLabs3D and how you sign in.', `<div class="settings-card-body">${avatarFieldHtml()}<form id="account-profile" class="settings-form"><div class="fields"><label>Display name<input name="display_name" required maxlength="100" autocomplete="name" value="${esc(account.display_name)}"><small class="hint">Shown as the seller on your listings.</small></label><label>Username<input name="username" value="${esc(account.username)}" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_]+" autocomplete="username" data-username><small class="hint username-status" aria-live="polite">Letters, numbers and underscores.</small></label></div>${formFooter('Save profile')}</form><div class="settings-rows"><div class="settings-row"><div><span class="settings-label">Email</span><span class="settings-value">${esc(account.email)} ${account.email_verified ? statusBadge('approved', 'Verified') : statusBadge('pending', 'Not verified')}</span></div>${revealButton('email-form', 'Change')}</div><form id="email-form" class="inline-form" hidden><div class="fields"><label>New email<input name="email" type="email" required autocomplete="email"></label><label>Current password<input name="current_password" type="password" required autocomplete="current-password"></label></div><p class="hint">You will need to verify the new address. Your other sessions are signed out.</p><div class="form-footer"><button type="button" class="secondary" data-reveal="email-form">Cancel</button><button class="primary">Change email</button></div></form><div class="settings-row"><div><span class="settings-label">Account type</span><span class="settings-value">${esc(roleLabel(account.role))}</span></div></div><div class="settings-row"><div><span class="settings-label">Appearance</span><span class="settings-value muted">Applies immediately and is saved to your account.</span></div>${themeToggle()}</div></div></div>`);
+  return settingsCard('profile', 'Profile', 'How you appear on OpenLabs3D and how you sign in.', `<div class="settings-card-body">${avatarFieldHtml()}<form id="account-profile" class="settings-form"><div class="fields"><label>Username<input name="username" value="${esc(account.username)}" required minlength="3" maxlength="32" pattern="[A-Za-z0-9_]+" autocomplete="username" data-username><small class="hint username-status" aria-live="polite">Letters, numbers and underscores. Shown as the seller on your listings.</small></label></div>${formFooter('Save profile')}</form><div class="settings-rows"><div class="settings-row"><div><span class="settings-label">Email</span><span class="settings-value">${esc(account.email)} ${account.email_verified ? statusBadge('approved', 'Verified') : statusBadge('pending', 'Not verified')}</span></div>${revealButton('email-form', 'Change')}</div><form id="email-form" class="inline-form" hidden><div class="fields"><label>New email<input name="email" type="email" required autocomplete="email"></label><label>Current password<input name="current_password" type="password" required autocomplete="current-password"></label></div><p class="hint">You will need to verify the new address. Your other sessions are signed out.</p><div class="form-footer"><button type="button" class="secondary" data-reveal="email-form">Cancel</button><button class="primary">Change email</button></div></form><div class="settings-row"><div><span class="settings-label">Account type</span><span class="settings-value">${esc(roleLabel(account.role))}</span></div></div><div class="settings-row"><div><span class="settings-label">Appearance</span><span class="settings-value muted">Applies immediately and is saved to your account.</span></div>${themeToggle()}</div></div></div>`);
 }
 function contactSection() {
-  return settingsCard('contact', 'Contact information', 'Used for order requests and printing host applications. A host sees it only after accepting your job.', `<form id="account-contact" class="settings-card-body settings-form"><div class="fields">${textField('first_name', account.first_name)}${textField('last_name', account.last_name)}${textField('phone', account.phone)}${countryField(account.country)}${textField('city', account.city)}</div>${formFooter('Save contact information')}</form>`);
+  return settingsCard('contact', 'Contact information', 'Used for order requests and printing host applications. A host sees it only after accepting your job.', `<form id="account-contact" class="settings-card-body settings-form"><div class="fields">${textField('first_name', account.first_name)}${textField('last_name', account.last_name)}${textField('phone', account.phone)}${countryField(account.country)}${regionField(account.region)}${cityField(account.city)}</div>${formFooter('Save contact information')}</form>`);
 }
 const addressLines = a => [[a.first_name, a.last_name].filter(Boolean).join(' '), a.street, a.additional, [a.postal_code, a.city].filter(Boolean).join(' ') + (a.region ? ', ' + a.region : ''), countryLabel(a.country)].filter(Boolean);
 function addressCard(a) {
@@ -65,7 +96,7 @@ function addressCard(a) {
 }
 function addressForm(a={}) {
   const v = {first_name:account.first_name, last_name:account.last_name, phone:account.phone, country:account.country, city:account.city, ...a}, locked = a.is_default || !savedAddresses.length;
-  return `<form class="address-card address-form" id="address-form" data-id="${a.id || 0}" aria-labelledby="address-form-title"><h3 id="address-form-title">${a.id ? 'Edit address' : 'New address'}</h3><div class="fields">${textField('first_name', v.first_name, {required:true})}${textField('last_name', v.last_name, {required:true})}${textField('street', v.street, {required:true, wide:true})}${textField('additional', v.additional, {optional:true, wide:true})}${textField('postal_code', v.postal_code, {optional:true})}${textField('city', v.city, {required:true})}${textField('region', v.region, {optional:true})}${countryField(v.country, true)}${textField('phone', v.phone, {required:true})}<label>Label <span class="optional">optional</span><input name="label" maxlength="40" list="address-label-options" placeholder="Laboratory, Home, Work…" value="${esc(a.label || '')}"></label></div><datalist id="address-label-options"><option value="Laboratory"><option value="Home"><option value="Work"></datalist><label class="check"><input type="checkbox" name="is_default" ${locked ? 'checked disabled' : ''}> Use as my default address${!savedAddresses.length ? ' <span class="hint">(your first address is the default)</span>' : ''}</label><p class="form-error" role="alert"></p><div class="form-footer"><button type="button" class="secondary" data-address-cancel>Cancel</button><button class="primary">Save address</button></div></form>`;
+  return `<form class="address-card address-form" id="address-form" data-id="${a.id || 0}" aria-labelledby="address-form-title"><h3 id="address-form-title">${a.id ? 'Edit address' : 'New address'}</h3><div class="fields">${textField('first_name', v.first_name, {required:true})}${textField('last_name', v.last_name, {required:true})}${textField('street', v.street, {required:true, wide:true})}${textField('additional', v.additional, {optional:true, wide:true})}${countryField(v.country, true)}${regionField(v.region, {required:true})}${cityField(v.city, {required:true})}${textField('postal_code', v.postal_code, {required:true})}${textField('phone', v.phone, {required:true})}<label>Label <span class="optional">optional</span><input name="label" maxlength="40" list="address-label-options" placeholder="Laboratory, Home, Work…" value="${esc(a.label || '')}"></label></div><datalist id="address-label-options"><option value="Laboratory"><option value="Home"><option value="Work"></datalist><label class="check"><input type="checkbox" name="is_default" ${locked ? 'checked disabled' : ''}> Use as my default address${!savedAddresses.length ? ' <span class="hint">(your first address is the default)</span>' : ''}</label><p class="form-error" role="alert"></p><div class="form-footer"><button type="button" class="secondary" data-address-cancel>Cancel</button><button class="primary">Save address</button></div></form>`;
 }
 function addressGridHtml() {
   if (savedAddresses === null) return '<p class="muted" role="status">Loading addresses…</p>';

@@ -43,8 +43,10 @@ const itemActive = (item, route) => item.match ? item.match(route) : routeIn(rou
 const countBadge = key => key ? `<span class="nav-badge" data-count-key="${key}" ${navCounts[key] ? '' : 'hidden'}>${navCounts[key] || 0}</span>` : '';
 
 /* Shared renderer: exactly one active picture in every account and workspace surface. */
+// One public name: the username (display_name only for records that predate it).
+const userName = user => user?.username || user?.display_name || '';
 function initials(user) {
-  const words = String(user?.display_name || user?.username || '?').trim().split(/[\s_\-]+/u).filter(Boolean);
+  const words = String(userName(user) || '?').trim().split(/[\s_\-]+/u).filter(Boolean);
   return (words.length > 1 ? Array.from(words[0])[0] + Array.from(words.at(-1))[0] : Array.from(words[0] || '?').slice(0, 2).join('')).toLocaleUpperCase();
 }
 function avatarHtml(user, size=32, extra='') {
@@ -74,7 +76,7 @@ function navbarHtml(route) {
 function userMenuHtml(config, route) {
   const active = config.menu.some(item => itemActive(item, route));
   const items = config.menu.map(item => { const current = itemActive(item, route); return `<a class="menu-item ${current ? 'active' : ''}" href="#${item.href}" ${current ? 'aria-current="page"' : ''}>${esc(item.label)}</a>`; }).join('');
-  return `<div class="dropdown user-menu"><button type="button" class="user-trigger ${active ? 'active' : ''}" id="user-menu-button" data-dropdown aria-expanded="false" aria-controls="user-menu">${avatarHtml(account, 36)}<span class="user-name">${esc(account.username)}</span>${icon('chevron')}<span class="sr-only">Account menu</span></button><div class="dropdown-menu align-end" id="user-menu" hidden><div class="menu-header">${avatarHtml(account, 42)}<div><strong>${esc(account.display_name || account.username)}</strong><span>${esc(account.email)}</span></div></div>${items}<hr class="menu-separator"><button type="button" class="menu-item" data-logout>${icon('logout')}Log out</button></div></div>`;
+  return `<div class="dropdown user-menu"><button type="button" class="user-trigger ${active ? 'active' : ''}" id="user-menu-button" data-dropdown aria-expanded="false" aria-controls="user-menu">${avatarHtml(account, 36)}<span class="user-name">${esc(account.username)}</span>${icon('chevron')}<span class="sr-only">Account menu</span></button><div class="dropdown-menu align-end" id="user-menu" hidden><div class="menu-header">${avatarHtml(account, 42)}<div><strong>${esc(account.username || account.display_name)}</strong><span>${esc(account.email)}</span></div></div>${items}<hr class="menu-separator"><button type="button" class="menu-item" data-logout>${icon('logout')}Log out</button></div></div>`;
 }
 function renderNavbar(route=currentRoute()) {
   const header = $('#topbar'); if (!header) return;

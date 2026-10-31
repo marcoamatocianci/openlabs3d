@@ -176,7 +176,7 @@ def approved_payload(db,user_id):
 
 def revision_data(r,db):
     user=db.get(models.User,r.user_id)
-    return {'id':r.id,'user_id':r.user_id,'host':user.display_name,'email':user.email,'status':r.status,
+    return {'id':r.id,'user_id':r.user_id,'host':user.username or user.display_name,'email':user.email,'status':r.status,
             'before':json.loads(r.before),'proposal':json.loads(r.proposal),'rejection_reason':r.rejection_reason,
             'created_at':r.created_at,'updated_at':r.updated_at,'reviewed_at':r.reviewed_at}
 

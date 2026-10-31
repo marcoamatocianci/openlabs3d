@@ -15,7 +15,7 @@ async (page) => {
     await accountAction('/profile',{username:'buyer',first_name:'Test',last_name:'User',phone:'+39 011 1234567',country:'IT',city:'Torino'},'PATCH');
     for(const address of await api('/addresses'))await api('/addresses/'+address.id,{method:'DELETE'});
     const user = (await api('/auth/me')).user;
-    const address = await accountAction('/addresses/0', {first_name:'Delivery',last_name:'Recipient',phone:'+39 011 9999999',country:'IT',city:'Torino',street:'Via QA 1',label:'QA laboratory'}, 'PUT');
+    const address = await accountAction('/addresses/0', {first_name:'Delivery',last_name:'Recipient',phone:'+39 011 9999999',country:'IT',city:'Torino',region:'Piedmont',postal_code:'10100',street:'Via QA 1',label:'QA laboratory'}, 'PUT');
     const listings = await api('/listings');
     const product = listings.items.find(p => p.title === 'Availability QA Rack');
     return {user, address, line:{listing_id:product.id,material:'PLA',color:'black',quantity:1}};
@@ -80,8 +80,18 @@ async (page) => {
   for(const k of keys)await page.locator('#checkout-form [name='+k+']').fill(alternative[k]);
   await page.getByText('Use a new address',{exact:true}).click();
   await page.locator('#new-address [name=street]').fill('Via QA 2');
-  await page.locator('#new-address [name=city]').fill('Torino');
-  await page.locator('#new-address [name=country]').selectOption('IT');
+  // Country, region and city are searchable dropdowns; the region narrows the cities.
+  const combo = name => page.locator(`#new-address [data-location=${name}] .cf-input`);
+  await combo('country').fill('Italy'); await page.keyboard.press('Enter');
+  check(await page.locator('#new-address [data-location=country] input[type=hidden]').inputValue()==='IT','Country chosen from the list');
+  await combo('region').click(); await page.locator('#new-address [data-location=region] [role=option]',{hasText:'Piedmont'}).waitFor();
+  await combo('region').fill('Piedm'); await page.keyboard.press('Enter');
+  await combo('city').fill('Tur');
+  check(await page.locator('#new-address [data-location=city] [role=option]:visible',{hasText:'Turin'}).count()===1,'Cities of the region offered');
+  await combo('city').fill('Torino'); await page.keyboard.press('Tab');
+  check(await page.locator('#new-address [data-location=city] input[type=hidden]').inputValue()==='Torino','A city typed by hand is kept');
+  check(await page.locator('#new-address [name=postal_code]').getAttribute('required')!==null,'Postal code required');
+  await page.locator('#new-address [name=postal_code]').fill('10100');
   await page.locator('[name=save_address]').check();
   await submit(alternative);
   await page.waitForFunction(async()=> (await api('/addresses')).length===2);

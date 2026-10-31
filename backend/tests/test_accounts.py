@@ -45,7 +45,7 @@ def test_accounts():
     assert a.get('/api/auth/username?username=marcolab').json()['available']
     assert not b.get('/api/auth/username?username=marcolab').json()['available']
     assert b.patch('/api/profile',json={'username':'MARCOLAB'}).status_code==409
-    data={'username':'MarcoLab','first_name':'Marco','last_name':'Rossi','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Via Roma 1','postal_code':'10100'}
+    data={'username':'MarcoLab','first_name':'Marco','last_name':'Rossi','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Via Roma 1','postal_code':'10100','region':'Piedmont'}
     assert a.patch('/api/profile',json=data).status_code==200
     assert a.get('/api/auth/me').json()['user']['first_name']=='Marco'
     assert a.patch('/api/profile',json={'username':'MarcoLab','country':'ZZ'}).status_code==422
@@ -98,7 +98,11 @@ def test_preferences_and_avatar():
 
 def test_address_defaults_and_labels():
     rate.clear();a=signup('AddressLab');b=signup('AddressOther')
-    base={'first_name':'Ada','last_name':'Bench','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Via Nizza 1'}
+    base={'first_name':'Ada','last_name':'Bench','phone':'+39 011 1234567','country':'IT','city':'Torino','street':'Via Nizza 1','postal_code':'10126','region':'Piedmont'}
+    # Postal code and region are required for saved addresses.
+    for missing in ('postal_code','region'):
+        assert a.put('/api/addresses/0',json={**base,missing:''}).status_code==422
+    assert a.get('/api/addresses').json()==[]
     first=a.put('/api/addresses/0',json={**base,'label':''});assert first.status_code==200,first.text
     assert first.json()['is_default'] and first.json()['label']==''
     second=a.put('/api/addresses/0',json={**base,'street':'Via Po 2','label':'  Work  '}).json()
@@ -113,7 +117,22 @@ def test_address_defaults_and_labels():
     assert a.delete('/api/addresses/'+str(second['id'])).status_code==200
     assert [x['is_default'] for x in a.get('/api/addresses').json()]==[True]
     assert a.patch('/api/profile',json={'username':'AddressLab','display_name':'  '}).status_code==422
-    assert a.patch('/api/profile',json={'username':'AddressLab','display_name':'Bench Lab'}).json()['display_name']=='Bench Lab'
+    # A single public name: display_name follows the username and is no longer edited.
+    assert a.patch('/api/profile',json={'username':'AddressLab','display_name':'Bench Lab'}).json()['display_name']=='AddressLab'
+    assert a.patch('/api/profile',json={'username':'Address_Lab2'}).json()['display_name']=='Address_Lab2'
+
+def test_country_locations():
+    client=TestClient(app)
+    italy=client.get('/api/countries/it/locations')
+    assert italy.status_code==200 and 'max-age' in italy.headers['cache-control']
+    data=italy.json()
+    regions={r['name']:r['code'] for r in data['regions']}
+    assert 'Piedmont' in regions and len(regions)==20
+    turin=next(c for c in data['cities'] if c['name']=='Turin')
+    assert turin['region']==regions['Piedmont']
+    assert all(c['region'] in regions.values() or c['region']=='' for c in data['cities'])
+    assert data['source'].startswith('GeoNames')
+    assert client.get('/api/countries/ZZ/locations').status_code==404
 
 def test_cart_checkout_isolation():
     from app.models import Listing,Order

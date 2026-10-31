@@ -47,7 +47,7 @@
 /* Account forms retain the existing blue visual language. */
 #account-profile,#address-form,#password-form,#email-form{max-width:100%;min-width:0}
 .fields>label{min-width:0}.fields input,.fields select{width:100%;min-width:0}
-.password-rules,.username-status{font-size:12px}.country-search{margin-bottom:4px}
+.password-rules,.username-status{font-size:12px}
 @media(max-width:700px){h1{overflow-wrap:anywhere}}
 :root{color-scheme:light;--control-border:#9aafc2;--focus:#286bb2}
 :root[data-theme=dark]{color-scheme:dark;--ink:#e1edff;--teal:#9dceff;--orange:#ff7581;--paper:#101d30;--surface:#1a2b43;--media:rgba(112,152,200,.2);--line:#3d5573;--muted:#b6cce3;--control-border:#718ba9;--focus:#a3ceff}
