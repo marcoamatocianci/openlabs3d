@@ -111,14 +111,14 @@ with sync_playwright() as pw:
 
     # Sort and pages.
     click_chip(p, 'All orders'); ready(p)
-    p.select_option('#bo-sort', 'oldest'); ready(p)
+    p.click('[data-select=bo-sort] .cf-trigger'); p.click('[data-select=bo-sort] [role=option][data-value=oldest]'); ready(p)
     ok(p.locator('.bo-card h2').first.inner_text() == 'OL3D-QA-1001', 'oldest-first sort')
-    ok(p.locator('#bo-sort').evaluate('s => s.value') == 'oldest', 'sort control keeps its value')
+    ok(p.locator('[data-select=bo-sort] input[type=hidden]').input_value() == 'oldest', 'sort control keeps its value')
     p.evaluate("scrollTo(0, document.body.scrollHeight)"); p.locator('.bo-pagination a', has_text='Next').click(); ready(p)
     ok('page=2' in p.url and p.locator('.bo-pagination').inner_text().count('Page 2 of 2') == 1, 'Next opens page 2')
     ok(p.evaluate("document.querySelector('#bo-toolbar').getBoundingClientRect().top") >= 0, 'a new page scrolls back to the list start')
     p.reload(); ready(p)
-    ok(p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('All orders') and p.locator('#bo-sort').evaluate('s => s.value') == 'oldest', 'reload keeps filter and sort')
+    ok(p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('All orders') and p.locator('[data-select=bo-sort] input[type=hidden]').input_value() == 'oldest', 'reload keeps filter and sort')
 
     # Branding: the light lockup in Bright mode, the reversed one in Dark mode; favicon from the new mark.
     def logo_state(page):

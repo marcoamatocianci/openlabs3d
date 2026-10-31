@@ -64,7 +64,7 @@ function buyerOrdersShell(body) {
 }
 function buyerOrdersBody(data, filters) {
   const tabs=filterChips('Order status',buyerOrderCategories.map(([value,label])=>({value,label,href:buyerOrderHref(value,filters.sort).slice(1),count:data.counts[value]})),filters.category);
-  const sort=`<label class="bo-sort">Sort by<select id="bo-sort"><option value="newest" ${filters.sort==='newest'?'selected':''}>Newest first</option><option value="oldest" ${filters.sort==='oldest'?'selected':''}>Oldest first</option></select></label>`;
+  const sort=uiSelect({id:'bo-sort',label:'Sort by',value:filters.sort,options:[['newest','Newest first'],['oldest','Oldest first']],className:'bo-sort'});
   const emptyTitle={all:'No orders yet',pending:'No pending orders','in-progress':'No orders in progress',completed:'No completed orders',cancelled:'No cancelled orders'};
   const emptyText={pending:'Orders awaiting host acceptance or printing will appear here.','in-progress':'Orders being printed or ready for delivery will appear here.',completed:'Your fulfilled orders will appear here.',cancelled:'Cancelled order requests will appear here.'};
   const content=data.items.length?`<div class="bo-list">${data.items.map(buyerOrderCard).join('')}</div>`:`<div class="section-card">${emptyState(data.counts.all?emptyTitle[filters.category]:'No orders yet',data.counts.all?emptyText[filters.category]||'Your order requests appear here.':'Explore laboratory tools and place your first order request.',data.counts.all?`<a class="btn btn-sm" href="${buyerOrderHref('all',filters.sort)}">View all orders</a>`:'<a class="btn btn-sm" href="#catalogue">Explore products</a>')}</div>`;
@@ -101,7 +101,7 @@ async function renderBuyerOrders() {
     // A new page starts at its first order; filters and sort keep the reader where they are.
     if(inPlace&&buyerOrdersShown.page!==filters.page&&buyerOrdersShown.category===filters.category&&buyerOrdersShown.sort===filters.sort&&toolbar.getBoundingClientRect().top<0)toolbar.scrollIntoView({block:'start'});
     buyerOrdersShown={owner,...filters};
-    $('#bo-sort').onchange=e=>{location.hash=buyerOrderHref(filters.category,e.target.value)};
+    $('[data-select=bo-sort] input[type=hidden]').onchange=e=>{location.hash=buyerOrderHref(filters.category,e.target.value)};
   }catch(e){
     if(!current())return;
     buyerOrdersShown=null;

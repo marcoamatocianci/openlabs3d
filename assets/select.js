@@ -1,5 +1,6 @@
 /* Reusable dropdown in the marketplace filter style (.cf-select / .cf-trigger / .cf-menu).
    uiSelect() returns the markup; one set of document listeners drives every [data-select] root on the page.
+   Add className 'cf-select-field' inside forms so the label and height match the other fields.
    Modes: a listbox button (default), a searchable combobox (searchable:true) and a popover holding any
    controls ([data-select-popover], e.g. the catalogue price slider).
    Choosing an option writes the hidden input and dispatches input + change on it, so forms and listeners see it. */
@@ -12,16 +13,17 @@ function uiSelectOptionsMarkup(id, options, value) {
   return options.map(([v, l], i) => `<li role="option" id="${id}-o-${i}" data-value="${uiEsc(v)}" aria-selected="${String(v) === String(value)}">${uiEsc(l)}</li>`).join('');
 }
 /* options: [[value, label], ...]. A searchable select may start empty (value not in options); a plain one falls back to the first option. */
-function uiSelect({name, label = '', ariaLabel = '', options, value = '', id, searchable = false, placeholder = 'Search…', required = false, className = '', attrs = ''}) {
+function uiSelect({name, label = '', ariaLabel = '', options, value = '', id, searchable = false, placeholder = 'Search…', required = false, describedBy = '', className = '', attrs = ''}) {
   id = id || `sel-${name || 'x'}-${++uiSelectSeq}`;
   const current = options.find(([v]) => String(v) === String(value)) || (searchable ? null : options[0]);
+  const described = describedBy ? ` aria-describedby="${uiEsc(describedBy)}"` : '';
   const labelled = label ? `aria-labelledby="${id}-l"` : `aria-label="${uiEsc(ariaLabel)}"`;
   const menu = `<ul class="cf-menu" id="${id}-m" role="listbox" tabindex="-1" ${labelled} hidden>${uiSelectOptionsMarkup(id, options, current?.[0])}${searchable ? '<li class="cf-no-match" role="presentation" hidden>No matches</li>' : ''}</ul>`;
   const hidden = `<input type="hidden"${name ? ` name="${uiEsc(name)}"` : ''} value="${uiEsc(current?.[0] ?? '')}">`;
   if (searchable) {
-    return `<div class="cf-select is-searchable ${className}" data-select="${uiEsc(name || id)}" data-searchable ${attrs}>${label ? `<label class="cf-label" id="${id}-l" for="${id}-i">${uiEsc(label)}</label>` : ''}<div class="cf-combo"><input id="${id}-i" class="cf-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-m" ${label ? '' : `aria-label="${uiEsc(ariaLabel)}"`} placeholder="${uiEsc(placeholder)}" value="${uiEsc(current?.[1] ?? '')}" autocomplete="off" spellcheck="false"${required ? ' required' : ''}><button type="button" class="cf-combo-toggle" tabindex="-1" aria-label="Show options" aria-controls="${id}-m">${UI_CHEVRON}</button></div>${menu}${hidden}</div>`;
+    return `<div class="cf-select is-searchable ${className}" data-select="${uiEsc(name || id)}" data-searchable ${attrs}>${label ? `<label class="cf-label" id="${id}-l" for="${id}-i">${uiEsc(label)}</label>` : ''}<div class="cf-combo"><input id="${id}-i" class="cf-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-m" ${label ? '' : `aria-label="${uiEsc(ariaLabel)}"`} placeholder="${uiEsc(placeholder)}" value="${uiEsc(current?.[1] ?? '')}" autocomplete="off" spellcheck="false"${described}${required ? ' required' : ''}><button type="button" class="cf-combo-toggle" tabindex="-1" aria-label="Show options" aria-controls="${id}-m">${UI_CHEVRON}</button></div>${menu}${hidden}</div>`;
   }
-  return `<div class="cf-select ${className}" data-select="${uiEsc(name || id)}" ${attrs}>${label ? `<span class="cf-label" id="${id}-l">${uiEsc(label)}</span>` : ''}<button type="button" class="cf-trigger" id="${id}-t" aria-haspopup="listbox" aria-expanded="false" aria-controls="${id}-m" ${label ? `aria-labelledby="${id}-l ${id}-t"` : `aria-label="${uiEsc(ariaLabel)}"`}><span class="cf-value">${uiEsc(current?.[1] ?? '')}</span>${UI_CHEVRON}</button>${menu}${hidden}</div>`;
+  return `<div class="cf-select ${className}" data-select="${uiEsc(name || id)}" ${attrs}>${label ? `<span class="cf-label" id="${id}-l">${uiEsc(label)}</span>` : ''}<button type="button" class="cf-trigger" id="${id}-t" aria-haspopup="listbox" aria-expanded="false" aria-controls="${id}-m" ${label ? `aria-labelledby="${id}-l ${id}-t"` : `aria-label="${uiEsc(ariaLabel)}"`}${described}><span class="cf-value">${uiEsc(current?.[1] ?? '')}</span>${UI_CHEVRON}</button>${menu}${hidden}</div>`;
 }
 
 const uiSelectRoot = target => typeof target === 'string' ? document.querySelector(`[data-select="${target}"]`) : target;

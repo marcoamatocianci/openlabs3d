@@ -49,11 +49,11 @@ async page => {
     if(label==='In progress')check(statuses.every(s=>['Production in progress','Ready for delivery'].includes(s)),'Active grouping');
   }
   await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:/^Pending/}).click());
-  await navigate(()=>page.locator('#bo-sort').selectOption('oldest'));
+  await navigate(async()=>{await page.click('[data-select=bo-sort] .cf-trigger');await page.click('[data-select=bo-sort] [role=option][data-value=oldest]')});
   check((await refs())[0]==='OL3D-QA-1001','Combined sorting/filtering');
   await page.goto(base+'/#catalogue');await page.waitForLoadState('networkidle');
   await goto('orders');
-  check(await page.locator('#bo-sort').inputValue()==='oldest','Sort not preserved');
+  check(await page.locator('[data-select=bo-sort] input[type=hidden]').inputValue()==='oldest'&&await page.locator('[data-select=bo-sort] .cf-value').textContent()==='Oldest first','Sort not preserved');
   check((await refs()).length===5,'Category not preserved');
   await page.reload();await page.locator('.bo-results').waitFor();
   check((await refs())[0]==='OL3D-QA-1001','Reload lost preferences');
