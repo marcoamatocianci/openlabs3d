@@ -10,7 +10,11 @@ Object.assign(iconPaths, {
 const CR_STATUS = {submitted:['Submitted', 'info', 'Waiting for an administrator to review your requirements.'], under_review:['Under review', 'warning', 'An administrator is assessing feasibility and may contact you with questions.'], quoted:['Quoted', 'success', 'A quotation has been prepared and is sent to you separately. Nothing is charged automatically.'], closed:['Closed', 'neutral', 'This request is closed.']};
 const CR_CONDITIONS = [['heat', 'Heat resistance', 'Above 60 °C, near hot plates or incubators'], ['cold', 'Cold storage', 'Fridge, freezer or −80 °C'], ['chemicals', 'Chemical exposure', 'Solvents, acids, bleach'], ['cleaning', 'Frequent cleaning', 'Ethanol wipes or disinfectants'], ['sterilization', 'Sterilization', 'Autoclave or other sterilization'], ['mechanical', 'Mechanical load', 'Weight, clamping or impacts'], ['uv', 'UV exposure', 'Sunlight or UV cabinets']];
 const CR_FILES = {kinds:{stl:'model', '3mf':'model', png:'image', jpg:'image', jpeg:'image', webp:'image', pdf:'document'}, limits:{model:20, image:10, document:10}, max:6, total:25};
-const crStatus = s => `<span class="status status-${(CR_STATUS[s] || [])[1] || 'neutral'}">${esc((CR_STATUS[s] || [statusText(s)])[0])}</span>`;
+const crStatus = (s, label) => `<span class="status status-${(CR_STATUS[s] || [])[1] || 'neutral'}">${esc(label || (CR_STATUS[s] || [statusText(s)])[0])}</span>`;
+// What a customer sees: a quoted request is the accepted one (the quotation follows separately).
+const CR_CUSTOMER_LABELS = {quoted:'Accepted · quote sent'};
+const CR_FILTERS = [['', 'All'], ['submitted', 'Submitted'], ['under_review', 'Under review'], ['quoted', 'Accepted']];
+const CR_FILTER_KEY = 'ol3d-cr-filter';
 const crSize = bytes => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const crDate = value => parseServerDate(value).toLocaleDateString(undefined, {day:'numeric', month:'short', year:'numeric'});
 const crKindIcon = kind => icon(kind === 'model' ? 'cube' : kind === 'image' ? 'camera' : 'doc');
@@ -154,18 +158,33 @@ function crDetails(r, staff = false) {
 }
 function crCard(r, open) {
   const files = r.files.length ? `${icon('clip')}${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}` : `${icon('clip')}No files`;
-  return `<article class="section-card cr-card ${open ? 'is-new' : ''}" id="request-${r.id}" aria-labelledby="cr-title-${r.id}"><header class="cr-card-head"><div><h2 id="cr-title-${r.id}">${esc(r.title)}</h2><p class="cr-meta"><span class="mono">${esc(r.reference)}</span><span>Submitted <time datetime="${esc(r.created_at)}">${esc(crDate(r.created_at))}</time></span></p></div>${crStatus(r.status)}</header>
+  return `<article class="section-card cr-card ${open ? 'is-new' : ''}" id="request-${r.id}" data-status="${esc(r.status)}" aria-labelledby="cr-title-${r.id}"><header class="cr-card-head"><div class="cr-card-title"><p class="cr-meta"><span class="mono">${esc(r.reference)}</span><span>Submitted <time datetime="${esc(r.created_at)}">${esc(crDate(r.created_at))}</time></span></p><h2 id="cr-title-${r.id}">${esc(r.title)}</h2></div>${crStatus(r.status, CR_CUSTOMER_LABELS[r.status])}</header>
     <p class="cr-excerpt">${esc(r.application.length > 180 ? r.application.slice(0, 180) + '…' : r.application)}</p>
     <ul class="cr-facts"><li>${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}</li><li>${esc(r.material || 'Material open')}</li><li class="cr-facts-files">${files}</li></ul>
-    <p class="cr-status-note">${esc(CR_STATUS[r.status]?.[2] || '')}</p>
+    <p class="cr-status-note cr-tone-${(CR_STATUS[r.status] || [])[1] || 'neutral'}">${esc(CR_STATUS[r.status]?.[2] || '')}</p>
     <details class="bo-details" ${open ? 'open' : ''}><summary aria-label="View details for ${esc(r.reference)}"><span class="bo-open-label">View details</span><span class="bo-close-label">Hide details</span>${icon('chevron')}</summary><div class="bo-detail-body cr-detail">${crDetails(r)}</div></details></article>`;
 }
 function crList(items) {
   const created = Number(new URLSearchParams(location.hash.split('?')[1] || '').get('created'));
   if (!items.length) return `<div class="section-card">${emptyState('No custom requests yet', 'Describe a laboratory problem or a tool you need. Your submitted requests and their review status appear here.', '<a class="btn btn-sm" href="#custom">Start a request</a>')}</div>`;
-  return `${created && items.some(r => r.id === created) ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}<div class="cr-list">${items.map(r => crCard(r, r.id === created)).join('')}</div>`;
+  let selected = ''; try { selected = sessionStorage.getItem(CR_FILTER_KEY) || ''; } catch (e) {}
+  if (created || !CR_FILTERS.some(([v]) => v === selected)) selected = '';
+  const bar = `<div class="segmented cr-filter" role="group" aria-label="Show requests">${CR_FILTERS.map(([value, label]) => `<button type="button" class="segment" data-cr-filter="${value}" aria-pressed="${value === selected}">${esc(label)}<span class="segment-count">${value ? items.filter(r => r.status === value).length : items.length}</span></button>`).join('')}</div>`;
+  return `${created && items.some(r => r.id === created) ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}${bar}<div class="cr-list">${items.map(r => crCard(r, r.id === created)).join('')}<div class="section-card cr-filter-empty" hidden>${emptyState('No requests here', 'Requests with this status appear here.')}</div></div><p class="sr-only" role="status" id="cr-filter-status"></p>`;
 }
-function crBindList() { $('#app .cr-card.is-new')?.scrollIntoView({block:'nearest'}); }
+// Filtering is in place: the list stays, cards outside the chosen status are hidden.
+function crApplyFilter(value, announce = false) {
+  const cards = [...document.querySelectorAll('#app .cr-card')], shown = cards.filter(c => { const on = !value || c.dataset.status === value; c.hidden = !on; return on; });
+  document.querySelectorAll('#app [data-cr-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.crFilter === value)));
+  const empty = $('#app .cr-filter-empty'); if (empty) empty.hidden = shown.length > 0;
+  if (announce) $('#cr-filter-status').textContent = `${shown.length} ${shown.length === 1 ? 'request' : 'requests'}`;
+  try { sessionStorage.setItem(CR_FILTER_KEY, value); } catch (e) {}
+}
+function crBindList() {
+  const pressed = $('#app [data-cr-filter][aria-pressed=true]'); if (pressed) crApplyFilter(pressed.dataset.crFilter);
+  document.querySelectorAll('#app [data-cr-filter]').forEach(b => b.onclick = () => crApplyFilter(b.dataset.crFilter, true));
+  $('#app .cr-card.is-new')?.scrollIntoView({block:'nearest'});
+}
 
 /* Administrator review: compact list, read-only specification dialog, status and internal notes. */
 let crAdminCache = {};
