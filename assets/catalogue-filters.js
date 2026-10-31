@@ -16,13 +16,12 @@ function cfLoad() {
 }
 const cfOptions = name => name === 'category' ? [['', 'All categories'], ...categories.map(c => [c, c])] : name === 'material' ? CF_MATERIALS : CF_SORTS;
 function cfSelect(name, label, value) {
-  const options = cfOptions(name), current = options.find(([v]) => v === value) || options[0];
-  return `<div class="cf-select" data-cf-select="${name}"><span class="cf-label" id="cf-l-${name}">${label}</span><button type="button" class="cf-trigger" id="cf-t-${name}" aria-haspopup="listbox" aria-expanded="false" aria-controls="cf-m-${name}" aria-labelledby="cf-l-${name} cf-t-${name}"><span class="cf-value">${esc(current[1])}</span><svg class="cf-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><ul class="cf-menu" id="cf-m-${name}" role="listbox" tabindex="-1" aria-labelledby="cf-l-${name}" hidden>${options.map(([v, l], i) => `<li role="option" id="cf-o-${name}-${i}" data-value="${esc(v)}" aria-selected="${v === current[0]}">${esc(l)}</li>`).join('')}</ul><input type="hidden" name="${name}" value="${esc(current[0])}"></div>`;
+  return uiSelect({name, label, value, options:cfOptions(name), id:'cf-' + name, attrs:`data-cf-select="${name}"`});
 }
 /* Markup used by catalogue() in app.js. */
 function catalogueFilterBar() {
   const a = cfLoad();
-  return `<div class="cf-bar"><div class="cf-group">${cfSelect('category', 'Category', a.category)}${cfSelect('material', 'Material', a.material)}<div class="cf-select" data-cf-select="price" data-cf-price><span class="cf-label" id="cf-l-price">Price</span><button type="button" class="cf-trigger" id="cf-t-price" aria-expanded="false" aria-controls="cf-price-pop" aria-labelledby="cf-l-price cf-t-price"><span class="cf-value" id="cf-price-value">${esc(cfPriceLabel(a.max))}</span><svg class="cf-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="cf-menu cf-price-pop" id="cf-price-pop" role="group" aria-label="Maximum price" hidden><div class="cf-price-head"><label class="cf-label" for="cf-range">Maximum price</label><output id="cf-price-out" for="cf-range">Loading…</output></div><input type="range" id="cf-range" min="${CF_MIN}" max="${CF_MIN + 1}" step="1" value="${CF_MIN + 1}" disabled aria-valuetext="Loading price range"><div class="cf-scale" aria-hidden="true"><span id="cf-min-label">€${CF_MIN}</span><span id="cf-max-label"></span></div><button type="button" class="cf-any" data-cf-any>Any price</button></div><input type="hidden" name="max" value="${esc(a.max)}"></div>${cfSelect('sort', 'Sort by', a.sort)}</div><div class="cf-actions"><button type="button" class="cf-clear" data-cf-clear>Clear filters</button><button type="submit" class="cf-apply" id="cf-apply" aria-describedby="cf-dirty">Apply filters</button><span id="cf-dirty" class="sr-only"></span></div></div><div class="cf-chips" id="cf-chips" aria-live="polite"></div>`;
+  return `<div class="cf-bar"><div class="cf-group">${cfSelect('category', 'Category', a.category)}${cfSelect('material', 'Material', a.material)}<div class="cf-select" data-select="price" data-select-popover data-cf-select="price"><span class="cf-label" id="cf-l-price">Price</span><button type="button" class="cf-trigger" id="cf-t-price" aria-expanded="false" aria-controls="cf-price-pop" aria-labelledby="cf-l-price cf-t-price"><span class="cf-value" id="cf-price-value">${esc(cfPriceLabel(a.max))}</span><svg class="cf-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button><div class="cf-menu cf-price-pop" id="cf-price-pop" role="group" aria-label="Maximum price" hidden><div class="cf-price-head"><label class="cf-label" for="cf-range">Maximum price</label><output id="cf-price-out" for="cf-range">Loading…</output></div><input type="range" id="cf-range" min="${CF_MIN}" max="${CF_MIN + 1}" step="1" value="${CF_MIN + 1}" disabled aria-valuetext="Loading price range"><div class="cf-scale" aria-hidden="true"><span id="cf-min-label">€${CF_MIN}</span><span id="cf-max-label"></span></div><button type="button" class="cf-any" data-cf-any>Any price</button></div><input type="hidden" name="max" value="${esc(a.max)}"></div>${cfSelect('sort', 'Sort by', a.sort)}</div><div class="cf-actions"><button type="button" class="cf-clear" data-cf-clear>Clear filters</button><button type="submit" class="cf-apply" id="cf-apply" aria-describedby="cf-dirty">Apply filters</button><span id="cf-dirty" class="sr-only"></span></div></div><div class="cf-chips" id="cf-chips" aria-live="polite"></div>`;
 }
 
 /* Current control values, as the form would submit them. */
@@ -36,13 +35,7 @@ function cfSyncDirty() {
   $('#cf-apply')?.classList.toggle('is-dirty', dirty);
   const note = $('#cf-dirty'); if (note) note.textContent = dirty ? 'Filters changed but not applied yet' : '';
 }
-function cfSetValue(name, value) {
-  const root = document.querySelector(`[data-cf-select="${name}"]`); if (!root) return;
-  const option = [...root.querySelectorAll('[role=option]')].find(o => o.dataset.value === value) || root.querySelector('[role=option]');
-  root.querySelectorAll('[role=option]').forEach(o => o.setAttribute('aria-selected', String(o === option)));
-  root.querySelector('.cf-value').textContent = option.textContent; root.querySelector('input').value = option.dataset.value;
-  cfSyncDirty();
-}
+function cfSetValue(name, value) { uiSelectSet(document.querySelector(`[data-cf-select="${name}"]`), value); cfSyncDirty(); }
 function cfPriceLabel(cents) { return cents === '' ? 'Any price' : 'Up to ' + money(+cents / 100); }
 function cfSetPrice(value) {
   const range = $('#cf-range'), hidden = document.querySelector('#filters [name=max]'); if (!range || !hidden || !cfRange) return;
@@ -90,43 +83,13 @@ function cfClear() {
   cfApply();
 }
 
-/* Listbox dropdowns: click or keyboard, Escape and outside clicks close, one open at a time. */
-function cfClose(root, focus=false) {
-  if (!root) return;
-  root.querySelector('.cf-menu').hidden = true; root.classList.remove('is-open');
-  root.querySelector('.cf-trigger').setAttribute('aria-expanded', 'false');
-  if (focus) root.querySelector('.cf-trigger').focus();
-}
-function cfOpen(root) {
-  document.querySelectorAll('[data-cf-select].is-open').forEach(r => r !== root && cfClose(r));
-  const menu = root.querySelector('.cf-menu'), selected = menu.querySelector('[aria-selected=true]') || menu.firstElementChild;
-  if (root.hasAttribute('data-cf-price')) { menu.hidden = false; root.classList.add('is-open'); root.querySelector('.cf-trigger').setAttribute('aria-expanded', 'true'); $('#cf-range').focus(); return; }
-  menu.hidden = false; root.classList.add('is-open'); root.querySelector('.cf-trigger').setAttribute('aria-expanded', 'true');
-  // Open upwards when there is no room below, so the menu is never clipped by the viewport.
-  const rect = root.getBoundingClientRect(); root.classList.toggle('opens-up', innerHeight - rect.bottom < menu.offsetHeight + 12 && rect.top > menu.offsetHeight + 12);
-  cfActivate(menu, selected); menu.focus();
-}
-function cfActivate(menu, option) {
-  menu.querySelectorAll('.is-active').forEach(o => o.classList.remove('is-active'));
-  option.classList.add('is-active'); menu.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({block:'nearest'});
-}
-function cfChoose(root, option) { cfSetValue(root.dataset.cfSelect, option.dataset.value); cfClose(root, true); }
-// Keep touch browsers from blurring the slider before the trigger click toggles it.
-document.addEventListener('pointerdown', e => {
-  if (e.target.closest?.('[data-cf-select].is-open > .cf-trigger')) e.preventDefault();
-});
+/* Opening, closing and keyboard handling of the dropdowns live in select.js; these are the filter bar's own buttons. */
 document.addEventListener('click', e => {
-  const trigger = e.target.closest('.cf-trigger');
-  if (trigger) { const root = trigger.closest('[data-cf-select]'); root.classList.contains('is-open') ? cfClose(root, true) : cfOpen(root); return; }
-  const option = e.target.closest('.cf-menu [role=option]');
-  if (option) { cfChoose(option.closest('[data-cf-select]'), option); return; }
   if (e.target.closest('[data-cf-any]')) {
     if (cfRange) cfSetPrice(cfRange.max);
-    cfClose(e.target.closest('[data-cf-select]'), true);
+    uiSelectClose(e.target.closest('[data-select]'), true);
     return;
   }
-  if (e.target.closest('.cf-price-pop')) return;
-  document.querySelectorAll('[data-cf-select].is-open').forEach(r => cfClose(r));
   if (e.target.closest('[data-cf-clear]')) cfClear();
   const chip = e.target.closest('[data-cf-remove]');
   if (chip) {
@@ -135,22 +98,6 @@ document.addEventListener('click', e => {
     cfApply();
   }
 });
-document.addEventListener('keydown', e => {
-  const trigger = e.target.closest?.('.cf-trigger');
-  if (trigger && ['ArrowDown', 'ArrowUp', 'Enter', ' '].includes(e.key)) { e.preventDefault(); cfOpen(trigger.closest('[data-cf-select]')); return; }
-  const menu = e.target.closest?.('.cf-menu'); if (!menu) return;
-  if (menu.classList.contains('cf-price-pop')) { if (e.key === 'Escape') { e.preventDefault(); cfClose(menu.closest('[data-cf-select]'), true); } return; }
-  const root = menu.closest('[data-cf-select]'), options = [...menu.children], index = options.findIndex(o => o.classList.contains('is-active'));
-  if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cfClose(root, true); }
-  else if (e.key === 'Tab') cfClose(root);
-  else if (['Enter', ' '].includes(e.key)) { e.preventDefault(); if (options[index]) cfChoose(root, options[index]); }
-  else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) {
-    e.preventDefault();
-    const next = e.key === 'Home' ? 0 : e.key === 'End' ? options.length - 1 : Math.min(options.length - 1, Math.max(0, index + (e.key === 'ArrowDown' ? 1 : -1)));
-    cfActivate(menu, options[next]);
-  } else if (e.key.length === 1) { const match = options.find(o => o.textContent.trim().toLowerCase().startsWith(e.key.toLowerCase())); if (match) cfActivate(menu, match); }
-});
-document.addEventListener('focusout', e => { const root = e.target.closest?.('[data-cf-select].is-open'); if (root && !root.contains(e.relatedTarget)) cfClose(root); });
 document.addEventListener('input', e => {
   if (e.target.id === 'cf-range') cfSetPrice(+e.target.value);
   else if (e.target.closest?.('#filters')) cfSyncDirty();
