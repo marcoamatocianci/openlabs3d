@@ -90,7 +90,12 @@ def job_cad(job_id:int,auth=Depends(require),db:Session=Depends(get_db)):
 @router.post('/admin/products/{listing_id}/{action}')
 def product_action(listing_id:int,action:str,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
     p=get_listing(db,listing_id)
-    if action not in ('unpublish','remove'):fail(404,'Unknown product action')
+    if action not in ('unpublish','remove','official','community'):fail(404,'Unknown product action')
+    # Official / community: the listing type only; status and publication stay as they are.
+    if action in ('official','community'):
+        p.listing_type=action
+        db.add(models.Activity(actor_id=auth[0].id,action='product.type_changed',subject=f'listing:{p.id}',detail=action));db.commit()
+        return {'ok':True,'message':f'Marked as {action} product.','listing_type':action}
     p.status='draft' if action=='unpublish' else 'archived';p.published_at=None
     if action=='remove':p.removed=True
     db.add(models.Activity(actor_id=auth[0].id,action='product.'+action,subject=f'listing:{p.id}'));db.commit()

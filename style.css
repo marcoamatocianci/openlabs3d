@@ -1302,3 +1302,9 @@ dialog.ad-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .es-printer strong,.es-material strong{font-size:13.5px}.es-printer small{display:flex;gap:8px;align-items:center;color:var(--subtle);font-size:12px}
 .es-material{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
 @media(max-width:720px){.es-grid{grid-template-columns:1fr}}
+
+/* Admin products: official vs community badge. */
+.listing-type{display:inline-flex;align-items:center;margin-left:8px;padding:1px 8px;border-radius:999px;font-size:10.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle}
+.listing-type-official{background:var(--info-bg);color:var(--info-fg);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--info-fg) 30%,transparent)}
+.listing-type-community{background:var(--neutral-bg);color:var(--neutral-fg)}
+a.segment{text-decoration:none}

@@ -235,6 +235,12 @@ def test_cad_and_product_lifecycle(monkeypatch):
     assert host.post(f'/api/listings/{pid}/cad',files={'file':('bad.3mf',archive.getvalue())}).status_code==422
     r=admin.post('/api/listings',json={**fields,'listing_type':'official'});assert r.status_code==201,r.text
     oid=r.json()['id'];assert admin.post(f'/api/listings/{oid}/publish').json()['status']=='approved'
+    # Admins switch the listing type; others cannot; status is untouched.
+    assert admin.post(f'/api/admin/products/{oid}/community').json()['listing_type']=='community'
+    assert buyer.get(f'/api/listings/{oid}').json()['listing_type']=='community'
+    assert buyer.post(f'/api/admin/products/{oid}/official').status_code==403
+    assert admin.post(f'/api/admin/products/{oid}/official').status_code==200 and buyer.get(f'/api/listings/{oid}').json()['listing_type']=='official'
+    assert admin.post(f'/api/admin/products/{oid}/bogus').status_code==404
     assert admin.post(f'/api/admin/products/{oid}/unpublish').status_code==200
     assert buyer.get(f'/api/listings/{oid}').status_code==404
     assert admin.post(f'/api/listings/{oid}/publish').status_code==200
