@@ -232,7 +232,6 @@ a.row-title:hover{color:var(--teal)}
 .stat-card span{color:var(--subtle);font-size:12.5px}
 .stat-card strong{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
 .stat-card small{color:var(--subtle);font-size:12px}
-.stat-card.attention{border-color:var(--warning-fg);box-shadow:inset 3px 0 0 var(--warning-fg)}.stat-card.attention strong{color:var(--warning-fg)}
 .attention-list{margin:0;padding:0;list-style:none}
 .attention-list a{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:1px solid var(--line);font-size:13.5px}
 .attention-list li:first-child a{border-top:0}
@@ -1205,11 +1204,9 @@ dialog.ae-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .eq-color-option[aria-selected=true],.ae-variant:has(input:checked){border-color:var(--accent-line)}
 .swatches input:checked+span,.config-panel .swatches input:checked+span{outline-color:var(--accent-line)}
 .ae-pattern:has(input:checked) .ae-thumb,.ae-variant:has(input:checked) .ae-thumb,.ae-swatch:has(input:checked)>span{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--accent-line)}
-/* Workspace yellow highlights (attention cards, pending drafts, warning pills and banners): the warning
+/* Workspace yellow highlights (pending drafts, warning pills and banners): the warning
    colour, softened like the accent lines. */
 :root{--warning-line:color-mix(in srgb,var(--warning-fg) 40%,transparent)}
-.stat-card.attention{border-color:color-mix(in srgb,var(--warning-fg) 30%,var(--line));box-shadow:inset 3px 0 0 var(--warning-line)}
-.stat-card.attention strong{color:color-mix(in srgb,var(--warning-fg) 80%,var(--surface))}
 .eq-draft.is-pending{border-left-color:var(--warning-line)}
 :is(.workspace,body:has(.workspace) #modal) :is(.status.status-warning,.banner.warning){background:color-mix(in srgb,var(--warning-bg) 70%,transparent);color:color-mix(in srgb,var(--warning-fg) 82%,var(--surface))}
 /* Action confirmations (host job steps): the same modal language as the avatar editor. */
