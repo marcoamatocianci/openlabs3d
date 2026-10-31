@@ -461,8 +461,12 @@ button:disabled{cursor:not-allowed;opacity:.55}
 .product-card{overflow:hidden;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:16px;background:var(--surface);transition:box-shadow .2s,transform .2s}
 .product-card:hover{transform:translateY(-3px);box-shadow:0 10px 26px rgba(15,30,45,.09)}
 .product-card-link{color:inherit;text-decoration:none;display:flex;flex:1;flex-direction:column}
-.product-card .product-art{height:auto;aspect-ratio:1.2;background:var(--media);display:grid;place-items:center;overflow:hidden}
+/* Card frames: one cell the size of the frame, so a square image fits it instead of overflowing below
+   (which pushed every product low and clipped its bottom). 3D renders fill the frame at full size and sit
+   just above centre, cropping only their empty margin; seller photos stay whole. */
+.product-card .product-art{height:auto;aspect-ratio:1.2;background:var(--media);display:grid;grid-template:minmax(0,1fr)/minmax(0,1fr);place-items:center;overflow:hidden}
 .product-card .listing-card-image{width:100%;height:100%;object-fit:contain;padding:8px;transition:transform .25s}
+.product-card .listing-card-image[data-product]{object-fit:cover;object-position:50% 58%}
 .product-card:hover .listing-card-image{transform:scale(1.025)}
 .product-card .card-body{padding:22px;display:flex;flex:1;flex-direction:column;gap:10px}
 .product-card h3{font-size:19px;line-height:1.35;margin:0;min-height:2.7em}
