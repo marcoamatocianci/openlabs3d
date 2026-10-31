@@ -633,6 +633,15 @@ button:disabled{cursor:not-allowed;opacity:.55}
 .eq-check input{position:static;opacity:1;width:17px;height:17px;padding:0;margin:0;accent-color:var(--teal);flex:none}
 .eq-mat-count{font-size:12px;color:var(--subtle);white-space:nowrap}
 .eq-mat-count.is-warning{color:var(--warning-fg);font-weight:600}
+.eq-mat-row .eq-mat-count+.eq-mat-count{margin-left:auto;white-space:normal;text-align:right}
+/* Inventory palette: each standard colour toggles with one click (aria-pressed), same look as before. */
+.eq-palette{grid-template-columns:repeat(auto-fill,minmax(150px,1fr));max-height:none;margin:6px 0 10px}
+.eq-color-option[aria-pressed=true]{border-color:var(--accent-line,var(--teal));background:var(--accent-soft);font-weight:700}
+.eq-color-option[aria-pressed=true] small{color:var(--teal);font-size:12px}
+.eq-inventory-head{min-height:52px;cursor:default}.eq-inventory-head:hover{background:none}
+.eq-custom-color{display:flex;flex-wrap:wrap;align-items:flex-end;gap:8px;margin-top:10px}
+.eq-custom-color .eq-field{margin:0}.eq-custom-color .eq-field-swatch input{width:44px;height:34px;padding:2px}
+.eq-custom-color .eq-pop-error{flex-basis:100%;margin:0}
 .eq-mat-toggle{display:grid;place-items:center;width:34px;height:34px;padding:0;border:0;border-radius:6px;background:none;color:var(--subtle)}
 .eq-mat-toggle:hover{background:var(--hover);color:var(--ink)}
 .eq-mat-toggle .icon{width:16px;height:16px;transition:transform .15s}

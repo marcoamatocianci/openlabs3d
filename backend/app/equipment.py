@@ -54,7 +54,10 @@ def printer_data(p):
     keys=('id','manufacturer','model','technology','x','y','z')
     result={k:getattr(p,k) for k in keys};result['materials']=json.loads(p.materials)
     if isinstance(p,models.HostPrinter):
-        result['material_colors']=json.loads(p.material_colors or '{}');result['capabilities']=json.loads(p.capabilities or '[]')
+        # Stock is the host's material inventory limited to what this printer is approved for.
+        from .availability import printer_stock
+        stock=printer_stock(p)
+        result['materials']=sorted(stock);result['material_colors']=stock;result['capabilities']=json.loads(p.capabilities or '[]')
         model=__import__('sqlalchemy').orm.object_session(p).get(models.PrinterModel,p.model_id) if p.model_id else None
         result.update(model_id=p.model_id,quantity=p.quantity,verified=bool(model and model.verified),documented=bool(model and json.loads(model.materials)))
     else:result.update(source=p.source,verified=p.verified,limitations=p.limitations)
@@ -231,8 +234,8 @@ def decide_revision(revision_id:int,decision:str,body:schemas.Reject,auth=Depend
                 fail(409,f'Complete active job {job.id} before changing equipment: its build dimensions cannot be verified')
             if not any(job.item.material in p['capabilities'] and all(a<=b for a,b in zip(sorted(dimensions),sorted([p['x'],p['y'],p['z']]))) for p in proposed):
                 fail(409,f'Equipment is required by active job {job.id}; complete or explicitly reassign that job first')
-        # Unchanged printers keep their record and stock; a modified printer keeps the stock its new
-        # capabilities still allow; new printers start with no stock.
+        # Unchanged printers keep their record. Stock is the host's material inventory, so it follows
+        # the approved capabilities of whichever printers are approved.
         existing=list(db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==r.user_id).order_by(models.HostPrinter.id)))
         pending=[]
         for data in proposed:
@@ -245,8 +248,6 @@ def decide_revision(revision_id:int,decision:str,body:schemas.Reject,auth=Depend
             else:match=models.HostPrinter(user_id=r.user_id,materials='[]',material_colors='{}');db.add(match)
             for k in SPEC_KEYS:setattr(match,k,data[k])
             match.capabilities=json.dumps(data['capabilities'])
-            stock=[m for m in json.loads(match.materials or '[]') if m in data['capabilities']]
-            match.materials=json.dumps(stock);match.material_colors=json.dumps({m:c for m,c in json.loads(match.material_colors or '{}').items() if m in stock})
         for p in existing:db.delete(p)
         db.flush()
         host.additional=proposal['company']
@@ -263,35 +264,44 @@ def decide_revision(revision_id:int,decision:str,body:schemas.Reject,auth=Depend
 
 
 def sync_host_summary(db,host):
-    """Legacy comma-separated material summary shown to administrators, derived from current stock."""
-    host.materials=', '.join(sorted({m for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==host.user_id)) for m in json.loads(p.materials or '[]')}))
+    """Legacy comma-separated material summary shown to administrators: inventory the printers can use."""
+    from .availability import printer_stock
+    host.materials=', '.join(sorted({m for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==host.user_id)) for m in printer_stock(p,db)}))
 
-class AvailabilityInput(BaseModel):
+class InventoryInput(BaseModel):
     model_config=ConfigDict(extra='forbid')
-    materials:list[str]=Field(default_factory=list,max_length=12)
-    material_colors:dict[str,dict[str,str]]=Field(default_factory=dict,max_length=12)
+    material_colors:dict[str,dict[str,str]]=Field(default_factory=dict,max_length=20)
 
-@router.put('/host/printers/{printer_id}/availability')
-def update_availability(printer_id:int,body:AvailabilityInput,auth=Depends(mutate),db:Session=Depends(get_db)):
-    """Host-managed stock: takes effect immediately for marketplace availability and new job matching,
-    limited to the printer's approved capabilities. Accepted jobs keep their order snapshot."""
+def inventory_data(db,user_id):
+    """The host's materials and colours, and which approved printers can use each material."""
+    from .availability import host_inventory
+    printers=list(db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==user_id).order_by(models.HostPrinter.id)))
+    usable={}
+    for p in printers:
+        for m in json.loads(p.capabilities or '[]'): usable.setdefault(m,[]).append(p.id)
+    return {'material_colors':host_inventory(db,user_id),'printers_by_material':usable,
+            'technologies':sorted({p.technology for p in printers})}
+
+@router.get('/host/materials')
+def my_materials(auth=Depends(require),db:Session=Depends(get_db)):
+    return inventory_data(db,auth[0].id)
+
+@router.put('/host/materials')
+def update_materials(body:InventoryInput,auth=Depends(mutate),db:Session=Depends(get_db)):
+    """Host-managed inventory: materials and colours owned, chosen once for all printers. Takes effect
+    immediately for marketplace availability and new job matching; accepted jobs keep their snapshot."""
+    from .availability import set_host_inventory
     user=auth[0]
     host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==user.id))
     if not host or host.status!='approved':fail(403,'Approved host account required')
-    printer=db.get(models.HostPrinter,printer_id)
-    if not printer or printer.user_id!=user.id:fail(404,'Printer not found')
-    capabilities=set(json.loads(printer.capabilities or '[]'))
-    catalogue=set(db.scalars(select(models.Material.name).where(models.Material.technology==printer.technology)))
-    materials=list(dict.fromkeys(body.materials))
-    if not set(materials)<=capabilities&catalogue:fail(422,'This printer is not approved for one or more selected materials')
-    if not set(body.material_colors)<=set(materials):fail(422,'Colors must belong to a selected material')
+    known=set(db.scalars(select(models.Material.name)))
+    if not set(body.material_colors)<=known:fail(422,'Unknown material')
     for colors in body.material_colors.values():
         if len(colors)>40 or any(not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,39}',name) or not re.fullmatch(r'#[0-9a-fA-F]{6}',hex) for name,hex in colors.items()):fail(422,'Use color names such as aqua-blue and six-digit hex colors')
         if len({h.lower() for h in colors.values()})!=len(colors):fail(422,'Each color may be listed only once per material')
-    printer.materials=json.dumps(sorted(materials))
-    printer.material_colors=json.dumps({m:{n:h.lower() for n,h in c.items()} for m,c in body.material_colors.items()})
-    db.flush();sync_host_summary(db,host)
+    set_host_inventory(db,user.id,body.material_colors)
+    sync_host_summary(db,host)
     from .operations import log
-    log(db,user.id,'equipment.stock_updated',f'user:{user.id}')
+    log(db,user.id,'equipment.stock_updated',f'user:{user.id}',', '.join(sorted(body.material_colors)))
     db.commit()
-    return printer_data(printer)
+    return inventory_data(db,user.id)

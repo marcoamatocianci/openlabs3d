@@ -86,20 +86,21 @@ async (page) => {
   await a.getByRole('button',{name:'Approve equipment update'}).click();assert((await accepted).ok(),'Approved');
   assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');
 
-  // Materials & Colors: host-managed stock, live without approval, bounded by capabilities.
+  // Materials & Colors: one inventory for all printers, live without approval, offered where a printer is approved.
   await h.goto(base+'/#my-printers/materials');await h.locator('#eq-stock .eq-acc').waitFor();
-  assert(await h.locator('#stock-0 [data-toggle-material="PLA+"]').isDisabled(),'Unsupported material cannot be selected');
-  await h.locator('[data-open-material="0|PLA"]').click();
-  await h.locator('[data-add-color="0|PLA"]').click();await h.locator('[data-pick="orange"]').click();await h.locator('[data-color-confirm]').click();
+  assert(await h.locator('#eq-stock [data-toggle-material="PLA+"]').isDisabled(),'A material no printer supports cannot be selected');
+  await h.locator('[data-open-material="PLA"]').click();
+  await h.locator('[data-toggle-color="orange"][data-material="PLA"]').click();   // a single click adds it
   await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
+  assert(await h.locator('[data-toggle-color="orange"][data-material="PLA"]').getAttribute('aria-pressed')==='true','One click selects a color');
   assert((await colors()).includes('orange'),'Added color is live for buyers');
   assert((await json(ac,'/api/admin/equipment-revisions')).length===0,'Stock needs no approval');
-  await h.locator('[data-add-color="0|PLA"]').click();await h.locator('[data-custom-mode]').click();
-  await h.locator('[data-custom-name]').fill('Lab Teal');await h.locator('[data-custom-hex]').fill('#127a8a');await h.locator('[data-color-confirm]').click();
+  await h.locator('[data-custom-color="PLA"] [name=name]').fill('Lab Teal');await h.locator('[data-custom-color="PLA"] [name=hex]').fill('#127a8a');
+  await h.locator('[data-custom-color="PLA"] button').click();
   await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
-  await h.reload();await h.locator('[data-open-material="0|PLA"]').click();
-  assert(/Orange[\s\S]*Lab teal|Lab teal[\s\S]*Orange/.test(await h.locator('#stock-0').innerText()),'Stock persists after refresh');
-  await h.locator('[data-remove-color="orange"]').click();await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
+  await h.reload();await h.locator('[data-open-material="PLA"]').click();
+  assert(await h.locator('[data-toggle-color="orange"][data-material="PLA"]').getAttribute('aria-pressed')==='true'&&(await h.locator('#eq-stock').innerText()).includes('Lab teal'),'Stock persists after refresh');
+  await h.locator('[data-toggle-color="orange"][data-material="PLA"]').click();await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
   assert(!(await colors()).includes('orange'),'Removed color leaves the marketplace');
   await h.locator('.eq-tab',{hasText:'Printers'}).click();await h.locator('[data-card="approved-0"]').waitFor();
   assert((await h.locator('[data-card="approved-0"] .eq-card-materials').innerText()).includes('PLA'),'Printer card reflects stock');

@@ -25,6 +25,8 @@ async (page) => {
   await page.locator('#buy-now:enabled').waitFor();await page.locator('#buy-now').click();
   await page.locator('#checkout-form').waitFor();
   await page.locator('input[name=street]').fill('Via Roma 1');
+  await page.locator('#new-address [data-location=region] .cf-input').fill('Piedmont');await page.keyboard.press('Tab');
+  await page.locator('#new-address [name=postal_code]').fill('10100');
   await page.getByRole('button',{name:'Submit order request'}).click();
   await page.waitForURL('**/#orders');
   assert((await(await page.request.get(base+'/api/orders')).json()).length===1,'Checkout creates one order');
@@ -42,9 +44,12 @@ async (page) => {
     const settle=()=>editor.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
     await editor.getByRole('button',{name:'Show PETG colors'}).click();
     await editor.getByRole('button',{name:'Remove White from PETG'}).click();await settle();
-    await editor.locator('[data-add-color="0|PETG"]').click();await editor.locator('[data-custom-mode]').click();
-    await editor.locator('[data-custom-name]').fill('Lab green');await editor.locator('[data-custom-hex]').fill('#00ff00');
-    await editor.locator('[data-color-confirm]').click();await settle();
+    await editor.locator('[data-custom-color="PETG"] [name=name]').fill('Lab green');await editor.locator('[data-custom-color="PETG"] [name=hex]').fill('#00ff00');
+    await editor.locator('[data-custom-color="PETG"] button').click();await settle();
+    // Standard colours toggle with a single click.
+    const black=()=>editor.locator('[data-toggle-color="black"][data-material="PETG"]');
+    await black().click();await settle();assert(await black().getAttribute('aria-pressed')==='true','One click adds a standard color');
+    await black().click();await settle();assert(await black().getAttribute('aria-pressed')==='false','A second click removes it');
     const stock=(await(await hostContext.request.get(base+'/api/host/equipment')).json())[0].material_colors.PETG;
     assert(stock['lab-green']==='#00ff00'&&!stock.white,'Stock changes are saved directly');
     const offer=(await(await page.request.get(base+'/api/listings/1/availability')).json()).colors_by_material.PETG;

@@ -35,8 +35,14 @@ def user(db, role, **extra):
     return u
 
 def printer(db, host, colors, **size):
+    """A printer approved for these materials; the colours join the host's shared inventory."""
     db.add(models.HostPrinter(user_id=host.id, manufacturer='QA', model=secrets.token_hex(3), technology='FDM', x=size.get('x', 300), y=300, z=300, quantity=1,
-                              materials=json.dumps(sorted(colors)), capabilities=json.dumps(sorted(colors)), material_colors=json.dumps(colors)))
+                              capabilities=json.dumps(sorted(colors))))
+    for material, shades in colors.items():
+        row = db.scalar(select(models.HostMaterial).where(models.HostMaterial.user_id == host.id, models.HostMaterial.material == material))
+        if not row: row = models.HostMaterial(user_id=host.id, material=material, colors='{}'); db.add(row)
+        row.colors = json.dumps({**json.loads(row.colors), **shades})
+    db.flush()
 
 def login(user_id):
     token = secrets.token_urlsafe(24)
@@ -257,7 +263,7 @@ def test_same_colour_name_in_different_shades_is_two_options():
     # Host B changes stock afterwards: the order keeps the purchased shade and B keeps the job.
     assert host_b.post(f'/api/host/jobs/{job}/accept').status_code == 200
     with SessionLocal() as db:
-        db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id == hb)).material_colors = json.dumps({'PLA': {'black': '#000000'}}); db.commit()
+        db.scalar(select(models.HostMaterial).where(models.HostMaterial.user_id == hb)).colors = json.dumps({'black': '#000000'}); db.commit()
     item = login(bid).get('/api/orders').json()[0]['items'][0]
     assert (item['color'], item['color_hex']) == ('orange~e66a3c', '#e66a3c')
     assert TestClient(app).get(f'/api/listings/{pid}/availability').json()['colors_by_material']['PLA'] == {'orange': '#f58b1f', 'black': '#000000'}
@@ -265,13 +271,13 @@ def test_same_colour_name_in_different_shades_is_two_options():
 def test_jobs_match_hosts_on_the_purchased_shade():
     from app.availability import combinations, matches, supports
     with SessionLocal() as db:
-        admin, a = user(db, 'admin'), user(db, 'host')
-        printer(db, a, {'PLA': {'yellow': '#f6c700'}}); printer(db, a, {'PLA': {'yellow': '#f8e45c'}})   # one host, two printers, two shades
+        admin, a, b = user(db, 'admin'), user(db, 'host'), user(db, 'host')
+        printer(db, a, {'PLA': {'yellow': '#f6c700'}}); printer(db, b, {'PLA': {'yellow': '#f8e45c'}})   # two hosts, two shades of "yellow"
         p = listing(db, admin); db.flush()
         assert combinations(p) == {'PLA': {'yellow~f6c700': '#f6c700', 'yellow~f8e45c': '#f8e45c'}}
-        assert supports(p, 'PLA', 'yellow~f8e45c', a.id) and not supports(p, 'PLA', 'yellow~000000', a.id)
-        assert supports(p, 'PLA', 'yellow', a.id), 'lines without a recorded shade still match by name'
-        assert not supports(p, 'PLA', 'yellow', a.id, '#123456')
+        assert supports(p, 'PLA', 'yellow~f8e45c', b.id) and not supports(p, 'PLA', 'yellow~f8e45c', a.id) and not supports(p, 'PLA', 'yellow~000000', b.id)
+        assert supports(p, 'PLA', 'yellow', b.id), 'lines without a recorded shade still match by name'
+        assert not supports(p, 'PLA', 'yellow', b.id, '#123456')
         assert matches({('PLA', 'orange', '#e66a3c')}, 'PLA', 'orange', '#E66A3C')
         db.rollback()
 
@@ -281,10 +287,10 @@ def test_printer_lookup_is_per_request_and_never_stale():
         admin, a = user(db, 'admin'), user(db, 'host'); printer(db, a, {'PLA': {'black': '#000000'}})
         p = listing(db, admin); db.flush()
         assert combinations(p) == {'PLA': {'black': '#000000'}}
-        row = db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id == a.id))
-        row.material_colors = json.dumps({'PLA': {'white': '#ffffff'}})          # pending, not flushed
+        stock = db.scalar(select(models.HostMaterial).where(models.HostMaterial.user_id == a.id))
+        stock.colors = json.dumps({'white': '#ffffff'})          # pending, not flushed
         assert combinations(p) == {'PLA': {'white': '#ffffff'}}
-        db.delete(row)
+        db.delete(db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id == a.id)))
         assert combinations(p) == {}
         db.rollback()
     with SessionLocal() as db:

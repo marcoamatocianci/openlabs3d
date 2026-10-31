@@ -2,10 +2,10 @@
    Approved hosts edit one private draft revision; applicants use the same editor on #onboarding.
    The API keeps approved equipment active until an administrator approves a revision. */
 const equipmentRender = render;
-let printerCatalogue = [], materialCatalogue = [], approvedEquipment = [], equipmentRevision = null;
+let printerCatalogue = [], materialCatalogue = [], approvedEquipment = [], equipmentRevision = null, hostInventory = {material_colors:{}, printers_by_material:{}, technologies:[]};
 let hostDraft = null, hostStep = 0, equipmentBusy = false, editorDirty = false, editorSource = '';
 // Materials & Colors tab: host-managed stock, saved immediately (no approval).
-const stockUi = {printer:0, material:null, colorFor:null, busy:false};
+const stockUi = {material:null, busy:false};
 const EDITOR_STEPS = ['Personal information', 'Printer equipment', 'Supported materials', 'Production capabilities', 'Review and submit'];
 const STANDARD_COLORS = [['black', '#1b1b1b'], ['white', '#f5f5f2'], ['grey', '#8a8d91'], ['silver', '#c0c4c8'], ['natural', '#efe6d2'], ['cream', '#eeeecc'], ['beige', '#d9c7a7'], ['brown', '#6f4a2f'], ['red', '#d32f2f'], ['signal-red', '#c1121f'], ['orange', '#f57c00'], ['yellow', '#f6c700'], ['lime', '#9ccc3d'], ['green', '#2e7d32'], ['teal', '#00897b'], ['aqua-blue', '#4fb3c8'], ['sky-blue', '#64b5f6'], ['blue', '#1e5bc6'], ['navy', '#1d3557'], ['purple', '#6a3fb5'], ['pink', '#f06292'], ['magenta', '#c2185b'], ['gold', '#c9a227'], ['transparent', '#dfe9ee']];
 
@@ -17,8 +17,6 @@ const printerName = p => `${p.manufacturer || ''} ${p.model || ''}`.trim() || 'U
 const volumeText = p => `${+p.x} × ${+p.y} × ${+p.z} mm`;
 const colorTitle = name => colorName(name);
 const catalogueModel = p => printerCatalogue.find(m => m.id === p.model_id);
-const colorCount = p => (p.materials || []).reduce((n, m) => n + Object.keys(p.material_colors?.[m] || {}).length, 0);
-const printerReady = p => p.materials?.length && p.materials.every(m => Object.keys(p.material_colors?.[m] || {}).length);
 const longDate = value => { const d = parseServerDate(value); return isNaN(d) ? '—' : d.toLocaleDateString('en-GB', {day:'numeric', month:'long', year:'numeric'}); };
 function newPrinter() { return {model_id:null, manufacturer:'', model:'', technology:'FDM', x:200, y:200, z:200, quantity:1, materials:[], material_colors:{}}; }
 // Certified part of a printer, as the API compares it; stock (materials and colors) is never part of a revision.
@@ -83,7 +81,6 @@ document.addEventListener('click', e => {
   const toggle = e.target.closest('[data-spec-toggle]');
   if (toggle) { const host = toggle.closest('[data-spec-host]'), open = !host.hasAttribute('data-open'); closeSpecPopovers(host); host.toggleAttribute('data-open', open); toggle.setAttribute('aria-expanded', open); return; }
   if (!e.target.closest('.eq-pop')) closeSpecPopovers();
-  if (stockUi.colorFor && !e.target.closest('.eq-colorpop,[data-add-color]') && document.querySelector('.eq-colorpop')) { stockUi.colorFor = null; renderStock(); }
 });
 document.addEventListener('focusin', e => {
   const toggle = e.target.closest?.('[data-spec-toggle]');
@@ -93,8 +90,7 @@ document.addEventListener('focusin', e => {
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   const open = document.querySelector('[data-spec-host][data-open]');
-  if (open) { closeSpecPopovers(); open.querySelector('[data-spec-toggle]').focus(); return; }
-  if (stockUi.colorFor && document.querySelector('.eq-colorpop')) { const key = stockUi.colorFor; stockUi.colorFor = null; renderStock(); document.querySelector(`[data-add-color="${CSS.escape(key)}"]`)?.focus(); }
+  if (open) { closeSpecPopovers(); open.querySelector('[data-spec-toggle]').focus(); }
 });
 // Leaving the editor with unsaved changes asks first; saved drafts and approved equipment are never touched.
 document.addEventListener('click', e => {
@@ -105,15 +101,15 @@ document.addEventListener('click', e => {
 addEventListener('beforeunload', e => { if (editorDirty && document.getElementById('equipment-form')) e.preventDefault(); });
 
 /* Main page: two tabs. Printers holds certified equipment and the revision workflow;
-   Materials & Colors holds host-managed stock, saved immediately without approval. */
+   Materials & Colors holds the host's material inventory (once for all printers), saved immediately. */
 async function equipmentOverview(route='my-printers') {
   const [printers, revision, catalogue, materials] = await Promise.all([api('/host/equipment'), api('/host/equipment-revision'), printerCatalogue.length ? printerCatalogue : api('/printer-catalogue'), materialCatalogue.length ? materialCatalogue : api('/materials')]);
   printerCatalogue = catalogue; materialCatalogue = materials; approvedEquipment = printers; equipmentRevision = revision;
   const tab = route === 'my-printers/materials' ? 'materials' : 'printers';
   const tabs = `<nav class="eq-tabs" aria-label="My equipment sections">${[['printers', 'my-printers', 'Printers'], ['materials', 'my-printers/materials', 'Materials & Colors']].map(([key, href, label]) => `<a class="eq-tab" href="#${href}" ${tab === key ? 'aria-current="page"' : ''}>${label}</a>`).join('')}</nav>`;
   if (tab === 'materials') {
-    stockUi.printer = Math.min(stockUi.printer, Math.max(0, printers.length - 1)); stockUi.material = null; stockUi.colorFor = null;
-    return {title:'My equipment', body:`<div class="eq">${tabs}<p class="muted ws-intro">Choose the materials and colors you currently stock. Changes are live for buyers and printing jobs immediately — no approval needed. Only materials your approved printers support can be selected.</p><div id="eq-stock"></div></div>`, bind:renderStock};
+    hostInventory = await api('/host/materials'); stockUi.material = null;
+    return {title:'My equipment', body:`<div class="eq">${tabs}<p class="muted ws-intro">Choose the materials and colors you own, once for all your printers. Each printer offers the ones it is approved for. Changes are live for buyers and printing jobs immediately — no approval needed.</p><div id="eq-stock"></div></div>`, bind:renderStock};
   }
   const units = printers.reduce((n, p) => n + p.quantity, 0), status = revision?.status;
   const approved = printers.length ? `<div class="eq-grid">${printers.map((p, i) => printerCard(p, 'approved-' + i, {badge:statusBadge('approved', 'Approved')})).join('')}</div>` : `<div class="eq-empty">${emptyState('No approved equipment', 'Register the printers you produce with. An administrator reviews them before they become active.')}</div>`;
@@ -139,57 +135,64 @@ async function equipmentOverview(route='my-printers') {
   return {title:'My equipment', body:`<div class="eq">${body}</div>`, bind};
 }
 
-/* Materials & Colors: stock editor. Every change is saved to the API at once; on failure the
-   last saved state is shown again. Unsupported materials are listed but cannot be selected. */
-function stockMaterialRow(p, n, m) {
-  const supported = (p.capabilities || []).includes(m), on = supported && p.materials.includes(m), key = n + '|' + m, open = on && stockUi.material === key, colors = Object.entries(p.material_colors?.[m] || {});
-  const summary = !supported ? '<span class="eq-mat-count">Not approved for this printer</span>' : on ? (colors.length ? `<span class="eq-dots">${colors.slice(0, 6).map(([c, h]) => colorDot(h, c)).join('')}</span><span class="eq-mat-count">${colors.length} color${colors.length === 1 ? '' : 's'}</span>` : '<span class="eq-mat-count is-warning">Add a color</span>') : '';
-  const panel = open ? `<div class="eq-mat-colors"><p class="eq-label">${esc(m)} — available colors</p><div class="eq-swatches">${colors.map(([c, h]) => `<span class="eq-swatch-chip">${colorDot(h, c)}${esc(colorTitle(c))}<button type="button" data-remove-color="${esc(c)}" data-index="${n}" data-material="${esc(m)}" aria-label="Remove ${esc(colorTitle(c))} from ${esc(m)}">×</button></span>`).join('')}<span class="eq-add-wrap"><button type="button" class="eq-add-color" data-add-color="${esc(key)}" data-k="add-${esc(key)}" aria-expanded="${stockUi.colorFor === key}">${icon('plus')}Add color</button>${stockUi.colorFor === key ? colorPopover(p, m) : ''}</span></div>${colors.length ? '' : '<p class="eq-muted">Buyers can only order this material in colors you list here.</p>'}</div>` : '';
-  return `<li class="eq-mat ${on ? 'is-on' : ''} ${open ? 'is-open' : ''} ${supported ? '' : 'is-unsupported'}"><div class="eq-mat-row"><label class="eq-check"><input type="checkbox" data-toggle-material="${esc(m)}" data-index="${n}" data-k="mat-${esc(key)}" ${on ? 'checked' : ''} ${supported ? '' : 'disabled'}><span>${esc(m)}</span></label>${summary}${on ? `<button type="button" class="eq-mat-toggle" data-open-material="${esc(key)}" data-k="open-${esc(key)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(m)} colors">${icon('chevron')}</button>` : ''}</div>${panel}</li>`;
-}
-function colorPopover(p, material) {
-  const current = p.material_colors[material] || {}, usedHex = Object.values(current).map(h => h.toLowerCase());
-  const options = STANDARD_COLORS.map(([name, hex]) => { const used = name in current || usedHex.includes(hex); return `<button type="button" role="option" class="eq-color-option" data-pick="${name}" data-hex="${hex}" data-search="${esc(colorTitle(name).toLowerCase())}" aria-selected="false" ${used ? 'disabled' : ''}>${colorDot(hex, name)}<span>${esc(colorTitle(name))}</span>${used ? '<small>Added</small>' : ''}</button>`; }).join('');
-  return `<div class="eq-colorpop" role="dialog" aria-label="Add color to ${esc(material)}" data-mode="standard"><div class="eq-colorpop-standard"><label class="eq-field eq-field-compact"><span class="sr-only">Search standard colors</span><input type="search" data-color-search placeholder="Search standard colors" autocomplete="off"></label><div class="eq-color-options" role="listbox" aria-label="Standard filament colors">${options}<p class="eq-muted eq-no-match" hidden>No matching colors</p></div><button type="button" class="eq-link" data-custom-mode>${icon('plus')}Add custom color</button></div><div class="eq-colorpop-custom"><button type="button" class="eq-link" data-standard-mode>← Standard colors</button><label class="eq-field eq-field-compact">Color name<input data-custom-name maxlength="40" placeholder="e.g. Ocean teal" autocomplete="off"></label><div class="eq-custom-row"><label class="eq-field eq-field-compact">Swatch<input type="color" data-custom-hex value="#457b9d"></label><span class="eq-custom-preview"><span class="eq-dot eq-dot-lg" style="--c:#457b9d"></span><span data-custom-label>New color</span></span></div></div><p class="eq-pop-error" role="alert"></p><div class="eq-colorpop-actions"><button type="button" class="btn-ghost btn-sm" data-color-cancel>Cancel</button><button type="button" class="btn btn-sm" data-color-confirm>Confirm</button></div></div>`;
+/* Materials & Colors: the host's inventory. Every change is saved to the API at once; on failure the
+   last saved state is shown again. Standard colours toggle with a single click. */
+const ownedColors = m => hostInventory.material_colors[m] || {};
+function usableOn(m) { return (hostInventory.printers_by_material[m] || []).map(id => approvedEquipment.find(p => p.id === id)).filter(Boolean); }
+function stockMaterialRow(m) {
+  const printers = usableOn(m), on = m in hostInventory.material_colors, open = on && stockUi.material === m, colors = Object.entries(ownedColors(m));
+  const where = printers.length ? `<span class="eq-mat-count">Usable on ${esc(printers.map(printerName).join(', '))}</span>` : '<span class="eq-mat-count is-warning">No approved printer supports it</span>';
+  const summary = on ? (colors.length ? `<span class="eq-dots">${colors.slice(0, 6).map(([c, h]) => colorDot(h, c)).join('')}</span><span class="eq-mat-count">${colors.length} color${colors.length === 1 ? '' : 's'}</span>` : '<span class="eq-mat-count is-warning">Add a color</span>') : '';
+  const standard = STANDARD_COLORS.map(([name, hex]) => { const owned = ownedColors(m)[name] === hex; const taken = !owned && (name in ownedColors(m) || Object.values(ownedColors(m)).includes(hex)); return `<button type="button" class="eq-color-option" data-toggle-color="${name}" data-material="${esc(m)}" data-k="color-${esc(m)}-${name}" aria-pressed="${owned}" ${taken ? 'disabled title="Already listed under another name"' : ''}>${colorDot(hex, name)}<span>${esc(colorTitle(name))}</span>${owned ? '<small>✓</small>' : ''}</button>`; }).join('');
+  const custom = colors.filter(([c, h]) => !STANDARD_COLORS.some(([n, x]) => n === c && x === h));
+  const panel = open ? `<div class="eq-mat-colors"><p class="eq-label">${esc(m)} — colors you own</p><div class="eq-color-options eq-palette" role="group" aria-label="${esc(m)} standard colors">${standard}</div>${custom.length ? `<div class="eq-swatches">${custom.map(([c, h]) => `<span class="eq-swatch-chip">${colorDot(h, c)}${esc(colorTitle(c))}<button type="button" data-remove-color="${esc(c)}" data-material="${esc(m)}" aria-label="Remove ${esc(colorTitle(c))} from ${esc(m)}">×</button></span>`).join('')}</div>` : ''}<form class="eq-custom-color" data-custom-color="${esc(m)}"><label class="eq-field eq-field-compact">Custom color<input name="name" maxlength="40" placeholder="e.g. Ocean teal" autocomplete="off" data-k="custom-${esc(m)}"></label><label class="eq-field eq-field-compact eq-field-swatch"><span class="sr-only">Swatch</span><input type="color" name="hex" value="#457b9d"></label><button class="btn-ghost btn-sm">${icon('plus')}Add</button><p class="eq-pop-error" role="alert"></p></form>${colors.length ? '' : '<p class="eq-muted">Buyers can only order this material in colors you list here.</p>'}</div>` : '';
+  return `<li class="eq-mat ${on ? 'is-on' : ''} ${open ? 'is-open' : ''} ${printers.length ? '' : 'is-unsupported'}"><div class="eq-mat-row"><label class="eq-check"><input type="checkbox" data-toggle-material="${esc(m)}" data-k="mat-${esc(m)}" ${on ? 'checked' : ''} ${printers.length || on ? '' : 'disabled'}><span>${esc(m)}</span></label>${summary}${where}${on ? `<button type="button" class="eq-mat-toggle" data-open-material="${esc(m)}" data-k="open-${esc(m)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(m)} colors">${icon('chevron')}</button>` : ''}</div>${panel}</li>`;
 }
 function renderStock() {
   const root = document.getElementById('eq-stock'); if (!root) return;
-  const focusKey = document.activeElement?.dataset?.k, printers = approvedEquipment;
-  if (!printers.length) { root.innerHTML = `<div class="eq-empty">${emptyState('No approved printers', 'Materials and colors can be stocked once a printer is approved.', '<a class="btn btn-sm" href="#my-printers">Go to Printers</a>')}</div>`; return; }
-  root.innerHTML = `<div class="eq-acc" aria-busy="${stockUi.busy}">${printers.map((p, n) => {
-    const open = stockUi.printer === n, all = materialCatalogue.filter(m => m.technology === p.technology).map(m => m.name);
-    const ordered = [...all.filter(m => p.capabilities.includes(m)), ...all.filter(m => !p.capabilities.includes(m))];
-    const panel = open ? `<div class="eq-acc-panel" id="stock-${n}"><p class="eq-label">Available materials</p>${p.capabilities.length ? '' : '<div class="banner warning"><span>Supported materials are not documented for this printer model, so no material can be stocked yet. Contact an administrator to verify its specifications.</span></div>'}<ul class="eq-mats">${ordered.map(m => stockMaterialRow(p, n, m)).join('')}</ul></div>` : '';
-    return `<div class="eq-acc-item ${open ? 'is-open' : ''}"><button type="button" class="eq-acc-head" data-open-printer="${n}" data-k="printer-${n}" aria-expanded="${open}" aria-controls="stock-${n}">${printerArt(p, 'sm')}<span class="eq-acc-title"><strong>${esc(printerName(p))}</strong><small>${techLabel(p.technology)} · ${p.materials.length} of ${p.capabilities.length} material${p.capabilities.length === 1 ? '' : 's'} in stock · ${colorCount(p)} color${colorCount(p) === 1 ? '' : 's'}</small></span>${printerReady(p) ? statusBadge('approved', 'Offered') : statusBadge('neutral', p.materials.length ? 'Needs colors' : 'Not offered')}${icon('chevron')}</button>${panel}</div>`;
-  }).join('')}</div><p class="eq-muted eq-stock-note" role="status" id="eq-stock-status">${stockUi.busy ? 'Saving…' : 'Changes save automatically and apply to new orders. Accepted printing jobs keep their original specifications.'}</p>`;
+  const focusKey = document.activeElement?.dataset?.k;
+  if (!approvedEquipment.length) { root.innerHTML = `<div class="eq-empty">${emptyState('No approved printers', 'Materials and colors can be stocked once a printer is approved.', '<a class="btn btn-sm" href="#my-printers">Go to Printers</a>')}</div>`; return; }
+  // Materials of your printers' technologies: the ones a printer is approved for first.
+  const all = materialCatalogue.filter(m => hostInventory.technologies.includes(m.technology) || m.name in hostInventory.material_colors).map(m => m.name);
+  const ordered = [...all.filter(m => usableOn(m).length), ...all.filter(m => !usableOn(m).length)];
+  const owned = Object.keys(hostInventory.material_colors).length, colors = Object.values(hostInventory.material_colors).reduce((n, c) => n + Object.keys(c).length, 0);
+  root.innerHTML = `<div class="eq-acc eq-inventory" aria-busy="${stockUi.busy}"><div class="eq-acc-item is-open"><div class="eq-acc-head eq-inventory-head"><span class="eq-acc-title"><strong>Materials &amp; colors</strong><small>${owned} material${owned === 1 ? '' : 's'} · ${colors} color${colors === 1 ? '' : 's'} · shared by ${approvedEquipment.length} printer${approvedEquipment.length === 1 ? '' : 's'}</small></span></div><div class="eq-acc-panel"><ul class="eq-mats">${ordered.map(stockMaterialRow).join('')}</ul></div></div></div><p class="eq-muted eq-stock-note" role="status" id="eq-stock-status">${stockUi.busy ? 'Saving…' : 'Changes save automatically and apply to new orders. Accepted printing jobs keep their original specifications.'}</p>`;
   bindStock();
   if (focusKey) document.querySelector(`[data-k="${CSS.escape(focusKey)}"]`)?.focus({preventScroll:true});
 }
-async function saveStock(n, change, message) {
+async function saveStock(change, message) {
   if (stockUi.busy) return;
-  const printer = approvedEquipment[n], next = structuredClone({materials:printer.materials, material_colors:printer.material_colors});
-  change(next);
-  next.material_colors = Object.fromEntries(Object.entries(next.material_colors).filter(([m]) => next.materials.includes(m)));
+  const next = structuredClone(hostInventory.material_colors); change(next);
   stockUi.busy = true; renderStock();
-  try { approvedEquipment[n] = await api(`/host/printers/${printer.id}/availability`, {method:'PUT', body:JSON.stringify(next)}); if (message) toast(message); }
+  try { hostInventory = await api('/host/materials', {method:'PUT', body:JSON.stringify({material_colors:next})}); if (message) toast(message); }
   catch (e) { toast(e.message); }
   finally { stockUi.busy = false; renderStock(); }
 }
 function bindStock() {
-  document.querySelectorAll('#eq-stock [data-open-printer]').forEach(b => b.onclick = () => { const n = +b.dataset.openPrinter; stockUi.printer = stockUi.printer === n ? -1 : n; stockUi.material = null; stockUi.colorFor = null; renderStock(); });
-  document.querySelectorAll('#eq-stock [data-toggle-material]').forEach(el => el.onchange = () => {
-    const n = +el.dataset.index, m = el.dataset.toggleMaterial, key = n + '|' + m;
-    if (el.checked) stockUi.material = key; else if (stockUi.material === key) stockUi.material = null;
-    stockUi.colorFor = null;
-    saveStock(n, s => { s.materials = el.checked ? [...new Set([...s.materials, m])] : s.materials.filter(x => x !== m); if (el.checked) s.material_colors[m] ||= {}; else delete s.material_colors[m]; }, el.checked ? `${m} is now in stock` : `${m} removed from stock`);
+  const all = s => document.querySelectorAll('#eq-stock ' + s);
+  all('[data-toggle-material]').forEach(el => el.onchange = () => {
+    const m = el.dataset.toggleMaterial;
+    stockUi.material = el.checked ? m : stockUi.material === m ? null : stockUi.material;
+    saveStock(s => { if (el.checked) s[m] ||= {}; else delete s[m]; }, el.checked ? `${m} added to your materials` : `${m} removed from your materials`);
   });
-  document.querySelectorAll('#eq-stock [data-open-material]').forEach(b => b.onclick = () => { const k = b.dataset.openMaterial; stockUi.material = stockUi.material === k ? null : k; stockUi.colorFor = null; renderStock(); });
-  document.querySelectorAll('#eq-stock [data-remove-color]').forEach(b => b.onclick = () => {
-    const n = +b.dataset.index, m = b.dataset.material, c = b.dataset.removeColor;
-    saveStock(n, s => { delete s.material_colors[m][c]; }, `${colorTitle(c)} removed from ${m}`).then(() => document.querySelector(`[data-add-color="${CSS.escape(n + '|' + m)}"]`)?.focus());
+  all('[data-open-material]').forEach(b => b.onclick = () => { const m = b.dataset.openMaterial; stockUi.material = stockUi.material === m ? null : m; renderStock(); });
+  // One click adds or removes a standard color.
+  all('[data-toggle-color]').forEach(b => b.onclick = () => {
+    const m = b.dataset.material, name = b.dataset.toggleColor, hex = STANDARD_COLORS.find(([c]) => c === name)[1], on = b.getAttribute('aria-pressed') === 'true';
+    saveStock(s => { s[m] = {...s[m]}; if (on) delete s[m][name]; else s[m][name] = hex; }, on ? `${colorTitle(name)} removed from ${m}` : `${colorTitle(name)} added to ${m} · live for buyers`);
   });
-  document.querySelectorAll('#eq-stock [data-add-color]').forEach(b => b.onclick = () => { const k = b.dataset.addColor; stockUi.colorFor = stockUi.colorFor === k ? null : k; renderStock(); document.querySelector('.eq-colorpop [data-color-search]')?.focus(); });
-  bindColorPopover();
+  all('[data-remove-color]').forEach(b => b.onclick = () => { const m = b.dataset.material, c = b.dataset.removeColor; saveStock(s => { delete s[m][c]; }, `${colorTitle(c)} removed from ${m}`); });
+  all('[data-custom-color]').forEach(form => form.onsubmit = e => {
+    e.preventDefault();
+    const m = form.dataset.customColor, current = ownedColors(m), error = form.querySelector('.eq-pop-error');
+    const slug = form.elements.name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40), value = form.elements.hex.value.toLowerCase();
+    if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug)) { error.textContent = 'Enter a color name using letters and numbers.'; form.elements.name.focus(); return; }
+    const sameHex = Object.entries(current).find(([, h]) => h.toLowerCase() === value);
+    if (slug in current) { error.textContent = `${colorTitle(slug)} is already listed for ${m}.`; return; }
+    if (sameHex) { error.textContent = `This shade is already listed as ${colorTitle(sameHex[0])}.`; return; }
+    if (Object.keys(current).length >= 40) { error.textContent = 'A material can list at most 40 colors.'; return; }
+    saveStock(s => { s[m] = {...s[m], [slug]:value}; }, `${colorTitle(slug)} added to ${m} · live for buyers`);
+  });
 }
 function deleteDraftDialog() {
   const dialog = $('#modal'); dialog.className = '';
@@ -368,40 +371,6 @@ function bindEditor() {
   document.querySelectorAll('[data-edit-printer]').forEach(b => b.onclick = () => printerDrawer(+b.dataset.editPrinter));
   document.querySelectorAll('[data-spec-open]').forEach(b => b.onclick = e => { e.stopPropagation(); b.closest('.eq-card').querySelector('[data-spec-toggle]').click(); });
 }
-function bindColorPopover() {
-  const pop = document.querySelector('.eq-colorpop'); if (!pop) return;
-  const key = stockUi.colorFor, split = key.indexOf('|'), n = +key.slice(0, split), material = key.slice(split + 1), p = approvedEquipment[n];
-  const q = s => pop.querySelector(s), error = q('.eq-pop-error');
-  let picked = null;
-  const close = () => { stockUi.colorFor = null; renderStock(); document.querySelector(`[data-add-color="${CSS.escape(key)}"]`)?.focus(); };
-  const setMode = mode => { pop.dataset.mode = mode; error.textContent = ''; (mode === 'custom' ? q('[data-custom-name]') : q('[data-color-search]')).focus(); };
-  q('[data-custom-mode]').onclick = () => setMode('custom');
-  q('[data-standard-mode]').onclick = () => setMode('standard');
-  q('[data-color-search]').oninput = e => { const t = e.target.value.trim().toLowerCase(); let shown = 0; pop.querySelectorAll('[data-pick]').forEach(o => { o.hidden = !!t && !o.dataset.search.includes(t); shown += !o.hidden; }); q('.eq-no-match').hidden = shown > 0; };
-  const options = [...pop.querySelectorAll('[data-pick]')];
-  options.forEach(o => {
-    o.onclick = () => { picked = o.dataset.pick; options.forEach(x => x.setAttribute('aria-selected', x === o)); error.textContent = ''; };
-    o.ondblclick = () => q('[data-color-confirm]').click();
-    o.onkeydown = e => { if (!['ArrowDown', 'ArrowUp'].includes(e.key)) return; e.preventDefault(); const list = options.filter(x => !x.hidden && !x.disabled), i = list.indexOf(o); list[(i + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]?.focus(); };
-  });
-  const name = q('[data-custom-name]'), hex = q('[data-custom-hex]'), preview = () => { q('.eq-custom-preview .eq-dot').style.setProperty('--c', hex.value); q('[data-custom-label]').textContent = name.value.trim() || 'New color'; };
-  name.oninput = preview; hex.oninput = preview;
-  q('[data-color-cancel]').onclick = close;
-  q('[data-color-confirm]').onclick = () => {
-    const current = p.material_colors[material] || {};
-    let slug, value;
-    if (pop.dataset.mode === 'custom') { slug = name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40); value = hex.value.toLowerCase(); if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug)) { error.textContent = 'Enter a color name using letters and numbers.'; name.focus(); return; } }
-    else { if (!picked) { error.textContent = 'Choose a standard color, or add a custom color.'; return; } slug = picked; value = STANDARD_COLORS.find(([c]) => c === picked)[1]; }
-    const sameHex = Object.entries(current).find(([, h]) => h.toLowerCase() === value);
-    if (slug in current) { error.textContent = `${colorTitle(slug)} is already listed for ${material}.`; return; }
-    if (sameHex) { error.textContent = `This shade is already listed as ${colorTitle(sameHex[0])}.`; return; }
-    if (Object.keys(current).length >= 40) { error.textContent = 'A material can list at most 40 colors.'; return; }
-    stockUi.colorFor = null;
-    saveStock(n, s => { s.material_colors[material] = {...s.material_colors[material], [slug]:value}; }, `${colorTitle(slug)} added to ${material} · live for buyers`).then(() => document.querySelector(`[data-add-color="${CSS.escape(key)}"]`)?.focus());
-  };
-  pop.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input')) { e.preventDefault(); q('[data-color-confirm]').click(); } };
-}
-
 /* Editor entry: loads the draft (or approved equipment) and restores an unsaved session after reload. */
 async function showEquipment() {
   if (!account || account.role === 'admin') { $('#app').innerHTML = panelMessage('Buyer or host account required', 'Sign in with a marketplace account.'); return; }

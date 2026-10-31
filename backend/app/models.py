@@ -246,11 +246,22 @@ class HostPrinter(Base):
     y: Mapped[float] = mapped_column(Float)
     z: Mapped[float] = mapped_column(Float)
     quantity: Mapped[int] = mapped_column(Integer)
-    materials: Mapped[str] = mapped_column(Text)
+    # Legacy per-printer stock, kept only for downgrades; stock now lives in HostMaterial (migration 74a).
+    materials: Mapped[str] = mapped_column(Text, default='[]')
     material_colors: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
-    # Administrator-approved material capabilities; materials/material_colors are host-managed stock.
+    # Administrator-approved material capabilities of this printer.
     capabilities: Mapped[str] = mapped_column(Text, default='[]', server_default='[]')
     __table_args__=(CheckConstraint("technology IN ('FDM','RESIN')"),CheckConstraint('quantity BETWEEN 1 AND 100'),CheckConstraint('x>0 AND y>0 AND z>0'))
+
+class HostMaterial(Base):
+    """A material a host owns and its colours ({name: hex}), chosen once for all printers.
+    A printer offers it when the material is also among that printer's approved capabilities."""
+    __tablename__='host_materials'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id',ondelete='CASCADE'),index=True)
+    material: Mapped[str] = mapped_column(String(40))
+    colors: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    __table_args__=(UniqueConstraint('user_id','material'),)
 
 
 class EquipmentRevision(Base):

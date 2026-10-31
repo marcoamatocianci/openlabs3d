@@ -234,10 +234,10 @@ def ship_job(client,token,job_id,**extra):
     return response.json()
 
 def stock(client,token):
-    """After approval the host stocks materials and colors directly, without a revision."""
+    """After approval the host stocks materials and colors once, for all printers, without a revision."""
     printer=client.get('/api/host/equipment').json()[0]
     assert {'PLA','PETG'}<=set(printer['capabilities'])
-    response=client.put(f"/api/host/printers/{printer['id']}/availability",json={'materials':['PLA','PETG'],'material_colors':{'PLA':{'black':'#000000'},'PETG':{'black':'#000000'}}},headers=headers(token))
+    response=client.put('/api/host/materials',json={'material_colors':{'PLA':{'black':'#000000'},'PETG':{'black':'#000000'}}},headers=headers(token))
     assert response.status_code==200,response.text
 
 

@@ -42,8 +42,8 @@ def test_order_lines_keep_the_purchased_colour_after_stock_changes():
     # Each fulfilment job carries the same snapshot for its own line.
     assert {(j['item']['color'], j['item']['color_hex']) for j in created['jobs']} == {('signal-red', '#d9424d'), ('aqua-blue', '#429fb7')}
     with SessionLocal() as db:
-        printer = db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id == host_id))
-        printer.material_colors = json.dumps({'PETG': {'signal-red': '#010101'}, 'PLA': {}}); db.commit()
+        from app.availability import set_host_inventory
+        set_host_inventory(db, host_id, {'PETG': {'signal-red': '#010101'}, 'PLA': {}}); db.commit()
     again = buyer.get('/api/orders?paginated=true').json()['items'][0]
     assert {(i['color'], i['color_hex']) for i in again['items']} == {('signal-red', '#d9424d'), ('aqua-blue', '#429fb7')}
 

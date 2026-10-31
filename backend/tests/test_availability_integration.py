@@ -13,6 +13,7 @@ from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from app import database, models
 from app.main import app
+from app.availability import set_host_inventory
 from app.equipment import seed_equipment
 
 @pytest.fixture
@@ -36,7 +37,8 @@ def workflow(tmp_path, monkeypatch):
         p=models.Listing(owner_id=ids['admin'],title='Test rack',status='approved',material='PLA',configuration='{"materials":{"PLA":10000,"PETG":12000}}',cad_dimensions='[100,100,100]',price_cents=1000)
         db.add(p);db.flush();pid=p.id
         for name,colors in [('host',{'PLA':{'black':'#000000','red':'#ff0000'},'PETG':{'black':'#000000'}}),('other',{'PLA':{'blue':'#0000ff'},'PETG':{'white':'#ffffff'}})]:
-            db.add(models.HostPrinter(user_id=ids[name],manufacturer='Custom',model='Printer',technology='FDM',x=200,y=200,z=200,quantity=1,materials='["PLA","PETG"]',capabilities='["PLA","PETG"]',material_colors=json.dumps(colors)))
+            db.add(models.HostPrinter(user_id=ids[name],manufacturer='Custom',model='Printer',technology='FDM',x=200,y=200,z=200,quantity=1,capabilities='["PLA","PETG"]'))
+            set_host_inventory(db,ids[name],colors)
         db.commit()
     yield clients,ids,pid,sessions
     for c in clients.values():c.close()
@@ -145,9 +147,7 @@ def test_material_color_availability_tracks_product_and_host(workflow):
         # Use one approved host, with the requested explicit per-material colors.
         other=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['other']))
         other.status='suspended'
-        printer=db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id==ids['host']))
-        printer.materials=json.dumps(['PLA','PETG'])
-        printer.material_colors=json.dumps({'PLA':{'black':'#000000','white':'#ffffff','blue':'#0000ff'},'PETG':{'black':'#000000'}})
+        set_host_inventory(db,ids['host'],{'PLA':{'black':'#000000','white':'#ffffff','blue':'#0000ff'},'PETG':{'black':'#000000'}})
         db.commit()
     endpoint=f'/api/listings/{pid}/availability'
     available=buyer.get(endpoint).json()
@@ -159,8 +159,7 @@ def test_material_color_availability_tracks_product_and_host(workflow):
         assert q.status_code==200 and q.json()['unit_price_cents']==expected
     assert buyer.post(f'/api/listings/{pid}/quote',json={'material':'PETG','color':'blue','quantity':1}).status_code==422
     with sessions() as db:
-        printer=db.scalar(select(models.HostPrinter).where(models.HostPrinter.user_id==ids['host']))
-        printer.materials=json.dumps(['PETG']);db.commit()
+        set_host_inventory(db,ids['host'],{'PETG':{'black':'#000000'}});db.commit()
     assert set(buyer.get(endpoint).json()['materials'])=={'PETG'}
     with sessions() as db:
         db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['host'])).status='pending';db.commit()

@@ -13,6 +13,7 @@ os.environ.update(DATABASE_URL='sqlite:///' + temp + '/qa.db', UPLOAD_DIR=temp +
 sys.path.insert(0, str(root / 'backend'))
 namespace = runpy.run_path(str(root / 'scripts/account_preview.py'))
 from sqlalchemy import select
+from app.availability import set_host_inventory
 from app import config, models
 from app.database import SessionLocal
 from app.main import hasher
@@ -33,8 +34,8 @@ with SessionLocal() as db:
         if name in STOCK:
             db.add(models.HostApplication(user_id=u.id, status='approved'))
             materials = sorted(STOCK[name])
-            db.add(models.HostPrinter(user_id=u.id, manufacturer='QA', model=name, technology='FDM', x=300, y=300, z=320, quantity=1,
-                                      materials=json.dumps(materials), capabilities=json.dumps(materials), material_colors=json.dumps(STOCK[name])))
+            db.add(models.HostPrinter(user_id=u.id, manufacturer='QA', model=name, technology='FDM', x=300, y=300, z=320, quantity=1, capabilities=json.dumps(materials)))
+            set_host_inventory(db, u.id, STOCK[name])
     seed(db, users['admin']); db.flush()
     # The pipette stand's placeholder rules also sell ABS; the racks sell PLA and PETG.
     attach(db)
