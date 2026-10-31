@@ -3,7 +3,7 @@ const buyerOrdersRenderOperations = renderOperations;
 let buyerOrdersRequest = 0, buyerOrdersShown = null;
 // Filters, sort and pages change only the hash query: keep the scroll position (see app.js).
 inPageRoutes.add('#orders');
-const buyerOrderCategories = [['all','All orders'],['pending','Pending'],['in-progress','In progress'],['completed','Completed'],['cancelled','Cancelled']];
+const buyerOrderCategories = [['all','All orders'],['pending','Pending'],['accepted','Accepted'],['in-production','In production'],['shipped','Shipped'],['completed','Completed'],['cancelled','Cancelled']];
 const buyerOrderLabels = {pending:'Awaiting host acceptance',accepted:'Accepted · awaiting printing',printing:'Production in progress',ready:'Ready for delivery',shipped:'Shipped',completed:'Completed',cancelled:'Cancelled',available:'Awaiting host acceptance'};
 const buyerOrderTone = {pending:'warning',accepted:'warning',printing:'info',ready:'info',shipped:'info',completed:'success',cancelled:'danger',available:'warning'};
 const buyerOrderBadge = status => `<span class="status status-${buyerOrderTone[status] || 'neutral'}">${esc(buyerOrderLabels[status] || 'Status unavailable')}</span>`;
@@ -43,13 +43,20 @@ function buyerOrderLine(item,currency,detail=false) {
   return `<li class="bo-product">${buyerOrderThumb(item)}<div class="bo-product-copy"><h3>${esc(item.title)}</h3>${buyerOrderConfig(item)}<span class="bo-meta">Quantity: ${item.quantity}${detail?' · '+buyerOrderMoney(item.price_cents,currency)+' each':''}</span></div><strong class="bo-line-price">${buyerOrderMoney(item.price_cents*item.quantity,currency)}</strong></li>`;
 }
 const buyerOrderEvents = {'order.created':'Order requested','order.cancelled':'Order cancelled','job.accepted':'A printing host accepted a product','job.printing':'Printing started for a product','job.ready':'A product is ready for delivery','job.shipped':'A product was shipped','job.completed':'A product was received','order.completed':'Order completed','job.reopened':'A product is awaiting a new host'};
+// Shipped products: tracking details and the receipt confirmation that completes them.
+function buyerOrderShipment(order, job) {
+  const s = job.shipment || {}, tracking = s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number || '');
+  return `<li class="bo-shipment"><div class="bo-shipment-copy"><strong>${esc(job.item.title)}</strong><span class="bo-meta">${esc(s.carrier || 'Carrier not provided')}${tracking ? ' · Tracking ' + tracking : ''}</span>${s.note ? `<span class="bo-meta">${esc(s.note)}</span>` : ''}${s.shipped_at ? `<span class="bo-meta">Shipped ${esc(safeDate(s.shipped_at))}</span>` : ''}</div><button type="button" class="btn btn-sm" data-received="${order.id}:${job.id}">Mark as received</button></li>`;
+}
 function buyerOrderCard(order) {
   const count=order.items.reduce((sum,i)=>sum+i.quantity,0),preview=order.items.slice(0,2);
-  const jobs=order.jobs.map(j=>`<li class="bo-job"><div><strong>${esc(j.item.title)}</strong>${buyerOrderConfig(j.item)}<span class="bo-meta">Quantity: ${j.item.quantity}</span><span class="bo-meta">${j.host_id?'Assigned printing host #'+j.host_id:j.status==='cancelled'?'No active assignment':'Waiting for a printing host'}</span></div><div>${buyerOrderBadge(j.status)}<span class="bo-meta">Updated ${esc(safeDate(j.updated_at))}</span></div></li>`).join('');
+  const shipped=order.jobs.filter(j=>j.status==='shipped');
+  const jobs=order.jobs.map(j=>`<li class="bo-job"><div><strong>${esc(j.item.title)}</strong>${buyerOrderConfig(j.item)}<span class="bo-meta">Quantity: ${j.item.quantity}</span><span class="bo-meta">${j.host_id?'Assigned printing host #'+j.host_id:j.status==='cancelled'?'No active assignment':'Waiting for a printing host'}</span>${j.shipment?`<span class="bo-meta">${esc(j.shipment.carrier)} · ${esc(j.shipment.tracking_number)}</span>`:''}</div><div>${buyerOrderBadge(j.status)}<span class="bo-meta">Updated ${esc(safeDate(j.updated_at))}</span></div></li>`).join('');
   return `<article class="section-card bo-card" data-order-id="${order.id}" aria-labelledby="bo-title-${order.id}">
     <header class="bo-card-head"><div><h2 id="bo-title-${order.id}">${esc(order.reference)}</h2><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div>${buyerOrderBadge(order.status)}</header>
     <ul class="bo-products">${preview.map(i=>buyerOrderLine(i,order.currency)).join('')}</ul>
     ${order.items.length>2?`<p class="bo-more">+ ${order.items.length-2} more ${order.items.length===3?'product':'products'} in order details</p>`:''}
+    ${shipped.length?`<section class="bo-shipments" aria-label="Shipped products"><h3>On its way</h3><p class="bo-meta">Confirm each product once it arrives; the order completes when everything is received.</p><ul>${shipped.map(j=>buyerOrderShipment(order,j)).join('')}</ul></section>`:''}
     <div class="bo-total"><span class="bo-meta">${count} ${count===1?'item':'items'} · ${order.items.length} ${order.items.length===1?'product':'products'}</span><span>Total <strong>${buyerOrderMoney(order.total_cents,order.currency)}</strong></span></div>
     <details class="bo-details"><summary aria-label="View details for ${esc(order.reference)}"><span class="bo-open-label">View details</span><span class="bo-close-label">Hide details</span>${icon('chevron')}</summary><div class="bo-detail-body">
       <section><h3>Ordered products</h3><ul class="bo-products">${order.items.map(i=>buyerOrderLine(i,order.currency,true)).join('')}</ul></section>
@@ -65,8 +72,8 @@ function buyerOrdersShell(body) {
 function buyerOrdersBody(data, filters) {
   const tabs=filterChips('Order status',buyerOrderCategories.map(([value,label])=>({value,label,href:buyerOrderHref(value,filters.sort).slice(1),count:data.counts[value]})),filters.category);
   const sort=uiSelect({id:'bo-sort',label:'Sort by',value:filters.sort,options:[['newest','Newest first'],['oldest','Oldest first']],className:'bo-sort'});
-  const emptyTitle={all:'No orders yet',pending:'No pending orders','in-progress':'No orders in progress',completed:'No completed orders',cancelled:'No cancelled orders'};
-  const emptyText={pending:'Orders awaiting host acceptance or printing will appear here.','in-progress':'Orders being printed or ready for delivery will appear here.',completed:'Your fulfilled orders will appear here.',cancelled:'Cancelled order requests will appear here.'};
+  const emptyTitle={all:'No orders yet',pending:'No pending orders',accepted:'No accepted orders','in-production':'No orders in production',shipped:'No shipped orders',completed:'No completed orders',cancelled:'No cancelled orders'};
+  const emptyText={pending:'Orders waiting for a printing host will appear here.',accepted:'Orders a host accepted and has not started printing will appear here.','in-production':'Orders being printed or ready for delivery will appear here.',shipped:'Shipped orders appear here until you confirm they arrived.',completed:'Orders you confirmed as received will appear here.',cancelled:'Cancelled order requests will appear here.'};
   const content=data.items.length?`<div class="bo-list">${data.items.map(buyerOrderCard).join('')}</div>`:`<div class="section-card">${emptyState(data.counts.all?emptyTitle[filters.category]:'No orders yet',data.counts.all?emptyText[filters.category]||'Your order requests appear here.':'Explore laboratory tools and place your first order request.',data.counts.all?`<a class="btn btn-sm" href="${buyerOrderHref('all',filters.sort)}">View all orders</a>`:'<a class="btn btn-sm" href="#catalogue">Explore products</a>')}</div>`;
   const pageLink=(page,label)=>`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters.category,filters.sort,page)}">${label}</a>`;
   const pagination=data.pages>1?`<nav class="bo-pagination" aria-label="Order pages">${data.page>1?pageLink(data.page-1,'Previous'):'<span></span>'}<span>Page ${data.page} of ${data.pages}</span>${data.page<data.pages?pageLink(data.page+1,'Next'):'<span></span>'}</nav>`:'';
@@ -109,4 +116,14 @@ async function renderBuyerOrders() {
     $('#bo-retry').onclick=renderBuyerOrders;
   }
 }
+// Mark as received: confirmed in the site dialog, then the list refreshes in place.
+document.addEventListener('click', async e => {
+  const button = e.target.closest('[data-received]'); if (!button) return;
+  const [orderId, jobId] = button.dataset.received.split(':'), title = button.closest('.bo-shipment').querySelector('strong').textContent;
+  const ok = await actionDialog({title:'Mark as received?', confirm:'Mark as received', busy:'Saving…',
+    body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(title)}</strong></div></div><ul class="ad-notes"><li>Confirm the product arrived in good condition.</li><li>The printing job is completed; the order completes once every product is received.</li></ul>`,
+    run:() => api(`/orders/${orderId}/jobs/${jobId}/received`, {method:'POST'})});
+  if (!ok) { if (button.isConnected) button.focus(); return; }
+  toast('Marked as received'); renderBuyerOrders();
+});
 renderOperations=function(route){if(route==='orders')return renderBuyerOrders();return buyerOrdersRenderOperations(route)};

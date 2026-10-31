@@ -40,23 +40,31 @@ async page => {
   await page.screenshot({animations:'disabled',path:'.playwright-mcp/orders-desktop-bright.png'});
   await navigate(()=>page.getByRole('link',{name:'Next',exact:true}).click());
   check((await refs()).length===5&&(await refs()).at(-1)==='OL3D-QA-1001','Pagination lost orders');
-  const expected={Pending:5,'In progress':6,Completed:2,Cancelled:2};
+  const expected={Pending:2,Accepted:2,'In production':5,Shipped:2,Completed:2,Cancelled:2};
   for(const [label,count] of Object.entries(expected)){
     await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:new RegExp('^'+label)}).click());
     check((await refs()).length===count,'Incorrect '+label+' grouping');
     const statuses=await page.locator('.bo-card-head .status').allTextContents();
-    if(label==='Pending')check(statuses.every(s=>['Awaiting host acceptance','Accepted · awaiting printing'].includes(s)),'Pending mislabeled as printing');
-    if(label==='In progress')check(statuses.every(s=>['Production in progress','Ready for delivery'].includes(s)),'Active grouping');
+    if(label==='Pending')check(statuses.every(s=>s==='Awaiting host acceptance'),'Pending holds only orders awaiting a host');
+    if(label==='Accepted')check(statuses.every(s=>s==='Accepted · awaiting printing'),'Accepted grouping');
+    if(label==='In production')check(statuses.every(s=>['Production in progress','Ready for delivery'].includes(s)),'Production grouping');
+    if(label==='Shipped'){
+      check(statuses.every(s=>s==='Shipped'),'Shipped grouping');
+      const panel=page.locator('.bo-card').first().locator('.bo-shipments');
+      check(await panel.locator('a[href^="https://www.dhl.com/track"]').count()===1&&(await panel.innerText()).includes('DHL Express'),'Shipped orders show tracking');
+      check(await panel.getByRole('button',{name:'Mark as received'}).count()===1,'Shipped orders offer Mark as received');
+    }
+    if(label!=='Shipped'&&label!=='In production')check(await page.locator('.bo-shipments').count()===0,label+' orders show no receipt action');
   }
   await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:/^Pending/}).click());
   await navigate(async()=>{await page.click('[data-select=bo-sort] .cf-trigger');await page.click('[data-select=bo-sort] [role=option][data-value=oldest]')});
-  check((await refs())[0]==='OL3D-QA-1001','Combined sorting/filtering');
+  check((await refs())[0]==='OL3D-QA-1007','Combined sorting/filtering');
   await page.goto(base+'/#catalogue');await page.waitForLoadState('networkidle');
   await goto('orders');
   check(await page.locator('[data-select=bo-sort] input[type=hidden]').inputValue()==='oldest'&&await page.locator('[data-select=bo-sort] .cf-value').textContent()==='Oldest first','Sort not preserved');
-  check((await refs()).length===5,'Category not preserved');
+  check((await refs()).length===2,'Category not preserved');
   await page.reload();await page.locator('.bo-results').waitFor();
-  check((await refs())[0]==='OL3D-QA-1001','Reload lost preferences');
+  check((await refs())[0]==='OL3D-QA-1007','Reload lost preferences');
   await goto('orders?category=all&sort=newest');
   await page.evaluate(()=>document.documentElement.dataset.theme='dark');
   await page.waitForFunction(()=>document.querySelector('.bo-thumb img')?.naturalWidth>0);
@@ -93,9 +101,27 @@ async page => {
   await page.unroute(pattern);
   await page.getByRole('button',{name:'Retry',exact:true}).click();await page.locator('.bo-card').first().waitFor();
   await page.route(pattern,async route=>{const response=await route.fetch(),data=await response.json();await route.fulfill({json:{...data,items:[],total:0,page:1,pages:1}})});
-  await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:/^In progress/}).click());
-  check((await page.locator('.bo-page').innerText()).includes('No orders in progress'),'Contextual empty state');
+  await navigate(()=>page.getByRole('navigation',{name:'Order status'}).getByRole('link',{name:/^In production/}).click());
+  check((await page.locator('.bo-page').innerText()).includes('No orders in production'),'Contextual empty state');
   await page.unroute(pattern);
+  // Mark as received: confirmed in the site dialog; the order completes and moves to Completed.
+  await goto('orders?category=shipped&sort=newest');
+  await page.waitForFunction(()=>!document.querySelector('#bo-results[aria-busy]')&&document.querySelectorAll('.bo-shipments').length>0);
+  const shippedRef=(await refs())[0];
+  await page.locator('.bo-card').first().getByRole('button',{name:'Mark as received'}).click();
+  await page.locator('#action-dialog[open]').waitFor();
+  check(await page.locator('#action-dialog').getByRole('heading',{name:'Mark as received?'}).isVisible(),'Receipt confirmation dialog');
+  await page.locator('#action-dialog').getByRole('button',{name:'Cancel'}).click();
+  check((await refs())[0]===shippedRef,'Cancel keeps the order shipped');
+  await page.locator('.bo-card').first().getByRole('button',{name:'Mark as received'}).click();
+  const received=page.waitForResponse(r=>r.url().includes('/received')&&r.status()===200);
+  await page.locator('#action-dialog').getByRole('button',{name:'Mark as received'}).click();await received;
+  await page.waitForFunction(ref=>![...document.querySelectorAll('.bo-card h2')].some(h=>h.textContent===ref),shippedRef);
+  check((await refs()).length===1,'Received order leaves Shipped');
+  await goto('orders?category=completed&sort=newest');
+  await page.waitForFunction(()=>!document.querySelector('#bo-results[aria-busy]')&&document.querySelector('#bo-toolbar .chip[aria-current]')?.textContent.startsWith('Completed'));
+  check((await refs()).includes(shippedRef),'Received order is completed');
+  check((await page.locator('#bo-toolbar .chip',{hasText:'Completed'}).innerText()).replace(/\s+/g,' ').trim()==='Completed 3','Completed count updated');
   // Owner scoping is verified on real API responses with separate authenticated sessions.
   await page.evaluate(()=>logout());await page.goto(base+'/#account');await login('other');await goto('orders');
   check((await refs()).join(',')==='OL3D-QA-1000','Buyer isolation');

@@ -236,12 +236,13 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
         return order_data(existing,db)
     return order_data(order,db)
 
-ORDER_GROUPS = {'pending':('pending','accepted'), 'in-progress':('printing','ready','shipped'),
-                'completed':('completed',), 'cancelled':('cancelled',)}
+# My Orders sections: awaiting a host, accepted (waiting for printing), in production, shipped, completed, cancelled.
+ORDER_GROUPS = {'pending':('pending',), 'accepted':('accepted',), 'in-production':('printing','ready'),
+                'shipped':('shipped',), 'completed':('completed',), 'cancelled':('cancelled',)}
 
 @router.get('/orders')
 def my_orders(auth=Depends(require), db: Session=Depends(get_db),
-              paginated:bool=False, category:Literal['all','pending','in-progress','completed','cancelled']='all',
+              paginated:bool=False, category:Literal['all','pending','accepted','in-production','shipped','completed','cancelled']='all',
               sort:Literal['newest','oldest']='newest', page:int=Query(1,ge=1), per_page:int=Query(10,ge=1,le=50)):
     if auth[0].role=='admin': fail(403, 'Use marketplace order management')
     owned=models.Order.buyer_id==auth[0].id

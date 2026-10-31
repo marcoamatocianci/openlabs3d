@@ -78,8 +78,8 @@ with sync_playwright() as pw:
     p.evaluate("window.__page = document.querySelector('.bo-page'); const t = document.querySelector('#bo-toolbar'); scrollTo(0, t.getBoundingClientRect().top + scrollY - 90)")
     # Slow the order API down so the in-between state can be observed.
     p.evaluate("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/orders?') ? new Promise(r => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); })()")
-    for label, category, statuses in (('Pending', 'pending', {'Awaiting host acceptance', 'Accepted · awaiting printing'}),
-                                      ('In progress', 'in-progress', {'Production in progress', 'Ready for delivery'}),
+    for label, category, statuses in (('Pending', 'pending', {'Awaiting host acceptance'}), ('Accepted', 'accepted', {'Accepted · awaiting printing'}),
+                                      ('In production', 'in-production', {'Production in progress', 'Ready for delivery'}), ('Shipped', 'shipped', {'Shipped'}),
                                       ('Completed', 'completed', {'Completed'}), ('Cancelled', 'cancelled', {'Cancelled'})):
         y = p.evaluate('scrollY'); p.requests.clear()
         click_chip(p, label)
@@ -104,10 +104,10 @@ with sync_playwright() as pw:
     ok(p.evaluate('window.__page === document.querySelector(".bo-page")'), 'history navigation keeps the page')
 
     # Rapid switching: the last choice wins, earlier responses are discarded.
-    for label in ('All orders', 'Pending', 'In progress'):
+    for label in ('All orders', 'Pending', 'In production'):
         click_chip(p, label)
     ready(p); p.wait_for_timeout(400)
-    ok('category=in-progress' in p.url and set(p.locator('.bo-card-head .status').all_inner_texts()) <= {'Production in progress', 'Ready for delivery'}, 'rapid clicks settle on the last filter')
+    ok('category=in-production' in p.url and set(p.locator('.bo-card-head .status').all_inner_texts()) <= {'Production in progress', 'Ready for delivery'}, 'rapid clicks settle on the last filter')
 
     # Sort and pages.
     click_chip(p, 'All orders'); ready(p)

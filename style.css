@@ -939,6 +939,12 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
 .bo-page-head{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:26px}
 .bo-page-head h1{font-size:32px;margin:6px 0 8px;letter-spacing:-.035em}
 .bo-page-head p{margin:0}.bo-page-head .ws-crumb{font-size:11px}
+.bo-shipments{margin:0 20px 16px;padding:14px 16px;border:1px solid color-mix(in srgb,var(--info-fg) 30%,var(--line));border-radius:12px;background:color-mix(in srgb,var(--info-bg) 60%,transparent)}
+.bo-shipments h3{margin:0 0 2px;font-size:14px}.bo-shipments ul{margin:10px 0 0;padding:0;list-style:none}
+.bo-shipment{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px 0;border-top:1px solid color-mix(in srgb,var(--info-fg) 18%,var(--line))}
+.bo-shipment:first-child{border-top:0;padding-top:0}.bo-shipment-copy{display:flex;flex-direction:column;gap:2px;min-width:0}.bo-shipment-copy strong{font-size:13px;overflow-wrap:anywhere}
+.bo-shipment .btn{flex:none}
+@media(max-width:560px){.bo-shipments{margin:0 14px 14px}.bo-shipment{flex-direction:column;align-items:stretch}.bo-shipment .btn{min-height:44px}}
 .bo-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .bo-toolbar .chips{margin:0;flex-wrap:wrap}.bo-toolbar .chip{min-height:40px}
 .cf-select.bo-sort{flex:none;flex-direction:row;align-items:center;gap:10px;min-width:0}.bo-sort .cf-label{white-space:nowrap}.bo-sort .cf-menu{left:auto;right:0;min-width:160px}.bo-sort .cf-trigger{min-width:160px}

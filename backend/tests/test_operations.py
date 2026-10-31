@@ -254,7 +254,7 @@ def test_buyer_order_pages_filters_and_snapshots():
     with SessionLocal() as db:
         p=Listing(owner_id=uid,title='Changed listing',price_cents=9999,material='PETG',status='archived',removed=True)
         db.add(p);db.flush()
-        for n,status in enumerate(['pending','accepted','printing','ready','completed','cancelled']):
+        for n,status in enumerate(['pending','accepted','printing','ready','shipped','completed','cancelled']):
             o=Order(buyer_id=uid,reference=f'QA-HISTORY-{n}',idempotency_key=f'qa-history-{n}',contact=CONTACT,address=ADDRESS,total_cents=2400,status=status,created_at=datetime(2026,1,1)+timedelta(days=n))
             db.add(o);db.flush()
             db.add(OrderItem(order_id=o.id,listing_id=p.id,title='Original rack',quantity=2,price_cents=1200,material='PLA',color='orange',dimensions='10 mm'))
@@ -262,13 +262,13 @@ def test_buyer_order_pages_filters_and_snapshots():
         db.commit()
     path='/api/orders?paginated=true&per_page=2'
     data=buyer.get(path).json()
-    assert data['counts']=={'all':6,'pending':2,'in-progress':2,'completed':1,'cancelled':1}
-    assert data['pages']==3 and len(data['items'])==2
+    assert data['counts']=={'all':7,'pending':1,'accepted':1,'in-production':2,'shipped':1,'completed':1,'cancelled':1}
+    assert data['pages']==4 and len(data['items'])==2
     assert [o['status'] for o in data['items']]==['cancelled','completed']
-    assert buyer.get(path+'&page=2').json()['items'][0]['status']=='ready'
+    assert buyer.get(path+'&page=2').json()['items'][0]['status']=='shipped'
     assert buyer.get(path+'&sort=oldest').json()['items'][0]['status']=='pending'
-    assert buyer.get(path+'&page=999').json()['page']==3
-    for category,statuses in [('pending',['pending','accepted']),('in-progress',['printing','ready']),('completed',['completed']),('cancelled',['cancelled'])]:
+    assert buyer.get(path+'&page=999').json()['page']==4
+    for category,statuses in [('pending',['pending']),('accepted',['accepted']),('in-production',['printing','ready']),('shipped',['shipped']),('completed',['completed']),('cancelled',['cancelled'])]:
         filtered=buyer.get(path+'&category='+category+'&sort=oldest').json()
         assert [o['status'] for o in filtered['items']]==statuses
         assert filtered['counts']==data['counts']
@@ -278,8 +278,9 @@ def test_buyer_order_pages_filters_and_snapshots():
     assert other.get(path).json()['items'][0]['reference']=='QA-HISTORY-PRIVATE'
     assert TestClient(app).get(path).status_code==401
     assert buyer.get(path+'&category=unknown').status_code==422
+    assert buyer.get(path+'&category=in-progress').status_code==422
     assert buyer.get('/api/orders?paginated=true&per_page=1000').status_code==422
-    assert len(buyer.get('/api/orders').json())==6  # Original client contract remains valid.
+    assert len(buyer.get('/api/orders').json())==7  # Original client contract remains valid.
 
 
 def test_shipping_requires_details_and_only_the_buyer_completes():
