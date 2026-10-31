@@ -9,6 +9,20 @@ async page => {
   await page.locator('[data-cf-select=category] .cf-trigger').waitFor();
   const hidden = name => page.locator(`#filters input[type=hidden][name=${name}]`).inputValue();
 
+  // Search icon: drawn glyph as tall as the input text, vertically centred on it, scaling with font-size.
+  const glyph = () => page.evaluate(() => {
+    const input = document.querySelector('#filters [name=q]'), g = document.querySelector('.searchbar-icon .icon').getBBox ? document.querySelector('.searchbar-icon .icon') : null;
+    const svg = g.getBoundingClientRect(), box = input.getBoundingClientRect(), scale = svg.height / 24;
+    const inner = [...g.children].reduce((a, c) => { const b = c.getBBox(); return {top:Math.min(a.top, b.y), bottom:Math.max(a.bottom, b.y + b.height)}; }, {top:24, bottom:0});
+    return {glyph:(inner.bottom - inner.top) * scale, font:parseFloat(getComputedStyle(input).fontSize), offset:Math.abs((svg.top + svg.height / 2) - (box.top + box.height / 2))};
+  });
+  let icon = await glyph();
+  check(Math.abs(icon.glyph - icon.font) <= icon.font * 0.2 && icon.offset <= 1.5, 'Search icon matches the text size and is centred: ' + JSON.stringify(icon));
+  await page.evaluate(() => { document.querySelector('.searchbar').style.fontSize = '20px'; });
+  icon = await glyph();
+  check(Math.abs(icon.glyph - icon.font) <= icon.font * 0.2 && icon.font === 20, 'Search icon scales with font-size');
+  await page.evaluate(() => { document.querySelector('.searchbar').style.fontSize = ''; });
+
   // Marketplace: mouse selection.
   await page.click('[data-cf-select=material] .cf-trigger');
   check(await page.locator('[data-cf-select=material] .cf-menu').isVisible(), 'Material menu opens on click');

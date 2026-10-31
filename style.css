@@ -848,6 +848,9 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
  .le-prices input{width:100%}
 }
 /* Marketplace filter bar: listbox dropdowns, price slider, apply at the far right, applied chips. */
+/* Catalogue search icon: the drawn glyph spans ~16 of 24 viewBox units, so 1.5em makes it as tall as the input text. */
+.searchbar-icon{display:flex;align-items:center;align-self:center;flex:none;color:var(--subtle);line-height:1}
+.searchbar-icon .icon{width:1.5em;height:1.5em;stroke-width:2}
 .cf-bar{display:flex;align-items:flex-end;gap:12px 20px;margin:18px 0 0;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
 .cf-group{display:flex;gap:10px;flex:1 1 auto;min-width:0}
 .cf-select{position:relative;display:flex;flex-direction:column;gap:5px;min-width:150px;flex:1 1 0}
