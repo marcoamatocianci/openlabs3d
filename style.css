@@ -1330,3 +1330,10 @@ a.segment{text-decoration:none}
 .ap-collapse[open] .ap-collapse-arrow{transform:rotate(90deg)}
 .ap-collapse-body{padding:0 20px 18px}
 @media(prefers-reduced-motion:reduce){.ap-collapse-arrow,.ap-tip{transition:none}}
+
+/* Admin user profile. */
+.up-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;align-items:start}
+.up-card .detail-grid{margin-top:12px}.up-identity{display:flex;align-items:center;gap:12px}.up-identity>div{display:flex;flex-direction:column;gap:2px}
+.up-addresses{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}.up-address{padding:10px 12px;border:1px solid var(--line);border-radius:10px;font-size:12.5px;font-style:normal;line-height:1.5}
+.up-activity{margin-top:16px}.up-filter{margin-bottom:12px}
+.row-link{color:inherit}.row-link:hover{color:var(--teal);text-decoration:underline}

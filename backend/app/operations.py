@@ -420,6 +420,43 @@ def change_settings(body: schemas.SettingsInput, auth=Depends(admin_mutate), db:
     log(db,auth[0].id,'settings.updated','marketplace'); db.commit()
     return settings(db)
 
+# Activity filters on the user profile, built on activity_log.
+USER_ACTIVITY = {'purchases':('order.created',), 'completions':('order.completed','job.completed'), 'cancellations':('order.cancelled',),
+                 'custom_requests':('request.submitted','request.updated'), 'printing':('job.accepted','job.printing','job.ready','job.shipped')}
+
+@router.get('/admin/users/{user_id}')
+def admin_user(user_id: int, auth=Depends(admin), db: Session=Depends(get_db)):
+    """Read-only account settings, plus printing specs for hosts."""
+    from .accounts import address_data
+    from .equipment import printer_data, inventory_data
+    user=db.get(models.User,user_id)
+    if not user: fail(404,'User not found')
+    host=db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==user_id))
+    addresses=[address_data(a) for a in db.scalars(select(models.UserAddress).where(models.UserAddress.user_id==user_id).order_by(models.UserAddress.is_default.desc(),models.UserAddress.id))]
+    counts={'orders':db.scalar(select(func.count()).select_from(models.Order).where(models.Order.buyer_id==user_id)),
+            'jobs':db.scalar(select(func.count()).select_from(models.PrintingJob).where(models.PrintingJob.host_id==user_id)),
+            'requests':db.scalar(select(func.count()).select_from(models.CustomRequest).where(models.CustomRequest.user_id==user_id)),
+            'listings':db.scalar(select(func.count()).select_from(models.Listing).where(models.Listing.owner_id==user_id))}
+    data={'user':{**user_data(user),'active':user.active,'created_at':user.created_at},'addresses':addresses,'counts':counts,'host':None}
+    if host:
+        printers=[printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==user_id).order_by(models.HostPrinter.id))]
+        data['host']={'status':host.status,'company':host.additional,'reviewed_at':host.reviewed_at,'printers':printers,'inventory':inventory_data(db,user_id)['material_colors']}
+    return data
+
+@router.get('/admin/users/{user_id}/activity')
+def admin_user_activity(user_id: int, type: Literal['all','purchases','completions','cancellations','custom_requests','printing']='all', auth=Depends(admin), db: Session=Depends(get_db)):
+    """Everything the user did, and what happened to their orders, jobs and requests."""
+    if not db.get(models.User,user_id): fail(404,'User not found')
+    orders=list(db.scalars(select(models.Order.id).where(models.Order.buyer_id==user_id)))
+    jobs=list(db.scalars(select(models.PrintingJob.id).where((models.PrintingJob.host_id==user_id)|(models.PrintingJob.order_id.in_(orders)))))
+    requests=list(db.scalars(select(models.CustomRequest.id).where(models.CustomRequest.user_id==user_id)))
+    subjects=[f'order:{i}' for i in orders]+[f'job:{i}' for i in jobs]+[f'request:{i}' for i in requests]+[f'user:{user_id}']
+    query=select(models.Activity).where((models.Activity.actor_id==user_id)|(models.Activity.subject.in_(subjects)))
+    if type=='printing': query=query.where(models.Activity.actor_id==user_id)
+    if type!='all': query=query.where(models.Activity.action.in_(USER_ACTIVITY[type]))
+    rows=db.scalars(query.order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).limit(300)).all()
+    return [{'id':a.id,'actor_id':a.actor_id,'action':a.action,'subject':a.subject,'detail':a.detail,'created_at':a.created_at} for a in rows]
+
 @router.get('/admin/activity')
 def activity(auth=Depends(admin), db: Session=Depends(get_db)):
     return [{'id':a.id,'actor_id':a.actor_id,'action':a.action,'subject':a.subject,'detail':a.detail,'created_at':a.created_at} for a in db.scalars(select(models.Activity).order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).limit(200)).all()]

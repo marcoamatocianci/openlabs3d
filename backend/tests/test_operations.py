@@ -352,6 +352,23 @@ def test_shipping_requires_details_and_only_the_buyer_completes():
     # The completed job stays in the host's list, with its shipment.
     finished=next(j for j in host.get('/api/host/jobs').json() if j['id']==first)
     assert finished['status']=='completed' and finished['shipment']['carrier']=='DHL Express'
+    # Admin user profile: account info, host printing specs and filterable activity.
+    host_id=host.get('/api/auth/me').json()['user']['id']
+    assert buyer.get(f'/api/admin/users/{buyer_id}').status_code==403
+    profile=admin.get(f'/api/admin/users/{buyer_id}').json()
+    assert profile['user']['email']=='shipping-buyer@example.org' and profile['counts']['orders']==1 and profile['addresses']==[]
+    hosted=admin.get(f'/api/admin/users/{host_id}').json()
+    assert hosted['host']['status']=='approved' and hosted['host']['printers'] and hosted['host']['inventory']['PLA']=={'black':'#000000'}
+    def actions(uid,kind='all'): return [e['action'] for e in admin.get(f'/api/admin/users/{uid}/activity?type={kind}').json()]
+    assert set(actions(buyer_id,'purchases'))=={'order.created'}
+    assert set(actions(buyer_id,'completions'))=={'job.completed','order.completed'}
+    assert actions(buyer_id,'cancellations')==[] and actions(buyer_id,'custom_requests')==[]
+    assert set(actions(host_id,'printing'))=={'job.accepted','job.printing','job.ready','job.shipped'} and actions(host_id,'printing').count('job.shipped')==2
+    general=actions(buyer_id)
+    assert 'order.created' in general and 'job.shipped' in general  # What happened to the buyer's order.
+    assert 'job.completed' in actions(host_id,'completions')  # The host sees completions of its jobs.
+    assert admin.get(f'/api/admin/users/{buyer_id}/activity?type=bogus').status_code==422
+    assert admin.get('/api/admin/users/999999').status_code==404
 
 
 def test_buyer_changes_delivery_address_until_something_ships():

@@ -169,6 +169,7 @@ def profile(body: Profile, auth=Depends(mutate), db: Session=Depends(get_db)):
         if value is not None: setattr(auth[0],key,value)
     # One public name: the username. The legacy display_name column is kept in step, never edited.
     auth[0].display_name=auth[0].username
+    db.add(models.Activity(actor_id=auth[0].id,action='profile.updated',subject=f'user:{auth[0].id}',detail=', '.join(sorted(body.model_dump(exclude_unset=True,exclude={'display_name'})))[:1000]))
     try: db.commit()
     except IntegrityError: db.rollback();fail(409,'Username is already in use')
     return user_data(auth[0])
@@ -191,6 +192,7 @@ def save_address(address_id: int, body: Address, auth=Depends(mutate), db: Sessi
     if data['is_default']: db.execute(update(models.UserAddress).where(models.UserAddress.user_id==auth[0].id).values(is_default=False))
     for key,value in data.items(): setattr(row,key,value)
     db.add(row)
+    db.add(models.Activity(actor_id=auth[0].id,action='address.saved',subject=f'user:{auth[0].id}',detail=data['label'] or data['city']))
     try: db.commit()
     except IntegrityError: db.rollback();fail(409,'Address changed concurrently. Try again.')
     return address_data(row)
@@ -199,6 +201,7 @@ def remove_address(address_id: int, auth=Depends(mutate), db: Session=Depends(ge
     row=db.get(models.UserAddress,address_id)
     if not row or row.user_id!=auth[0].id: fail(404,'Address not found')
     was_default=row.is_default;db.delete(row);db.flush()
+    db.add(models.Activity(actor_id=auth[0].id,action='address.deleted',subject=f'user:{auth[0].id}',detail=row.label or row.city))
     if was_default:
         oldest=db.scalar(select(models.UserAddress).where(models.UserAddress.user_id==auth[0].id).order_by(models.UserAddress.id))
         if oldest: oldest.is_default=True
