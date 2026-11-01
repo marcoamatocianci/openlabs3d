@@ -13,7 +13,9 @@ async (page) => {
   const json=async(context,path)=>(await context.request.get(base+path)).json();
   const approved=await json(hc,'/api/host/equipment');
   const listing=(await json(hc,'/api/listings')).items?.[0]?.id;
-  const colors=async()=>listing?Object.keys((await json(hc,`/api/listings/${listing}/availability`)).colors||{}):[];
+  // What buyers are offered: read anonymously (a host is never offered colours only its own printers can make).
+  const guest=await page.context().browser().newContext();
+  const colors=async()=>listing?Object.keys((await json(guest,`/api/listings/${listing}/availability`)).colors||{}):[];
   const marketplace=await colors();
   const isHost=async()=>(await json(hc,'/api/auth/me')).user.role==='host';
 
@@ -84,7 +86,7 @@ async (page) => {
   const resubmitted=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
   await h.getByRole('button',{name:'Submit for approval',exact:true}).click();assert((await resubmitted).ok(),'Resubmitted');
   await a.reload();await a.getByRole('button',{name:'Approve equipment update'}).waitFor();
-  assert(await a.locator('.approvals-tabs .segment[aria-pressed=true]').innerText().then(t=>t.startsWith('Equipment updates')),'Equipment tab selected');
+  assert(await a.locator('.approvals-tabs .chip[aria-current]').innerText().then(t=>t.startsWith('Equipment updates')),'Equipment tab selected');
   const accepted=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/approve'));
   await a.getByRole('button',{name:'Approve equipment update'}).click();assert((await accepted).ok(),'Approved');
   assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');

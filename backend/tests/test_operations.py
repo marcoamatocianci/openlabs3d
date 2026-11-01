@@ -262,24 +262,31 @@ def test_buyer_order_pages_filters_and_snapshots():
         db.add(Order(buyer_id=other_id,reference='QA-HISTORY-PRIVATE',idempotency_key='private-history',contact=CONTACT,address=ADDRESS,total_cents=0))
         db.commit()
     path='/api/orders?paginated=true&per_page=2'
+    # Current orders by default: everything not completed or cancelled, newest first.
     data=buyer.get(path).json()
-    assert data['counts']=={'all':7,'pending':1,'accepted':1,'in-production':2,'shipped':1,'completed':1,'cancelled':1}
-    assert data['pages']==4 and len(data['items'])==2
-    assert [o['status'] for o in data['items']]==['cancelled','completed']
-    assert buyer.get(path+'&page=2').json()['items'][0]['status']=='shipped'
+    groups=lambda d,scope:{g['key']:g['count'] for g in d['scopes'][scope]['groups']}
+    assert data['scope']=='active' and data['scopes']['active']['total']==5 and data['scopes']['history']['total']==2
+    assert groups(data,'active')=={'pending':1,'in-progress':3,'shipping':1} and groups(data,'history')=={'completed':1,'cancelled':1}
+    assert data['pages']==3 and [o['status'] for o in data['items']]==['shipped','ready']
+    assert buyer.get(path+'&page=2').json()['items'][0]['status']=='printing'
     assert buyer.get(path+'&sort=oldest').json()['items'][0]['status']=='pending'
-    assert buyer.get(path+'&page=999').json()['page']==4
-    for category,statuses in [('pending',['pending']),('accepted',['accepted']),('in-production',['printing','ready']),('shipped',['shipped']),('completed',['completed']),('cancelled',['cancelled'])]:
-        filtered=buyer.get(path+'&category='+category+'&sort=oldest').json()
-        assert [o['status'] for o in filtered['items']]==statuses
-        assert filtered['counts']==data['counts']
-    item=data['items'][0]['items'][0]
+    assert buyer.get(path+'&page=999').json()['page']==3
+    for scope,group,statuses in [('active','pending',['pending']),('active','in-progress',['accepted','printing']),('active','shipping',['shipped']),
+                                 ('history','all',['completed','cancelled']),('history','completed',['completed']),('history','cancelled',['cancelled'])]:
+        filtered=buyer.get(path+f'&scope={scope}&group={group}&sort=oldest').json()
+        assert [o['status'] for o in filtered['items']]==statuses, (scope,group)
+        assert filtered['scopes']==data['scopes']  # Counts do not depend on the filter.
+    item=buyer.get(path+'&scope=history&group=completed').json()['items'][0]['items'][0]
     assert (item['title'],item['material'],item['color'],item['quantity'],item['price_cents'])==('Original rack','PLA','orange',2,1200)
-    assert other.get(path).json()['counts']['all']==1
+    # Search by reference or product name, within the selected scope.
+    assert [o['reference'] for o in buyer.get(path+'&scope=history&q=history-5').json()['items']]==['QA-HISTORY-5']
+    assert buyer.get(path+'&scope=history&q=original').json()['total']==2 and buyer.get(path+'&q=nothing-like-this').json()['total']==0
+    assert other.get(path).json()['scopes']['active']['total']==1
     assert other.get(path).json()['items'][0]['reference']=='QA-HISTORY-PRIVATE'
     assert TestClient(app).get(path).status_code==401
-    assert buyer.get(path+'&category=unknown').status_code==422
-    assert buyer.get(path+'&category=in-progress').status_code==422
+    assert buyer.get(path+'&group=unknown').status_code==422
+    assert buyer.get(path+'&scope=history&group=pending').status_code==422
+    assert buyer.get(path+'&scope=archive').status_code==422
     assert buyer.get('/api/orders?paginated=true&per_page=1000').status_code==422
     assert len(buyer.get('/api/orders').json())==7  # Original client contract remains valid.
 
@@ -410,3 +417,93 @@ def test_buyer_changes_delivery_address_until_something_ships():
     assert change(other,'open',tok=other_token).status_code==404
     assert buyer.put(f'/api/orders/{ids["open"]}/address',json=new).status_code==403
     assert buyer.put('/api/orders/999999/address',json=new,headers=headers(token)).status_code==404
+
+
+def test_active_work_and_history_follow_the_authoritative_status():
+    """Completed and cancelled work leaves the active lists by itself; nothing is flagged or removed."""
+    from app.models import Order, CustomRequest
+    buyer, host = TestClient(app), TestClient(app)
+    buyer_token=register(buyer,'history-scope-buyer@example.org',host=True)
+    host_token=register(host,'history-scope-host@example.org')
+    admin,admin_token=admin_client()
+    host_id=structured_application(host,host_token).json()['id']
+    assert admin.post(f'/api/admin/hosts/{host_id}/approve',json={},headers=headers(admin_token)).status_code==200
+    stock(host,host_token)
+    lines=[]
+    for title in ('Scope rack A','Scope rack B','Scope rack C'):
+        listing=buyer.post('/api/listings',json={'title':title,'description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
+        upload_test_cad(buyer,listing['id'],buyer_token)
+        buyer.post(f'/api/listings/{listing["id"]}/submit',headers=headers(buyer_token))
+        assert admin.post(f'/api/admin/listings/{listing["id"]}/approve',headers=headers(admin_token)).status_code==200
+        lines.append({'listing_id':listing['id'],'quantity':1,'color':'black','expected_price_cents':1200})
+    order=buyer.post('/api/orders',json={'idempotency_key':'history_scope_order_1','contact':CONTACT,'address':ADDRESS,'items':lines[:2]},headers=headers(buyer_token)).json()
+    done,shipped=[j['id'] for j in order['jobs']]
+    # A second order the host accepted, then cancelled by an administrator before printing.
+    withdrawn=buyer.post('/api/orders',json={'idempotency_key':'history_scope_order_2','contact':CONTACT,'address':ADDRESS,'items':lines[2:]},headers=headers(buyer_token)).json()
+    dropped=withdrawn['jobs'][0]['id']
+    assert host.post(f'/api/host/jobs/{dropped}/accept',headers=headers(host_token)).status_code==200
+    assert admin.post(f'/api/admin/orders/{withdrawn["id"]}/cancel',headers=headers(admin_token)).status_code==200
+    for job in (done,shipped):
+        assert host.post(f'/api/host/jobs/{job}/accept',headers=headers(host_token)).status_code==200
+        for status in ('printing','ready'):
+            assert host.post(f'/api/host/jobs/{job}/status',json={'status':status},headers=headers(host_token)).status_code==200
+        ship_job(host,host_token,job)
+    assert buyer.post(f'/api/orders/{order["id"]}/jobs/{done}/received',headers=headers(buyer_token)).status_code==200
+    jobs=lambda q:host.get('/api/host/jobs?'+q).json()
+    # Host: shipped work stays active until the buyer confirms; completed and cancelled go to history.
+    active=jobs('scope=active')
+    assert {j['id'] for j in active['items']}>={shipped} and not {done,dropped}&{j['id'] for j in active['items']}
+    assert {g['key']:g['count'] for g in active['scopes']['active']['groups']}['shipped']==1
+    assert [j['id'] for j in jobs('scope=active&group=shipped')['items']]==[shipped]
+    history=jobs('scope=history')
+    assert {j['id'] for j in history['items']}=={done,dropped} and history['scopes']['history']['total']==2
+    assert [j['id'] for j in jobs('scope=history&group=cancelled')['items']]==[dropped]
+    finished=next(j for j in history['items'] if j['id']==done)
+    assert finished['status']=='completed' and finished['shipment']['tracking_number']=='JD0146000032' and finished['item']['material']=='PETG'
+    assert finished['item']['listing_version'] is not None and finished['fulfillment']['address']
+    assert host.get(f'/api/jobs/{done}/cad').status_code==403 and host.get(f'/api/jobs/{dropped}/cad').status_code==403, 'history grants no manufacturing access'
+    assert host.post(f'/api/host/jobs/{dropped}/status',json={'status':'printing'},headers=headers(host_token)).status_code==409
+    assert jobs('scope=history&q=Scope rack A')['total']==1 and jobs('scope=history&q=nothing')['total']==0
+    assert host.get('/api/host/jobs?scope=history&group=available').status_code==422
+    assert any(j['id']==done for j in host.get('/api/host/jobs').json()), 'the original list contract is unchanged'
+    # Buyer: the order is shipped (all remaining jobs shipped or done), so still current.
+    current=buyer.get('/api/orders?paginated=true').json()
+    assert [o['id'] for o in current['items']]==[order['id']] and current['items'][0]['status']=='shipped'
+    assert [o['id'] for o in buyer.get('/api/orders?paginated=true&scope=history&group=cancelled').json()['items']]==[withdrawn['id']]
+    # Admin orders: active and history, server-side, with the eligibility data the page shows.
+    admin_orders=lambda q:admin.get('/api/admin/orders?paginated=true&'+q).json()
+    assert order['id'] in [o['id'] for o in admin_orders('scope=active&group=shipping')['items']]
+    assert order['id'] not in [o['id'] for o in admin_orders('scope=history')['items']]
+    assert isinstance(admin.get('/api/admin/orders').json(),list)
+    assert buyer.get('/api/admin/orders?paginated=true').status_code==403
+    assert buyer.post(f'/api/orders/{order["id"]}/jobs/{shipped}/received',headers=headers(buyer_token)).status_code==200
+    with SessionLocal() as db: assert db.get(Order,order['id']).status=='completed'
+    assert order['id'] in [o['id'] for o in admin_orders('scope=history&group=completed')['items']]
+    assert order['id'] not in [o['id'] for o in admin_orders('scope=active')['items']]
+    assert order['id'] in [o['id'] for o in buyer.get('/api/orders?paginated=true&scope=history').json()['items']]
+    assert admin_orders('scope=history&q='+order['reference'])['total']==1
+    # Custom requests: accepted (quoted) stays active; closed is history; reopening brings it back.
+    rid=buyer.post('/api/custom-requests',data={'payload':__import__('json').dumps({'idempotency_key':'history_scope_request','title':'Scope holder','application':'A holder used to test active and history lists.','dimensions':'10 x 10 x 10 mm','quantity':1})},headers=headers(buyer_token)).json()['id']
+    def request_scope():
+        mine=buyer.get('/api/custom-requests?scope=active').json()
+        return 'active' if rid in [r['id'] for r in mine['items']] else 'history' if rid in [r['id'] for r in buyer.get('/api/custom-requests?scope=history').json()['items']] else None
+    for status,expected in (('quoted','active'),('closed','history'),('under_review','active')):
+        assert admin.patch(f'/api/admin/custom-requests/{rid}',json={'status':status},headers=headers(admin_token)).status_code==200
+        assert request_scope()==expected, status
+    assert isinstance(buyer.get('/api/custom-requests').json(),list)
+    assert admin.get('/api/admin/custom-requests?scope=active&group=under_review').json()['items'][0]['id']==rid
+    with SessionLocal() as db: assert db.get(CustomRequest,rid) is not None
+    # Approval History: each review decision, with its reviewer and reason; pending queues are unaffected.
+    pending=buyer.post('/api/listings',json={'title':'Scope rejected','description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
+    upload_test_cad(buyer,pending['id'],buyer_token); buyer.post(f'/api/listings/{pending["id"]}/submit',headers=headers(buyer_token))
+    assert admin.post(f'/api/admin/listings/{pending["id"]}/reject',json={'reason':'Missing drawings'},headers=headers(admin_token)).status_code==200
+    history=admin.get('/api/admin/approvals/history?type=listings').json()
+    rejected=next(i for i in history['items'] if i['title']=='Scope rejected')
+    assert rejected['decision']=='rejected' and rejected['reason']=='Missing drawings' and rejected['reviewer'] and rejected['submitter']
+    assert all(i['type']=='listings' for i in history['items'])
+    hosts=admin.get('/api/admin/approvals/history?type=hosts').json()['items']
+    assert any(i['decision']=='approved' and i['link']=='admin/users/'+str(host.get('/api/auth/me').json()['user']['id']) for i in hosts)
+    everything=admin.get('/api/admin/approvals/history?per_page=2').json()
+    assert everything['total']==sum(everything['counts'].values()) and len(everything['items'])==2 and everything['pages']>=2
+    assert buyer.get('/api/admin/approvals/history').status_code==403
+    assert admin.get('/api/admin/approvals/history?type=orders').status_code==422

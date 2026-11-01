@@ -1,4 +1,4 @@
-from .availability import supports, host_shades, matches
+from .availability import job_ineligibility
 """Persistent host, order and marketplace administration workflows."""
 import uuid
 from datetime import datetime, timezone
@@ -215,7 +215,8 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
     if any(products[i].currency != 'EUR' for i in ids): fail(422,'Unsupported currency')
     from .pricing import quote
     from .manufacturing import snapshot
-    quotes=[quote(products[line.listing_id],line.material,line.color,line.quantity) for line in body.items]
+    # Every line must be made by a host other than the buyer (pricing.options).
+    quotes=[quote(products[line.listing_id],line.material,line.color,line.quantity,auth[0].id) for line in body.items]
     if any(q['unit_price_cents'] != line.expected_price_cents for q,line in zip(quotes,body.items)): fail(409,'Price changed. Refresh the basket before ordering.')
     order = models.Order(reference='OL3D-'+uuid.uuid4().hex[:16].upper(), buyer_id=auth[0].id, idempotency_key=body.idempotency_key, contact=body.contact, address=body.address, total_cents=sum(q['total_cents'] for q in quotes), currency='EUR')
     try:
@@ -236,14 +237,30 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
         return order_data(existing,db)
     return order_data(order,db)
 
-# My Orders sections: awaiting a host, accepted (waiting for printing), in production, shipped, completed, cancelled.
-ORDER_GROUPS = {'pending':('pending',), 'accepted':('accepted',), 'in-production':('printing','ready'),
-                'shipped':('shipped',), 'completed':('completed',), 'cancelled':('cancelled',)}
+def order_search(query, q):
+    """Orders whose reference or a product title contains q (case-insensitive)."""
+    q=(q or '').strip()
+    if not q: return query
+    like=f'%{q}%'
+    return query.where(models.Order.reference.ilike(like) | exists(select(models.OrderItem.id).where(models.OrderItem.order_id==models.Order.id, models.OrderItem.title.ilike(like))))
+
+def scoped_page(db, query, column, scopes, scope, group, page, per_page, *where):
+    """One page of a Current/History list, with the counts of both scopes for the navigation."""
+    from .lifecycle import statuses, summary, count_by_status, page_bounds
+    try: wanted=statuses(scopes, scope, group)
+    except ValueError: fail(422, 'Unknown status group')
+    counts=summary(scopes, count_by_status(db, column, *where))
+    query=query.where(column.in_(wanted))
+    total=db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    page,pages,offset=page_bounds(total, page, per_page)
+    return query.offset(offset).limit(per_page), {'scope':scope, 'group':group or 'all', 'scopes':counts, 'total':total, 'page':page, 'pages':pages, 'per_page':per_page}
 
 @router.get('/orders')
 def my_orders(auth=Depends(require), db: Session=Depends(get_db),
-              paginated:bool=False, category:Literal['all','pending','accepted','in-production','shipped','completed','cancelled']='all',
+              paginated:bool=False, scope:Literal['active','history']='active', group:str='all', q:str=Query('',max_length=80),
               sort:Literal['newest','oldest']='newest', page:int=Query(1,ge=1), per_page:int=Query(10,ge=1,le=50)):
+    """Without paginated: every order (original contract). With it: Current orders (scope=active, the
+    default) or Previous orders (scope=history), one status group, optional search, one page."""
     if auth[0].role=='admin': fail(403, 'Use marketplace order management')
     owned=models.Order.buyer_id==auth[0].id
     query=select(models.Order).options(selectinload(models.Order.items)).where(owned)
@@ -252,15 +269,9 @@ def my_orders(auth=Depends(require), db: Session=Depends(get_db),
     # Preserve the original list contract for existing clients. The buyer UI opts into bounded pages.
     if not paginated:
         return orders_data(db.scalars(query).all(),db)
-    by_status=dict(db.execute(select(models.Order.status,func.count()).where(owned).group_by(models.Order.status)).all())
-    counts={'all':sum(by_status.values()), **{key:sum(by_status.get(s,0) for s in statuses) for key,statuses in ORDER_GROUPS.items()}}
-    if category!='all':query=query.where(models.Order.status.in_(ORDER_GROUPS[category]))
-    total=counts[category]
-    pages=max(1,(total+per_page-1)//per_page)
-    page=min(page,pages)
-    orders=db.scalars(query.offset((page-1)*per_page).limit(per_page)).all()
-    return {'items':orders_data(orders,db), 'counts':counts, 'total':total,
-            'page':page, 'pages':pages, 'per_page':per_page}
+    from .lifecycle import ORDER_SCOPES
+    query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page, owned)
+    return {'items':orders_data(db.scalars(query).all(),db), 'q':q.strip(), **meta}
 
 # Once any product has left the host, the delivery address is fixed.
 ADDRESS_LOCKED = ('shipped','completed')
@@ -283,33 +294,81 @@ def change_order_address(order_id: int, body: dict, auth=Depends(mutate), db: Se
     log(db,auth[0].id,'order.address_changed',f'order:{order_id}'); db.commit(); db.refresh(order)
     return order_data(order,db)
 
-@router.get('/host/jobs')
-def host_jobs(auth=Depends(require), db: Session=Depends(get_db)):
-    active_host(auth,db)
-    jobs=db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where((models.PrintingJob.status=='available') | (models.PrintingJob.host_id==auth[0].id)).order_by(models.PrintingJob.id.desc())).all()
-    result=[];eligible={}
+# Why a host may not accept a job (availability.job_ineligibility), as the host is told.
+REFUSALS = {'own_order':'This job comes from your own order. Printing hosts cannot accept jobs from their own orders.',
+            'host':'An approved active host account is required',
+            'printer':'None of your approved printers is large enough for this product as it was ordered',
+            'material':'None of your approved printers that fit this product can print {material} from your stock',
+            'color':'You do not stock {material} in the ordered colour ({color}) for a printer that fits this product'}
+# The same reasons as administrators see them, per host.
+ADMIN_REASONS = {'own_order':'buyer of this order', 'host':'not an active approved host', 'printer':'no approved printer large enough',
+                 'material':'no fitting printer offers {material}', 'color':'does not stock {material} {color}'}
+
+def refusal(reasons, code, item):
+    from .availability import split_color
+    name, shade = split_color(item.color)
+    return reasons[code].format(material=item.material, color=' '.join(filter(None, [name.replace('-', ' '), item.color_hex or shade])))
+
+def eligibility(db, job, hosts):
+    """Every approved host and why each may not take this available job ('' when they may)."""
+    return [{'host_id':uid, 'reason':'' if not (code := job_ineligibility(job, uid)) else refusal(ADMIN_REASONS, code, job.item)} for uid in hosts]
+
+def host_job_rows(db, jobs, me):
+    orders={o.id:o for o in db.scalars(select(models.Order).where(models.Order.id.in_({j.order_id for j in jobs})))}
+    result=[]
     for job in jobs:
-        if job.host_id != auth[0].id:
-            # Same rule as supports(), evaluated once per product instead of once per job.
-            listing_id=job.item.listing_id
-            if listing_id not in eligible: eligible[listing_id]=host_shades(db.get(models.Listing,listing_id),auth[0].id)
-            if not matches(eligible[listing_id],job.item.material,job.item.color,job.item.color_hex): continue
+        # Available jobs are listed only when this host may take them now: never their own orders,
+        # and only with one approved printer that fits the line and stocks its exact material and shade.
+        if job.host_id != me and job_ineligibility(job, me): continue
         item=job_data(job)
-        if job.host_id==auth[0].id and job.status in ('accepted','printing','ready','shipped','completed'):
-            order=db.get(models.Order,job.order_id)
+        if job.host_id==me and job.status in ('accepted','printing','ready','shipped','completed'):
+            order=orders[job.order_id]
             item['fulfillment']={'contact':order.contact,'address':order.address}
         result.append(item)
     return result
+
+@router.get('/host/jobs')
+def host_jobs(auth=Depends(require), db: Session=Depends(get_db), scope:Literal['active','history']|None=None, group:str='all',
+              q:str=Query('',max_length=80), page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+    """Without scope: every listed job (original contract). scope=active: the operational list (available
+    jobs this host may take, and its own jobs not yet completed or cancelled), unpaginated because it is
+    bounded by current work. scope=history: its completed and cancelled jobs, newest first, by page."""
+    from .lifecycle import JOB_SCOPES, statuses, summary, page_bounds
+    active_host(auth,db)
+    me=auth[0].id
+    base=select(models.PrintingJob).options(selectinload(models.PrintingJob.item))
+    if scope is None:
+        return host_job_rows(db, db.scalars(base.where((models.PrintingJob.status=='available') | (models.PrintingJob.host_id==me)).order_by(models.PrintingJob.id.desc())).all(), me)
+    try: wanted=statuses(JOB_SCOPES, scope, group)
+    except ValueError: fail(422, 'Unknown status group')
+    mine=dict(db.execute(select(models.PrintingJob.status,func.count()).where(models.PrintingJob.host_id==me).group_by(models.PrintingJob.status)).all())
+    active=host_job_rows(db, db.scalars(base.where((models.PrintingJob.status=='available') | ((models.PrintingJob.host_id==me) & models.PrintingJob.status.in_(statuses(JOB_SCOPES,'active')))).order_by(models.PrintingJob.id.desc())).all(), me)
+    # Counts: available jobs are the ones this host may take (after eligibility), the rest are its own.
+    counts=summary(JOB_SCOPES, {**mine, 'available':sum(1 for j in active if j['status']=='available')})
+    if scope=='active':
+        items=[j for j in active if j['status'] in wanted]
+        return {'items':items, 'scope':scope, 'group':group or 'all', 'scopes':counts, 'total':len(items), 'page':1, 'pages':1, 'per_page':len(items)}
+    query=base.where(models.PrintingJob.host_id==me, models.PrintingJob.status.in_(wanted))
+    if q.strip(): query=query.where(models.PrintingJob.item.has(models.OrderItem.title.ilike(f'%{q.strip()}%')))
+    total=db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
+    page,pages,offset=page_bounds(total, page, per_page)
+    jobs=db.scalars(query.order_by(models.PrintingJob.updated_at.desc(),models.PrintingJob.id.desc()).offset(offset).limit(per_page)).all()
+    return {'items':host_job_rows(db, jobs, me), 'scope':scope, 'group':group or 'all', 'q':q.strip(), 'scopes':counts, 'total':total, 'page':page, 'pages':pages, 'per_page':per_page}
 
 @router.post('/host/jobs/{job_id}/accept')
 def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
     active_host(auth,db)
     job=db.get(models.PrintingJob,job_id)
     if not job: fail(404,'Job not found')
-    if not supports(db.get(models.Listing,job.item.listing_id),job.item.material,job.item.color,auth[0].id,job.item.color_hex): fail(403,'Your approved equipment cannot manufacture this material, color and product size')
+    # Revalidated now, from current equipment and stock. The request holds SQLite's write lock
+    # (database.get_db), so nothing can change between this check and the claim below.
+    code=job_ineligibility(job, auth[0].id)
+    if code=='unavailable': fail(409,'This job is no longer available')
+    if code: fail(403, refusal(REFUSALS, code, job.item))
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
-    order_active=exists(select(models.Order.id).where(models.Order.id==models.PrintingJob.order_id,models.Order.status!='cancelled'))
-    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.status=='available',models.PrintingJob.host_id.is_(None),host_active,order_active).values(status='accepted',host_id=auth[0].id,updated_at=datetime.now(timezone.utc))).rowcount
+    # The claim itself also refuses the buyer's own jobs, independently of the check above.
+    order_open=exists(select(models.Order.id).where(models.Order.id==models.PrintingJob.order_id,models.Order.status!='cancelled',models.Order.buyer_id!=auth[0].id))
+    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.status=='available',models.PrintingJob.host_id.is_(None),host_active,order_open).values(status='accepted',host_id=auth[0].id,updated_at=datetime.now(timezone.utc))).rowcount
     if changed != 1: fail(409,'This job is no longer available')
     sync_order(db,job.order_id); log(db,auth[0].id,'job.accepted',f'job:{job_id}'); db.commit(); db.refresh(job)
     return job_data(job)
@@ -345,10 +404,50 @@ def confirm_received(order_id: int, job_id: int, auth=Depends(mutate), db: Sessi
     db.commit(); db.refresh(order)
     return order_data(order,db)
 
+def approved_hosts(db):
+    return list(db.scalars(select(models.HostApplication.user_id).where(models.HostApplication.status=='approved').order_by(models.HostApplication.user_id)))
+
+def self_assigned(db):
+    """Jobs held by their own buyer: assigned before hosts were barred from their own orders.
+    Reported to administrators only; never cancelled or reassigned automatically."""
+    return select(models.PrintingJob.id).join(models.Order, models.Order.id==models.PrintingJob.order_id).where(models.PrintingJob.host_id==models.Order.buyer_id)
+
+def self_assigned_open(db):
+    """The self-assigned jobs still in work: the ones the overview asks an administrator to review."""
+    return self_assigned(db).where(models.PrintingJob.status.in_(['accepted','printing','ready','shipped']))
+
 @router.get('/admin/orders')
-def all_orders(auth=Depends(admin), db: Session=Depends(get_db)):
-    orders=db.scalars(select(models.Order).options(selectinload(models.Order.items)).order_by(models.Order.created_at.desc())).all()
-    return orders_data(orders,db)
+def all_orders(auth=Depends(admin), db: Session=Depends(get_db), paginated:bool=False, scope:Literal['active','history']='active', group:str='all',
+               q:str=Query('',max_length=80), attention:Literal['own-order','unmatched']|None=None, page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+    """Without paginated: every order (original contract). With it: Active orders or Order history, one
+    status group, optional search by reference or product, one page. attention narrows the list to the
+    orders behind an overview warning: a job held by its own buyer, or an available job no host can take."""
+    query=select(models.Order).options(selectinload(models.Order.items)).order_by(models.Order.created_at.desc(),models.Order.id.desc())
+    meta=None
+    if paginated:
+        from .lifecycle import ORDER_SCOPES
+        if attention:
+            jobs=self_assigned_open(db) if attention=='own-order' else unmatched_job_ids(db)
+            query=query.where(models.Order.id.in_(select(models.PrintingJob.order_id).where(models.PrintingJob.id.in_(jobs))))
+        query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page)
+    data=admin_orders_data(db, db.scalars(query).all())
+    return {'items':data, 'q':q.strip(), 'attention':attention or '', **meta} if meta else data
+
+def admin_orders_data(db, orders):
+    data=orders_data(orders,db)
+    hosts=approved_hosts(db); conflicts=set(db.scalars(self_assigned(db)))
+    for order in data:
+        for job in order['jobs']:
+            job['conflict']='own_order' if job['id'] in conflicts else ''
+            # Available jobs: which hosts can take each one, and why the others cannot.
+            if job['status']=='available': job['eligibility']=eligibility(db, db.get(models.PrintingJob, job['id']), hosts)
+    return data
+
+@router.get('/admin/jobs/{job_id}/eligibility')
+def job_eligibility(job_id: int, auth=Depends(admin), db: Session=Depends(get_db)):
+    job=db.get(models.PrintingJob,job_id)
+    if not job: fail(404,'Job not found')
+    return {'job_id':job.id, 'status':job.status, 'conflict':'own_order' if job.id in set(db.scalars(self_assigned(db))) else '', 'hosts':eligibility(db, job, approved_hosts(db))}
 
 @router.post('/admin/orders/{order_id}/cancel')
 def cancel_order(order_id: int, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
@@ -457,13 +556,57 @@ def admin_user_activity(user_id: int, type: Literal['all','purchases','completio
     rows=db.scalars(query.order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).limit(300)).all()
     return [{'id':a.id,'actor_id':a.actor_id,'action':a.action,'subject':a.subject,'detail':a.detail,'created_at':a.created_at} for a in rows]
 
+# Approval History: the record of review decisions, read from activity_log (where each decision is
+# logged with its reason). The reviewed hosts, products and printers stay managed in their own pages.
+APPROVAL_DECISIONS = {'hosts':{'host.approve':'approved','host.reject':'rejected'},
+                      'equipment':{'equipment.approve':'approved','equipment.reject':'rejected'},
+                      'listings':{'listing.approved':'approved','listing.rejected':'rejected'},
+                      'printers':{'printer.verified':'verified','printer.suggestion_approved':'added'}}
+
+@router.get('/admin/approvals/history')
+def approval_history(auth=Depends(admin), db: Session=Depends(get_db), type:Literal['all','hosts','equipment','listings','printers']='all',
+                     page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+    from .lifecycle import page_bounds
+    kind_of={action:kind for kind,actions in APPROVAL_DECISIONS.items() for action in actions}
+    by_action=dict(db.execute(select(models.Activity.action,func.count()).where(models.Activity.action.in_(list(kind_of))).group_by(models.Activity.action)).all())
+    counts={kind:sum(by_action.get(a,0) for a in actions) for kind,actions in APPROVAL_DECISIONS.items()}
+    wanted=list(kind_of) if type=='all' else list(APPROVAL_DECISIONS[type])
+    total=sum(counts.values()) if type=='all' else counts[type]
+    page,pages,offset=page_bounds(total, page, per_page)
+    rows=db.scalars(select(models.Activity).where(models.Activity.action.in_(wanted)).order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).offset(offset).limit(per_page)).all()
+    ids=lambda kind:{int(a.subject.split(':')[1]) for a in rows if a.subject.startswith(kind+':') and a.subject.split(':')[1].isdigit()}
+    listings={p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(ids('listing'))))}
+    users={u.id:u for u in db.scalars(select(models.User).where(models.User.id.in_(ids('user')|{a.actor_id for a in rows if a.actor_id}|{p.owner_id for p in listings.values()})))}
+    def item(a):
+        kind,(subject_kind,_,subject_id)=kind_of[a.action],a.subject.partition(':')
+        sid=int(subject_id) if subject_id.isdigit() else None
+        who=users.get(sid) if subject_kind=='user' else None
+        if kind=='listings':
+            p=listings.get(sid); title=p.title if p else f'Listing #{subject_id}'; owner=users.get(p.owner_id) if p else None
+            link=f'product/api-{sid}' if p and p.status=='approved' and not p.removed else ''
+        elif kind=='printers': title,owner,link=a.detail or 'Printer',None,'admin/printers'
+        else:
+            title=f"{'Host application' if kind=='hosts' else 'Equipment update'} · {who.username if who else 'deleted account'}"
+            owner,link=who,(f'admin/users/{sid}' if who else '')
+        return {'id':a.id,'type':kind,'decision':APPROVAL_DECISIONS[kind][a.action],'title':title,'subject':a.subject,
+                'submitter':owner.username if owner else '','reviewer':users[a.actor_id].username if a.actor_id in users else 'System',
+                'reason':a.detail if kind in ('hosts','equipment','listings') else '','created_at':a.created_at,'link':link}
+    return {'items':[item(a) for a in rows],'type':type,'counts':counts,'total':total,'page':page,'pages':pages,'per_page':per_page}
+
 @router.get('/admin/activity')
 def activity(auth=Depends(admin), db: Session=Depends(get_db)):
     return [{'id':a.id,'actor_id':a.actor_id,'action':a.action,'subject':a.subject,'detail':a.detail,'created_at':a.created_at} for a in db.scalars(select(models.Activity).order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).limit(200)).all()]
 
+def unmatched_job_ids(db):
+    """Available jobs no approved host may take at the moment, for example ones only their buyer could make."""
+    hosts=approved_hosts(db)
+    jobs=db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.status=='available')).all()
+    return [job.id for job in jobs if all(job_ineligibility(job, uid) for uid in hosts)]
+
 @router.get('/admin/overview')
 def overview(auth=Depends(admin), db: Session=Depends(get_db)):
+    from .lifecycle import ORDER_SCOPES, statuses as lifecycle_statuses
     def count(model,*where): return db.scalar(select(func.count()).select_from(model).where(*where))
     return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'), 'pending_equipment':count(models.EquipmentRevision,models.EquipmentRevision.status=='pending'),
             'products':count(models.Listing), **{f'products_{s}':count(models.Listing,models.Listing.status==s) for s in ('approved','pending','draft','rejected')},
-            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','shipped','completed','cancelled')}, 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}
+            'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','shipped','completed','cancelled')}, 'orders_active':count(models.Order,models.Order.status.in_(lifecycle_statuses(ORDER_SCOPES,'active'))), 'orders_history':count(models.Order,models.Order.status.in_(lifecycle_statuses(ORDER_SCOPES,'history'))), 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'unmatched_jobs':len(unmatched_job_ids(db)), 'self_assigned_jobs':count(models.PrintingJob,models.PrintingJob.id.in_(self_assigned_open(db))), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}

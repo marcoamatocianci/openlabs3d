@@ -13,8 +13,10 @@ const CR_FILES = {kinds:{stl:'model', '3mf':'model', png:'image', jpg:'image', j
 const crStatus = (s, label) => `<span class="status status-${(CR_STATUS[s] || [])[1] || 'neutral'}">${esc(label || (CR_STATUS[s] || [statusText(s)])[0])}</span>`;
 // What a customer sees: a quoted request is the accepted one (the quotation follows separately).
 const CR_CUSTOMER_LABELS = {quoted:'Accepted · quote sent'};
-const CR_FILTERS = [['', 'All'], ['submitted', 'Submitted'], ['under_review', 'Under review'], ['quoted', 'Accepted']];
-const CR_FILTER_KEY = 'ol3d-cr-filter';
+// My requests: Active requests (submitted, under review, accepted) and Request history (closed), split by
+// the API (app/lifecycle.py). An accepted request stays active: quotation or production work follows.
+inPageRoutes.add('#my-requests');
+const CR_SCOPE_NAMES = {active:'Active requests', history:'Request history'};
 const crSize = bytes => bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 const crDate = value => parseServerDate(value).toLocaleDateString(undefined, {day:'numeric', month:'short', year:'numeric'});
 const crKindIcon = kind => icon(kind === 'model' ? 'cube' : kind === 'image' ? 'camera' : 'doc');
@@ -54,9 +56,13 @@ async function renderCustomRequests(route) {
   const old = $('#app .cr-page');
   if (!old) $('#app').innerHTML = crShell(route, '<div class="ws-loading" role="status"><span class="spinner" aria-hidden="true"></span>Loading…</div>');
   try {
-    const [items] = await Promise.all([api('/custom-requests'), mine ? null : crLoadMaterials()]);
+    const q = hashQuery(), view = {scope:q.scope === 'history' ? 'history' : 'active', group:q.group || 'all'};
+    let data;
+    try { [data] = await Promise.all([api('/custom-requests?' + new URLSearchParams(mine ? view : {scope:'active'})), mine ? null : crLoadMaterials()]); }
+    catch (e) { if (mine && e.status === 422 && view.group !== 'all') { location.replace('#' + scopeHref('my-requests', {scope:view.scope}, {})); return; } throw e; }
     if (stale()) return;
-    $('#app').innerHTML = crShell(route, mine ? crList(items) : crForm(), items.length);
+    // The tab counts the requests still in progress.
+    $('#app').innerHTML = crShell(route, mine ? crList(data) : crForm(), data.scopes.active.total);
     if (mine) crBindList(); else crBindForm();
   } catch (e) {
     if (!stale()) $('#app').innerHTML = crShell(route, `<div class="banner danger" role="alert"><span>${esc(e.message)}</span><button type="button" class="btn-ghost btn-sm" onclick="render()">Try again</button></div>`);
@@ -164,36 +170,34 @@ function crCard(r, open) {
     <p class="cr-status-note cr-tone-${(CR_STATUS[r.status] || [])[1] || 'neutral'}">${esc(CR_STATUS[r.status]?.[2] || '')}</p>
     <details class="bo-details" ${open ? 'open' : ''}><summary aria-label="View details for ${esc(r.reference)}"><span class="bo-open-label">View details</span><span class="bo-close-label">Hide details</span>${icon('chevron')}</summary><div class="bo-detail-body cr-detail">${crDetails(r)}</div></details></article>`;
 }
-function crList(items) {
-  const created = Number(new URLSearchParams(location.hash.split('?')[1] || '').get('created'));
-  if (!items.length) return `<div class="section-card">${emptyState('No custom requests yet', 'Describe a laboratory problem or a tool you need. Your submitted requests and their review status appear here.', '<a class="btn btn-sm" href="#custom">Start a request</a>')}</div>`;
-  let selected = ''; try { selected = sessionStorage.getItem(CR_FILTER_KEY) || ''; } catch (e) {}
-  if (created || !CR_FILTERS.some(([v]) => v === selected)) selected = '';
-  const bar = `<div class="segmented cr-filter" role="group" aria-label="Show requests">${CR_FILTERS.map(([value, label]) => `<button type="button" class="segment" data-cr-filter="${value}" aria-pressed="${value === selected}">${esc(label)}<span class="segment-count">${value ? items.filter(r => r.status === value).length : items.length}</span></button>`).join('')}</div>`;
-  return `${created && items.some(r => r.id === created) ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}${bar}<div class="cr-list">${items.map(r => crCard(r, r.id === created)).join('')}<div class="section-card cr-filter-empty" hidden>${emptyState('No requests here', 'Requests with this status appear here.')}</div></div><p class="sr-only" role="status" id="cr-filter-status"></p>`;
+function crList(data) {
+  const created = Number(hashQuery().created), items = data.items;
+  if (!data.scopes.active.total && !data.scopes.history.total) return `<div class="section-card">${emptyState('No custom requests yet', 'Describe a laboratory problem or a tool you need. Your submitted requests and their review status appear here.', '<a class="btn btn-sm" href="#custom">Start a request</a>')}</div>`;
+  const nav = scopeNav({label:'My requests', base:'my-requests', data, names:CR_SCOPE_NAMES});
+  const label = (data.scopes[data.scope].groups.find(g => g.key === data.group) || {}).label;
+  const empty = data.scope === 'active' && !data.scopes.active.total ? emptyState("You're all caught up", 'No requests in review at the moment. Closed requests are in Request history.', '<a class="btn btn-sm" href="#custom">Start a request</a>')
+    : data.scope === 'history' && !data.scopes.history.total ? emptyState('No request history yet', 'Requests move here once they are closed.')
+    : emptyState(`No ${(label || '').toLowerCase()} requests`, 'None of these requests is at this stage.');
+  return `${created && items.some(r => r.id === created) ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}<div class="cr-scope">${nav.primary}${nav.secondary}</div><div class="cr-list">${items.length ? items.map(r => crCard(r, r.id === created)).join('') : `<div class="section-card">${empty}</div>`}</div>`;
 }
-// Filtering is in place: the list stays, cards outside the chosen status are hidden.
-function crApplyFilter(value, announce = false) {
-  const cards = [...document.querySelectorAll('#app .cr-card')], shown = cards.filter(c => { const on = !value || c.dataset.status === value; c.hidden = !on; return on; });
-  document.querySelectorAll('#app [data-cr-filter]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.crFilter === value)));
-  const empty = $('#app .cr-filter-empty'); if (empty) empty.hidden = shown.length > 0;
-  if (announce) $('#cr-filter-status').textContent = `${shown.length} ${shown.length === 1 ? 'request' : 'requests'}`;
-  try { sessionStorage.setItem(CR_FILTER_KEY, value); } catch (e) {}
-}
-function crBindList() {
-  const pressed = $('#app [data-cr-filter][aria-pressed=true]'); if (pressed) crApplyFilter(pressed.dataset.crFilter);
-  document.querySelectorAll('#app [data-cr-filter]').forEach(b => b.onclick = () => crApplyFilter(b.dataset.crFilter, true));
-  $('#app .cr-card.is-new')?.scrollIntoView({block:'nearest'});
-}
+function crBindList() { $('#app .cr-card.is-new')?.scrollIntoView({block:'nearest'}); }
 
 /* Administrator review: compact list, read-only specification dialog, status and internal notes. */
 let crAdminCache = {};
 adminPages['admin/requests'] = async function(route) {
-  const selected = route.split('/')[2] || '', all = await api('/admin/custom-requests'), items = all.filter(r => !selected || r.status === selected);
-  crAdminCache = Object.fromEntries(all.map(r => [r.id, r])); setNavCount('requests', all.filter(r => r.status === 'submitted').length);
-  const filters = statusFilters('admin/requests', Object.entries(CR_STATUS).map(([k, [label]]) => [k, label]), all);
+  // Active requests (still to review, quote or produce) by default; closed ones in Request history.
+  const q = hashQuery(), legacy = route.split('/')[2], view = legacy ? {scope:legacy === 'closed' ? 'history' : 'active', group:legacy} : {scope:q.scope === 'history' ? 'history' : 'active', group:q.group || 'all'};
+  let data;
+  try { data = await api('/admin/custom-requests?' + new URLSearchParams(view)); }
+  catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + scopeHref('admin/requests', {scope:view.scope}, {})); return {title:'Custom requests', body:''}; } throw e; }
+  const items = data.items;
+  crAdminCache = {...crAdminCache, ...Object.fromEntries(items.map(r => [r.id, r]))}; setNavCount('requests', data.scopes.active.groups.find(g => g.key === 'submitted').count);
+  // Administrators see the internal status name ("Quoted"); customers see it as "Accepted".
+  data.scopes.active.groups.forEach(g => { if (g.key === 'quoted') g.label = CR_STATUS.quoted[0]; });
+  const nav = scopeNav({label:'Custom requests', base:'admin/requests', data, names:{active:'Active requests', history:'Request history'}});
   const row = r => `<article class="list-row" data-search="${esc([r.reference, r.title, r.user.username, r.user.email, r.material].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(r.title)}</span><span class="row-meta"><span class="mono">${esc(r.reference)}</span> · ${esc(userName(r.user))} · ${esc(roleLabel(r.user.role))} · ${esc(crDate(r.created_at))}</span></div><span class="row-value">${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}<small>${r.files.length ? `${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}` : 'No files'}</small></span><span class="row-status">${crStatus(r.status)}</span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" onclick="crReview(${r.id})">Review</button></div></article>`;
-  return {title:'Custom requests', body:`<p class="muted ws-intro">Requests for custom tools from buyers and printing hosts. They are separate from marketplace orders: updating a status never creates an order, price, listing or host assignment.</p>` + toolbar(filterChips('Request status', filters, selected), searchBox('request-list', 'Search title, reference or requester')) + filteredList('request-list', items.map(row), 'No requests here', selected ? 'No requests have this status.' : 'Submitted custom requests appear here.', 'No requests match your search.')};
+  const empty = data.scope === 'active' ? ['No requests to handle', 'Submitted, in-review and accepted requests appear here.'] : ['No closed requests', 'Requests move here once they are closed; reopening one brings it back.'];
+  return {title:'Custom requests', body:`<p class="muted ws-intro">Requests for custom tools from buyers and printing hosts. They are separate from marketplace orders: updating a status never creates an order, price, listing or host assignment.</p>` + nav.primary + toolbar(nav.secondary, items.length ? searchBox('request-list', 'Search title, reference or requester') : '') + filteredList('request-list', items.map(row), ...empty, 'No requests match your search.')};
 };
 function crReview(id) {
   const r = crAdminCache[id]; if (!r) return;

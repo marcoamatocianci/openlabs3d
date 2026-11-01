@@ -145,7 +145,7 @@ button.danger{padding:11px 18px;border:0;border-radius:6px;background:var(--dang
 .ws-list{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}.ws-list[hidden]{display:none}
 .ws-link{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:6px;color:var(--subtle);font-size:13.5px}
 .ws-link:hover{background:var(--hover);color:var(--ink)}
-.ws-link.active{background:var(--accent-soft);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--teal)}
+.ws-link.active{background:var(--accent-soft);color:var(--ink);font-weight:600;box-shadow:inset 2px 0 0 var(--accent-line,var(--teal))}
 .ws-group-toggle{display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:0;border-radius:6px;background:none;color:var(--subtle);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;cursor:pointer}
 .ws-group-toggle:hover{color:var(--ink)}
 .ws-group-toggle .icon{width:14px;height:14px;margin-left:auto;transition:transform .15s}
@@ -217,12 +217,6 @@ a.row-title:hover{color:var(--teal)}
 .status.status-danger{background:var(--danger-bg);color:var(--danger-fg)}
 .status.status-info{background:var(--info-bg);color:var(--info-fg)}
 .status.status-neutral{background:var(--neutral-bg);color:var(--neutral-fg)}
-.chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--subtle);font-size:12.5px;font-weight:500;white-space:nowrap}
-.chip span{padding:1px 6px;border-radius:9px;background:var(--neutral-bg);color:var(--neutral-fg);font-size:11px}
-.chip:hover{border-color:var(--control-border);color:var(--ink)}
-.chip.active{border-color:var(--ink);background:var(--ink);color:var(--surface)}.chip.active span{background:rgba(255,255,255,.2);color:inherit}
-[data-theme=dark] .chip.active{border-color:var(--teal);background:var(--teal);color:#101d30}
 .search-field{position:relative;display:flex;flex:0 1 280px;flex-direction:row;align-items:center;min-width:200px;margin:0}
 .search-field .icon{position:absolute;left:10px;width:16px;height:16px;color:var(--subtle);pointer-events:none}
 .search-field input{width:100%;padding:8px 10px 8px 32px;border-radius:6px;font-size:13px}
@@ -263,7 +257,6 @@ a.row-title:hover{color:var(--teal)}
 @media(max-width:700px){
 .row-value{flex:1 1 auto;text-align:left}.row-actions{margin-left:0}
 .list-head{display:none}.row-narrow{flex:1 1 120px}
-.chips{flex-wrap:nowrap;max-width:100%;overflow-x:auto;scrollbar-width:none}.chips::-webkit-scrollbar{display:none}
 .search-field{flex:1 1 100%}
 }
 
@@ -733,11 +726,6 @@ dialog.eq-drawer{margin:0 0 0 auto;width:min(440px,100vw);max-width:none;height:
 }
 @media(prefers-reduced-motion:reduce){.eq-pop,.eq-colorpop,dialog.eq-drawer,.eq-card,.eq-acc-head>.icon{transition:none;animation:none}}
 /* My Equipment tabs: certified printers vs host-managed stock. */
-.eq-tabs{display:flex;gap:2px;margin:-4px 0 18px;border-bottom:1px solid var(--line)}
-.eq-tab{position:relative;padding:9px 14px 11px;color:var(--subtle);font-size:13.5px;font-weight:600;border-radius:6px 6px 0 0}
-.eq-tab:hover{color:var(--ink);background:var(--hover)}
-.eq-tab[aria-current]{color:var(--ink)}
-.eq-tab[aria-current]::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--teal)}
 .eq-card-caps{display:flex;gap:8px;align-items:baseline;font-size:12px;color:var(--subtle);line-height:1.45}
 .eq-card-caps span{flex:none;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase}
 .eq-caps{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 12px!important}
@@ -971,7 +959,7 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
 :root[data-theme=dark] .bo-address-edit:disabled{background:rgba(255,117,129,.05);border-color:rgba(255,140,150,.22)}
 @media(max-width:720px){.bo-fulfilment{grid-template-columns:1fr}.bo-address-edit{width:40px;height:40px}}
 .bo-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
-.bo-toolbar .chips{margin:0;flex-wrap:wrap}.bo-toolbar .chip{min-height:40px}
+.bo-toolbar .chips{margin:0;flex-wrap:wrap}.bo-toolbar .chip{min-height:44px}
 .cf-select.bo-sort{flex:none;flex-direction:row;align-items:center;gap:10px;min-width:0}.bo-sort .cf-label{white-space:nowrap}.bo-sort .cf-menu{left:auto;right:0;min-width:160px}.bo-sort .cf-trigger{min-width:160px}
 .bo-results{font-size:12px;margin:14px 0 10px;color:var(--subtle)}
 .bo-list{display:grid;gap:14px}.bo-card{padding:0;margin:0;overflow:hidden}
@@ -1133,13 +1121,6 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
 .cr-status-note.cr-tone-info{border-left-color:var(--info-fg)}.cr-status-note.cr-tone-warning{border-left-color:var(--warning-line,var(--warning-fg))}.cr-status-note.cr-tone-success{border-left-color:var(--success-fg)}
 .cr-excerpt{margin:12px 22px 0!important}.cr-facts{margin:12px 22px 0!important}
 /* Segmented switch: the chip palette in one track. */
-.segmented{display:inline-flex;flex-wrap:wrap;gap:4px;margin:0 0 16px;padding:4px;border:1px solid var(--line);border-radius:999px;background:var(--surface)}
-.segment{display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:0 14px;border:0;border-radius:999px;background:none;color:var(--subtle);font-size:12.5px;font-weight:600;cursor:pointer;transition:background-color .15s,color .15s}
-.segment:hover{background:var(--hover);color:var(--ink)}
-.segment[aria-pressed=true]{background:var(--ink);color:var(--surface)}
-[data-theme=dark] .segment[aria-pressed=true]{background:var(--teal);color:#101d30}
-.segment-count{display:inline-grid;place-items:center;min-width:20px;height:18px;padding:0 6px;border-radius:999px;background:var(--neutral-bg);color:var(--neutral-fg);font-size:11px;font-weight:700}
-.segment[aria-pressed=true] .segment-count{background:rgba(255,255,255,.2);color:inherit}
 .cr-filter-empty[hidden],.cr-card[hidden]{display:none}
 .cr-detail{padding:0 20px 8px}
 .cr-text{margin:0;white-space:pre-line;font-size:13.5px;line-height:1.6;color:var(--ink);overflow-wrap:anywhere}
@@ -1196,7 +1177,7 @@ dialog.ae-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .ae-preview svg,.ae-preview img{display:block;width:100%;height:100%;object-fit:cover}
 .ae-preview>.avatar{width:100%;height:100%}
 .ae-caption{margin:4px 0 0;font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--subtle)}
-.ae-mode{display:grid;grid-template-columns:1fr 1fr;width:100%;gap:4px;margin:6px 0 0;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
+.ae-mode{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:4px;margin:6px 0 0;padding:4px;border:1px solid var(--line);border-radius:10px;background:var(--paper)}
 .ae-mode label{position:relative;margin:0;cursor:pointer}
 .ae-mode span{display:flex;align-items:center;justify-content:center;gap:7px;min-height:42px;padding:8px;border-radius:7px;font-size:12.5px;font-weight:600;color:var(--subtle);transition:background .15s,color .15s}
 .ae-mode .icon{width:16px;height:16px}.ae-mode input:checked+span{background:var(--surface);box-shadow:0 1px 4px #0001;color:var(--ink)}
@@ -1239,8 +1220,6 @@ dialog.ae-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 :root{--accent-line:color-mix(in srgb,var(--teal) 45%,transparent)}
 .topbar .nav-link::after{height:2px;background:var(--accent-line)}
 .topbar .nav-link:hover::after{opacity:.5}
-.eq-tab[aria-current]::after{background:var(--accent-line)}
-.ws-link.active{box-shadow:inset 2px 0 0 var(--accent-line)}
 .address-option input:checked+.address-card{border-color:var(--accent-line);box-shadow:inset 0 0 0 1px var(--accent-line)}
 .material-choice input:checked+span{border-color:var(--accent-line);box-shadow:inset 0 0 0 1px var(--accent-line)}
 .eq-color-option[aria-selected=true],.ae-variant:has(input:checked){border-color:var(--accent-line)}
@@ -1433,3 +1412,77 @@ a.segment{text-decoration:none}
 .bo-progress .current{color:var(--ink)}.bo-progress .current span{background:var(--teal)}
 .bo-progress .partly span{background:linear-gradient(90deg,var(--teal) 50%,var(--line) 50%)}
 @media(max-width:560px){.bo-progress{padding:10px 14px 0;font-size:10.5px;gap:4px}}
+
+/* Quiet order deletion, secondary to the order details disclosure. */
+
+@media(max-width:700px){
+ .cf-chip{height:auto;min-height:44px;max-width:100%;line-height:1.35;text-align:left}
+ .cf-chip span{flex:none}
+ .le-chip{min-height:44px;max-width:100%}
+}
+
+/* Shared internal pill navigation. Existing classes remain the behavioral hooks. */
+:root{--internal-nav-height:44px;--internal-nav-gap:6px;--internal-nav-radius:999px;--internal-nav-active:#1d3557;--internal-nav-on-active:#f1faee}
+:is(.chips,.segmented,.eq-tabs,.tabs){display:flex;align-items:center;flex-wrap:wrap;gap:var(--internal-nav-gap);min-width:0;max-width:100%;width:fit-content;padding:3px;border:0;border-radius:0;background:transparent;scroll-padding-inline:3px;overscroll-behavior-x:contain}
+.segmented{margin:0 0 16px}.eq-tabs{margin:-4px 0 18px}
+:is(.chip,.segment,.eq-tab,.tabs>a){display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;gap:7px;min-height:var(--internal-nav-height);height:var(--internal-nav-height);padding:0 14px;border:1px solid var(--line);border-radius:var(--internal-nav-radius);background:var(--surface);color:var(--subtle);font-size:12.5px;font-weight:600;line-height:1.2;white-space:nowrap;text-decoration:none;box-shadow:none;transition:background-color .15s,color .15s,border-color .15s}
+:is(.chip,.segment,.eq-tab,.tabs>a):hover{background:var(--hover);border-color:var(--control-border);color:var(--ink)}
+:is(.chip,.segment,.eq-tab,.tabs>a):is(.active,[aria-current],[aria-pressed=true]){background:var(--internal-nav-active);border-color:var(--internal-nav-active);color:var(--internal-nav-on-active);box-shadow:none}
+:is(.chip>span,.segment-count){display:inline-grid;place-items:center;flex:none;min-width:20px;height:20px;padding:0 6px;border-radius:999px;background:var(--neutral-bg);color:var(--neutral-fg);font-size:11px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+:is(.chip,.segment):is(.active,[aria-current],[aria-pressed=true]) :is(.segment-count,span){background:rgba(255,255,255,.18);color:inherit}
+:is(.chip,.segment,.eq-tab,.tabs>a):focus-visible{outline:2px solid var(--focus,var(--teal));outline-offset:-3px}
+.eq-tab[aria-current]::after{content:none}
+@media(max-width:700px){
+ :is(.chips,.segmented,.eq-tabs,.tabs),.bo-toolbar .chips{flex-wrap:nowrap;overflow-x:auto;scrollbar-width:thin}
+ :is(.chip,.segment,.eq-tab,.tabs>a),.bo-toolbar .chip{padding:0 12px;font-size:12.5px}
+}
+@media(prefers-reduced-motion:reduce){:is(.chip,.segment,.eq-tab,.tabs>a){transition:none}}
+/* Admin orders: why approved hosts cannot take an available job, on its own line. */
+.job-list .job-ineligible{flex-basis:100%;font-size:.8rem}
+
+/* Current / History navigation (two levels). Level 1 uses the shared pills; History stays one click
+   away but visually secondary until selected. Level 2 is the status chips of the selected scope. */
+.scope-nav{margin:0 0 12px}
+.scope-nav .segment .icon{width:15px;height:15px;margin:0 -1px 0 -3px}
+.scope-nav .scope-history:not([aria-current]){background:transparent;border-color:transparent;color:var(--subtle)}
+.scope-nav .scope-history:not([aria-current]):hover{background:var(--hover);border-color:var(--line);color:var(--ink)}
+.scope-nav .scope-history:not([aria-current]) .segment-count{background:transparent;box-shadow:inset 0 0 0 1px var(--line)}
+.empty-actions{display:flex;flex-wrap:wrap;justify-content:center;gap:8px}
+/* My orders toolbar: scope switch on top, then status chips with search and sort. */
+.bo-toolbar{display:flex;flex-direction:column;align-items:stretch;gap:0}
+.bo-filters{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px 16px}
+.bo-tools{display:flex;align-items:center;flex-wrap:wrap;gap:10px;margin-left:auto}
+.bo-search{min-width:220px}
+@media(max-width:700px){.bo-tools{margin-left:0;width:100%}.bo-search{flex:1 1 100%}}
+/* Host overview: active jobs as a board of three stages. */
+.hb-board{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+.hb-column{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}
+.hb-column-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.hb-column-head h3{margin:0;font-size:13px;letter-spacing:.06em;text-transform:uppercase}
+.hb-hint{margin:0;color:var(--subtle);font-size:12px}
+.hb-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.hb-card{display:flex;flex-direction:column;gap:6px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.hb-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.hb-card-head strong{font-size:13.5px;overflow-wrap:anywhere}.hb-card-head .status{flex:none}
+.hb-meta{display:flex;align-items:center;gap:6px;margin:0;color:var(--subtle);font-size:12px}
+.hb-actions{display:flex;flex-wrap:wrap;gap:6px}.hb-actions>*{flex:1 1 auto}
+.hb-empty{margin:0;padding:14px 8px;border:1px dashed var(--line);border-radius:10px;color:var(--subtle);font-size:12.5px;text-align:center}
+.hb-section .card-head .textlink{display:inline-flex;align-items:center;gap:5px}.hb-section .card-head .icon{width:15px;height:15px}
+@media(max-width:1000px){.hb-board{grid-template-columns:1fr}}
+/* Approval history: one decision per row. */
+.decision-row .decision-time{flex:none;color:var(--subtle);font-size:12px;white-space:nowrap}
+.bo-toolbar>*,.bo-filters>*{min-width:0;max-width:100%}
+.bo-tools{flex:1 1 auto;justify-content:flex-end;flex-wrap:nowrap}.bo-tools .search-field{flex:0 1 280px;width:auto;min-width:0}
+@media(max-width:700px){.bo-tools{flex-wrap:wrap;justify-content:flex-start}.bo-tools .search-field{flex:1 1 100%}}
+/* Admin orders: fixed columns, so totals, statuses and actions line up from row to row. */
+.list-row.order-row{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) 90px 110px 130px;align-items:center;gap:6px 16px}
+.order-row>.row-main,.order-row>.row-value,.order-row>.row-status{flex:none;min-width:0}
+.order-row .row-actions{margin:0;justify-content:flex-end}.order-row .row-details{grid-column:1/-1}
+@media(max-width:900px){.list-row.order-row{grid-template-columns:minmax(0,1fr) auto}.order-row>.row-main:first-child,.order-row .row-summary{grid-column:1/-1}.order-row .row-actions{grid-column:1/-1;justify-content:flex-start}}
+.list-row.decision-row{display:grid;grid-template-columns:minmax(0,1fr) 140px 170px;align-items:center;gap:6px 16px}
+.decision-row>.row-main{min-width:0}.decision-row .row-status{justify-content:flex-start}.decision-row .decision-time{text-align:right}
+@media(max-width:700px){.list-row.decision-row{grid-template-columns:minmax(0,1fr) auto}.decision-row .decision-time{grid-column:1/-1;text-align:left}}
+.cr-scope{margin:0 0 16px}.cr-scope .scope-nav{margin-bottom:10px}
+/* Product configurator: nothing can be ordered (no host, or only the viewer's own printers). */
+.availability-message.is-unavailable{padding:10px 12px;border-left:3px solid var(--warning-fg);border-radius:0 8px 8px 0;background:var(--warning-bg);color:var(--warning-fg);font-weight:600}
+.is-unorderable #live-price{min-height:0}.is-unorderable .quantity-label{display:none}

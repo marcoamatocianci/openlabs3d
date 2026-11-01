@@ -54,7 +54,7 @@ def cart_data(db,user_id):
         data={k:getattr(row,k) for k in ('id','listing_id','material','color','quantity','confirmed_unit_price_cents')}
         data.update(title=p.title,available=p.status=='approved' and not p.removed,price_changed=False)
         try:
-            data.update(quote(p,row.material,row.color,row.quantity))
+            data.update(quote(p,row.material,row.color,row.quantity,user_id))
             if row.confirmed_unit_price_cents!=data['unit_price_cents']:
                 data.update(price_changed=True,price_change=price_change(p,row,row.confirmed_unit_price_cents,data['unit_price_cents']))
         except HTTPException as exc:
@@ -64,13 +64,13 @@ def cart_data(db,user_id):
     return result
 def pending_change(p,row):
     """Whether this line has a price change the buyer has not accepted yet."""
-    try:return row.confirmed_unit_price_cents!=quote(p,row.material,row.color,row.quantity)['unit_price_cents']
+    try:return row.confirmed_unit_price_cents!=quote(p,row.material,row.color,row.quantity,row.user_id)['unit_price_cents']
     except HTTPException:return False
 def save_line(db,user_id,p,body,quantity,shown):
     """Insert or update a basket line. A line whose price is already awaiting review keeps the
     price the buyer last accepted; otherwise the line takes the price shown to the buyer."""
     row=db.scalar(select(models.CartItem).where(models.CartItem.user_id==user_id,models.CartItem.listing_id==p.id,models.CartItem.material==body.material,models.CartItem.color==body.color))
-    q=quote(p,body.material,body.color,quantity)
+    q=quote(p,body.material,body.color,quantity,user_id)
     keep=row is not None and pending_change(p,row)
     if row is None:
         row=models.CartItem(user_id=user_id,listing_id=p.id,material=q['material'],color=q['color'],quantity=quantity);db.add(row)
@@ -84,7 +84,7 @@ def cart(auth=Depends(require),db:Session=Depends(get_db)):
 def put_cart(body:CartInput,auth=Depends(mutate),db:Session=Depends(get_db)):
     buying(auth);p=get_listing(db,body.listing_id)
     if p.status!='approved':fail(409,'Product is unavailable')
-    material=quote(p,body.material,body.color,body.quantity)['material']
+    material=quote(p,body.material,body.color,body.quantity,auth[0].id)['material']
     save_line(db,auth[0].id,p,body.model_copy(update={'material':material}),body.quantity,body.expected_unit_price_cents);db.commit()
     return cart_data(db,auth[0].id)
 
@@ -92,7 +92,7 @@ def put_cart(body:CartInput,auth=Depends(mutate),db:Session=Depends(get_db)):
 def add_cart(body:CartInput,auth=Depends(mutate),db:Session=Depends(get_db)):
     buying(auth);p=get_listing(db,body.listing_id)
     if p.status!='approved':fail(409,'Product is unavailable')
-    q=quote(p,body.material,body.color,body.quantity);body=body.model_copy(update={'material':q['material']})
+    q=quote(p,body.material,body.color,body.quantity,auth[0].id);body=body.model_copy(update={'material':q['material']})
     shown=body.expected_unit_price_cents
     # The page quoted the added quantity; when that was accurate, the merged line's own quote is
     # what the buyer will see next, so it needs no review.
@@ -117,7 +117,7 @@ def accept_price(item_id:int,body:PriceAcceptance,auth=Depends(mutate),db:Sessio
     row=db.scalar(select(models.CartItem).where(models.CartItem.id==item_id,models.CartItem.user_id==auth[0].id))
     if not row:fail(404,'Cart item not found')
     p=get_listing(db,row.listing_id)
-    current=quote(p,row.material,row.color,row.quantity)['unit_price_cents']
+    current=quote(p,row.material,row.color,row.quantity,auth[0].id)['unit_price_cents']
     if body.unit_price_cents!=current:prices_changed([price_change(p,row,body.unit_price_cents,current)])
     row.confirmed_unit_price_cents=current;db.commit()
     return cart_data(db,auth[0].id)
@@ -154,7 +154,7 @@ def checkout(body:Checkout,auth=Depends(mutate),db:Session=Depends(get_db)):
     quoted,changes=[],[]
     for n,line in enumerate(lines):
         p=get_listing(db,line.listing_id)
-        q=quote(p,line.material,line.color,line.quantity)   # 422 when no longer available
+        q=quote(p,line.material,line.color,line.quantity,auth[0].id)   # 422 when no longer available, or only the buyer can make it
         price=q['unit_price_cents'];confirmed=shown[(line.listing_id,line.material,line.color,line.quantity)]
         # A basket line must also match the price its owner last accepted in the basket.
         accepted=rows[n].confirmed_unit_price_cents if rows else confirmed

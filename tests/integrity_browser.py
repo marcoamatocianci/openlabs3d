@@ -39,7 +39,10 @@ def configure(page, listing_id, material, color):
 
 def submit(page):
     street = page.locator('#new-address:not([disabled]) input[name=street]')
-    if street.count() and not street.input_value(): street.fill('Via Laboratorio 12')   # no saved address yet
+    if street.count() and not street.input_value():   # no saved address yet: street, region and postal code are required
+        street.fill('Via Laboratorio 12')
+        page.locator('#new-address [data-location=region] .cf-input').fill('Piedmont'); page.keyboard.press('Tab')
+        page.locator('#new-address input[name=postal_code]').fill('10100')
     page.get_by_role('button', name='Submit order request').click()
 
 with sync_playwright() as pw:

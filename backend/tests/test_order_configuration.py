@@ -100,10 +100,12 @@ def test_order_pages_use_a_fixed_number_of_queries():
     assert queries(2) == queries(8)
 
 def test_host_job_list_checks_each_product_once(monkeypatch):
-    from app import operations
+    # Eligibility (availability.job_ineligibility) reads each fitting printer's stock once per host and
+    # size, however many jobs share them.
+    from app import availability
     calls = []
-    original = operations.host_shades
-    monkeypatch.setattr(operations, 'host_shades', lambda product, host_id: calls.append(product.id) or original(product, host_id))
+    original = availability.printer_stock
+    monkeypatch.setattr(availability, 'printer_stock', lambda printer, db=None: calls.append(printer.id) or original(printer, db))
     buyer = TestClient(app); register(buyer, 'jobs-buyer@example.org')
     uid = buyer.get('/api/auth/me').json()['user']['id']
     with SessionLocal() as db:
@@ -125,7 +127,7 @@ def test_host_job_list_checks_each_product_once(monkeypatch):
     client = TestClient(app); client.cookies.set('ol3d_session', token)
     jobs = client.get('/api/host/jobs').json()
     assert len([j for j in jobs if j['item']['listing_id'] == listing_id]) == 3
-    assert calls.count(listing_id) == 1
+    assert len(calls) == 1
 
 STL = b'test'.ljust(80, b'\0') + struct.pack('<I', 1) + struct.pack('<12fH', 0, 0, 1, 0, 0, 0, 10, 0, 0, 0, 10, 10, 0)
 

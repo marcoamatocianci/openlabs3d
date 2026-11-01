@@ -38,8 +38,12 @@ function bindConfigurator(){
    form.querySelector('.color-options').hidden=!Object.keys(colors).length;
    form.querySelector('#selected-color').textContent=colorName(color);
    const changed=desired.material&&desired.material!==material||desired.color&&desired.color!==color;
-   message.textContent=(!material||!color)&&desired.material?'Your saved configuration is no longer available. Choose an available material and color before purchasing.':!material?'Currently unavailable. No approved host has confirmed equipment, dimensions and colors for this product.':changed?'Choose your preferred available configuration.':'Available from compatible printing hosts.';
-   if(!material||!color){needsSelection=!!desired.material;price.textContent='Choose an available configuration';return;}
+   // Nothing purchasable: say why, and hide the empty steps instead of asking for a choice.
+   const none=!Object.keys(o.materials).length;
+   form.querySelector('.material-options').hidden=none;form.classList.toggle('is-unorderable',none);
+   message.classList.toggle('is-unavailable',none);
+   message.textContent=none?(o.own_printers_only?'Only your own printers can make this product right now, and printing hosts cannot manufacture their own orders. You can buy it once another host offers it.':'Currently unavailable. No approved host has confirmed equipment, dimensions and colors for this product.'):(!material||!color)&&desired.material?'Your saved configuration is no longer available. Choose an available material and color before purchasing.':changed?'Choose your preferred available configuration.':'Available from compatible printing hosts.';
+   if(!material||!color){needsSelection=!!desired.material;price.textContent=none?'Not available to order':'Choose an available configuration';return;}
    needsSelection=false;
    const c=currentConfiguration(form);
    form.elements.quantity.max=o.max_quantity;

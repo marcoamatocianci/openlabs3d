@@ -6,7 +6,7 @@ import pytest,json
 
 def test_integer_quotes_and_validation(monkeypatch):
     # This test isolates integer arithmetic; host eligibility has dedicated integration coverage.
-    monkeypatch.setattr("app.availability.combinations",lambda p:{m:{"cream":"#e7d9bc"} for m in ["PLA","PETG","ABS"]})
+    monkeypatch.setattr("app.availability.combinations",lambda p,**_:{m:{"cream":"#e7d9bc"} for m in ["PLA","PETG","ABS"]})
     p=Listing(price_cents=1500,material='PETG',collection_key='microtube-rack',configuration=json.dumps({'materials':{'PLA':10000,'PETG':12000,'ABS':13500},'discounts':{'5':500,'10':1000,'20':1500},'max_quantity':30}),model_url='/assets/models/microtube-rack.glb',currency='EUR')
     q=quote(p,'PETG','cream',10)
     assert q['unit_price_cents']==1620 and q['total_cents']==16200

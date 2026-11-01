@@ -1,6 +1,7 @@
 """Custom tool requests: a researcher describes a problem, attaches references and tracks the review.
 Requests are separate from marketplace orders; nothing here creates listings, prices, jobs or payments."""
 import io,json,re,secrets,struct,zipfile
+from typing import Literal
 from pathlib import Path,PurePosixPath
 from xml.etree import ElementTree as ET
 from fastapi import APIRouter,Depends,Form,UploadFile,File,Response
@@ -105,10 +106,20 @@ async def submit(response:Response,payload:str=Form(...),files:list[UploadFile]=
         raise
     return request_data(load(db,r.id))
 
+def scoped_requests(db,query,scope,group,*where):
+    """Active requests (submitted, under review, accepted) or Request history (closed), with both scopes' counts."""
+    from .lifecycle import REQUEST_SCOPES,statuses,summary,count_by_status
+    try:wanted=statuses(REQUEST_SCOPES,scope,group)
+    except ValueError:fail(422,'Unknown status group')
+    return query.where(models.CustomRequest.status.in_(wanted)),{'scope':scope,'group':group or 'all','scopes':summary(REQUEST_SCOPES,count_by_status(db,models.CustomRequest.status,*where))}
 @router.get('/custom-requests')
-def mine(auth=Depends(require),db:Session=Depends(get_db)):
-    items=db.scalars(select(models.CustomRequest).options(selectinload(models.CustomRequest.files)).where(models.CustomRequest.user_id==auth[0].id).order_by(models.CustomRequest.created_at.desc(),models.CustomRequest.id.desc())).all()
-    return [request_data(r) for r in items]
+def mine(auth=Depends(require),db:Session=Depends(get_db),scope:Literal['active','history']|None=None,group:str='all'):
+    """Without scope: every request of the user (original contract); with it: one scope and its counts."""
+    owned=models.CustomRequest.user_id==auth[0].id
+    query=select(models.CustomRequest).options(selectinload(models.CustomRequest.files)).where(owned).order_by(models.CustomRequest.created_at.desc(),models.CustomRequest.id.desc())
+    if scope is None:return [request_data(r) for r in db.scalars(query).all()]
+    query,meta=scoped_requests(db,query,scope,group,owned)
+    return {'items':[request_data(r) for r in db.scalars(query).all()],**meta}
 @router.get('/custom-requests/{request_id}')
 def detail(request_id:int,auth=Depends(require),db:Session=Depends(get_db)):
     r=visible(load(db,request_id),auth);return request_data(r,staff=auth[0].role=='admin')
@@ -124,10 +135,12 @@ def download(request_id:int,file_id:int,download:bool=False,auth=Depends(require
         headers={'X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store','Content-Security-Policy':"default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; sandbox"})
 
 @router.get('/admin/custom-requests')
-def admin_list(status:schemas.CustomRequestStatus|None=None,auth=Depends(admin),db:Session=Depends(get_db)):
+def admin_list(status:schemas.CustomRequestStatus|None=None,scope:Literal['active','history']|None=None,group:str='all',auth=Depends(admin),db:Session=Depends(get_db)):
     query=select(models.CustomRequest).options(selectinload(models.CustomRequest.files),selectinload(models.CustomRequest.user)).order_by(models.CustomRequest.created_at.desc(),models.CustomRequest.id.desc())
     if status:query=query.where(models.CustomRequest.status==status)
-    return [request_data(r,staff=True) for r in db.scalars(query).all()]
+    if scope is None:return [request_data(r,staff=True) for r in db.scalars(query).all()]
+    query,meta=scoped_requests(db,query,scope,group)
+    return {'items':[request_data(r,staff=True) for r in db.scalars(query).all()],**meta}
 @router.patch('/admin/custom-requests/{request_id}')
 def review(request_id:int,body:schemas.CustomRequestReview,auth=Depends(admin_mutate),db:Session=Depends(get_db)):
     r=load(db,request_id);changes=[]

@@ -98,9 +98,11 @@ with sync_playwright() as pw:
     d.locator('[name=tracking_number]').press('Enter')
     p.wait_for_selector(DIALOG + ':not([open])', state='attached'); p.get_by_text('Marked as shipped', exact=True).wait_for()
     ok(status(first) == 'shipped', 'Enter in the form marks the job shipped')
-    p.goto(BASE + '/#host/jobs/in-progress'); p.wait_for_selector('.list-row')
-    shipped_row = p.locator('.list-row', has_text='awaiting buyer confirmation')
-    ok(shipped_row.count() == 1, 'a shipped job is listed under In progress, awaiting buyer confirmation')
+    # A shipped job stays in Active jobs (Awaiting buyer) until the buyer confirms receipt.
+    p.goto(BASE + '/#host/jobs?group=shipped'); p.wait_for_selector('.list-row')
+    shipped_row = p.locator('.list-row', has_text='Awaiting buyer confirmation')
+    ok(shipped_row.count() == 1 and p.locator('.scope-nav .segment[aria-current]').inner_text().startswith('Active jobs'), 'a shipped job stays an active job, awaiting buyer confirmation')
+    ok(p.locator('.chips .chip[aria-current]').inner_text().startswith('Awaiting buyer'), 'listed under Awaiting buyer')
     shipped_row.locator('summary').click()
     ok('DHL Express' in shipped_row.inner_text() and shipped_row.locator('a[href^="https://www.dhl.com"]').count() == 1, 'the shipment appears with the job')
 
@@ -110,7 +112,7 @@ with sync_playwright() as pw:
     rows = p.evaluate("""() => [...document.querySelectorAll('#job-list .list-row, .list .list-row')].map(r => { const b = r.querySelector('.job-status'); return [b.className.match(/job-(available|active|completed|cancelled)/)[1], getComputedStyle(b).backgroundColor]; })""")
     order_seen = [c for c, _ in rows]
     rank = {'available': 0, 'active': 1, 'completed': 2, 'cancelled': 3}
-    ok(order_seen == sorted(order_seen, key=rank.get) and {'available', 'active'} <= set(order_seen), 'All lists available, then in progress, then completed: ' + ','.join(order_seen))
+    ok(order_seen == sorted(order_seen, key=rank.get) and {'available', 'active'} <= set(order_seen) and not {'completed', 'cancelled'} & set(order_seen), 'Active jobs lists available, then in progress, and no finished job: ' + ','.join(order_seen))
     colours = {}
     for c, bg in rows: colours.setdefault(c, set()).add(bg)
     ok(all(len(v) == 1 for v in colours.values()) and len({next(iter(v)) for v in colours.values()}) == len(colours), 'one colour per category, shared within it')

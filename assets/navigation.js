@@ -4,7 +4,7 @@ const iconPaths = {
   menu:'<path d="M4 7h16M4 12h16M4 17h16"/>', close:'<path d="M6 6l12 12M18 6 6 18"/>', chevron:'<path d="m6 9 6 6 6-6"/>',
   cart:'<path d="M3 4h2l2.3 10.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.9-1.4L21 8H6.1"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/>',
   more:'<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
-  plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>',
+  plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>', history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4.2l2.8 1.8"/>',
   camera:'<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.2" r="3.4"/>', logout:'<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>'
 };
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${iconPaths[name]}</svg>`;
@@ -96,8 +96,8 @@ async function refreshNavBadges(force=false) {
   if (!force && Date.now() - navCountsAt < 15000) return;
   navCountsAt = Date.now(); const owner = account.id;
   try {
-    if (account.role === 'admin') { const o = await api('/admin/overview'); if (account?.id === owner) { setNavCount('approvals', o.pending_hosts + o.products_pending + (o.pending_equipment || 0)); setNavCount('requests', o.custom_requests_new || 0); } }
-    else { const jobs = await api('/host/jobs'); if (account?.id === owner) setNavCount('jobs', jobs.filter(j => j.status === 'available').length); }
+    if (account.role === 'admin') { const [o, suggestions] = await Promise.all([api('/admin/overview'), api('/admin/printer-suggestions')]); if (account?.id === owner) { setNavCount('approvals', o.pending_hosts + o.products_pending + (o.pending_equipment || 0) + suggestions.length); setNavCount('requests', o.custom_requests_new || 0); } }
+    else { const jobs = await api('/host/jobs?scope=active&group=available'); if (account?.id === owner) setNavCount('jobs', jobs.total); }
     renderNavbar();
   } catch (e) { console.warn('Navigation counts unavailable', e); }
 }
@@ -192,6 +192,26 @@ const statusTones = {approved:'success', published:'success', completed:'success
 const statusText = status => { const text = String(status).replaceAll('_', ' '); return text.charAt(0).toUpperCase() + text.slice(1); };
 const statusBadge = (status, label) => `<span class="status status-${statusTones[status] || 'neutral'}">${esc(label || statusText(status))}</span>`;
 function filterChips(label, options, selected) { return `<nav class="chips" aria-label="${esc(label)}">${options.map(o => { const on = o.value === selected; return `<a class="chip ${on ? 'active' : ''}" href="#${o.href}" ${on ? 'aria-current="true"' : ''}>${esc(o.label)}${o.count != null ? `<span>${o.count}</span>` : ''}</a>`; }).join('')}</nav>`; }
+/* Current / History pages. Level 1 switches between work still in progress and finished work; level 2
+   filters the selected one by status. Which statuses belong where comes from the API (app/lifecycle.py),
+   with each scope's counts, so the two levels never disagree with the server.
+   query: the page's other hash parameters (kept when switching); names: {active, history} labels. */
+function scopeHref(base, query, params) {
+  // Defaults (scope active, group all, page 1, empty search) stay out of the address.
+  const q = new URLSearchParams(Object.entries({...query, ...params}).filter(([k, v]) => v !== '' && v != null && v !== 'all' && !(k === 'scope' && v === 'active') && !(k === 'page' && +v === 1)));
+  return base + (q.toString() ? '?' + q : '');
+}
+function scopeNav({label, base, query = {}, data, names, all = {active:'All active', history:'All'}}) {
+  const go = params => scopeHref(base, query, {group:'all', page:1, q:'', ...params});
+  const primary = `<nav class="segmented scope-nav" aria-label="${esc(label)}">${['active', 'history'].map(scope => { const on = data.scope === scope; return `<a class="segment ${scope === 'history' ? 'scope-history' : ''}" href="#${go({scope})}" ${on ? 'aria-current="page"' : ''}>${scope === 'history' ? icon('history') : ''}${esc(names[scope])}<span class="segment-count">${data.scopes[scope].total}</span></a>`; }).join('')}</nav>`;
+  const groups = data.scopes[data.scope].groups;
+  const secondary = filterChips(`${names[data.scope]} by status`, [{value:'all', label:all[data.scope], href:go({scope:data.scope}), count:data.scopes[data.scope].total}, ...groups.map(g => ({value:g.key, label:g.label, href:go({scope:data.scope, group:g.key}), count:g.count}))], data.group || 'all');
+  return {primary, secondary};
+}
+// Page links for a scoped list; hrefFor(page) builds each link.
+const pager = (hrefFor, page, pages) => pages > 1 ? `<nav class="bo-pagination" aria-label="Pages">${page > 1 ? `<a class="btn-ghost btn-sm" href="#${hrefFor(page - 1)}">Previous</a>` : '<span></span>'}<span>Page ${page} of ${pages}</span>${page < pages ? `<a class="btn-ghost btn-sm" href="#${hrefFor(page + 1)}">Next</a>` : '<span></span>'}</nav>` : '';
+// The hash query of the current page as an object (scope, group, page, q, …).
+const hashQuery = () => Object.fromEntries(new URLSearchParams(location.hash.split('?')[1] || ''));
 const searchBox = (list, placeholder) => `<label class="search-field">${icon('search')}<span class="sr-only">${esc(placeholder)}</span><input type="search" placeholder="${esc(placeholder)}" data-filter-list="${list}" autocomplete="off"></label>`;
 const toolbar = (...parts) => `<div class="ws-toolbar">${parts.filter(Boolean).join('')}</div>`;
 const emptyState = (title, text, action='') => `<div class="empty-state"><h3>${esc(title)}</h3><p>${esc(text)}</p>${action}</div>`;

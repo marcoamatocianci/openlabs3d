@@ -3,18 +3,19 @@ const buyerOrdersRenderOperations = renderOperations;
 let buyerOrdersRequest = 0, buyerOrdersShown = null;
 // Filters, sort and pages change only the hash query: keep the scroll position (see app.js).
 inPageRoutes.add('#orders');
-const buyerOrderCategories = [['all','All orders'],['pending','Pending'],['accepted','Accepted'],['in-production','In production'],['shipped','Shipped'],['completed','Completed'],['cancelled','Cancelled']];
 const buyerOrderLabels = {pending:'Awaiting host acceptance',accepted:'Accepted · awaiting printing',printing:'Production in progress',ready:'Ready for delivery',shipped:'Shipped',completed:'Completed',cancelled:'Cancelled',available:'Awaiting host acceptance'};
 const buyerOrderTone = {pending:'warning',accepted:'warning',printing:'info',ready:'info',shipped:'info',completed:'success',cancelled:'danger',available:'warning'};
 const buyerOrderBadge = status => `<span class="status status-${buyerOrderTone[status] || 'neutral'}">${esc(buyerOrderLabels[status] || 'Status unavailable')}</span>`;
 const buyerOrderDate = value => parseServerDate(value).toLocaleDateString(undefined,{day:'numeric',month:'short',year:'numeric'});
 const buyerOrderMoney = (cents,currency) => new Intl.NumberFormat(undefined,{style:'currency',currency}).format(cents/100);
-const buyerOrderHref = (category,sort,page=1) => '#orders?'+new URLSearchParams({category,sort,page});
+// My Orders shows Current orders by default (scope=active) and Previous orders on request (scope=history).
+// The address holds the view (scope, status group, search, page, sort), so Back and Forward restore it;
+// only the sort order is remembered for the session.
+const buyerOrderHref = (filters, params={}) => '#' + scopeHref('orders', {scope:filters.scope, group:filters.group, q:filters.q, sort:filters.sort === 'newest' ? '' : filters.sort}, params);
 function buyerOrderFilters() {
   let saved={};try{saved=JSON.parse(sessionStorage.getItem('ol3d-orders-'+account.id)||'{}')}catch(e){}
-  const params=new URLSearchParams(location.hash.split('?')[1]||'');
-  const category=params.get('category')||saved.category||'all',sort=params.get('sort')||saved.sort||'newest';
-  return {category:buyerOrderCategories.some(([key])=>key===category)?category:'all',sort:sort==='oldest'?'oldest':'newest',page:Math.max(1,parseInt(params.get('page')||'1',10)||1)};
+  const params=new URLSearchParams(location.hash.split('?')[1]||''), sort=params.get('sort')||saved.sort||'newest';
+  return {scope:params.get('scope')==='history'?'history':'active', group:params.get('group')||'all', q:(params.get('q')||'').slice(0,80), sort:sort==='oldest'?'oldest':'newest', page:Math.max(1,parseInt(params.get('page')||'1',10)||1)};
 }
 // The purchased configuration comes only from the order line: material, colour name and the colour
 // snapshot taken at checkout. Lines from before snapshots existed show their recorded name, no swatch.
@@ -86,21 +87,33 @@ function buyerOrderCard(order) {
   </article>`;
 }
 function buyerOrdersShell(body) {
-  return layout(`<div class="bo-page"><header class="bo-page-head"><div><p class="ws-crumb eyebrow-dot">Buyer workspace</p><h1>My orders</h1><p class="muted">Your laboratory tools, from request to completion.</p></div><a class="btn-ghost btn-sm" href="#catalogue">Explore products</a></header>${body}</div>`);
+  return layout(`<div class="bo-page"><header class="bo-page-head"><div><p class="ws-crumb eyebrow-dot">Buyer workspace</p><h1>My orders</h1><p class="muted">Track your current purchases and manufacturing progress.</p></div><a class="btn-ghost btn-sm" href="#catalogue">Explore products</a></header>${body}</div>`);
 }
+const BUYER_SCOPE_NAMES = {active:'Current orders', history:'Previous orders'};
 function buyerOrdersBody(data, filters) {
-  const tabs=filterChips('Order status',buyerOrderCategories.map(([value,label])=>({value,label,href:buyerOrderHref(value,filters.sort).slice(1),count:data.counts[value]})),filters.category);
+  const nav=scopeNav({label:'My orders', base:'orders', query:{sort:filters.sort === 'newest' ? '' : filters.sort}, data, names:BUYER_SCOPE_NAMES, all:{active:'All active', history:'All previous'}});
   const sort=uiSelect({id:'bo-sort',label:'Sort by',value:filters.sort,options:[['newest','Newest first'],['oldest','Oldest first']],className:'bo-sort'});
-  const emptyTitle={all:'No orders yet',pending:'No pending orders',accepted:'No accepted orders','in-production':'No orders in production',shipped:'No shipped orders',completed:'No completed orders',cancelled:'No cancelled orders'};
-  const emptyText={pending:'Orders waiting for a printing host will appear here.',accepted:'Orders a host accepted and has not started printing will appear here.','in-production':'Orders being printed or ready for delivery will appear here.',shipped:'Shipped orders appear here until you confirm they arrived.',completed:'Orders you confirmed as received will appear here.',cancelled:'Cancelled order requests will appear here.'};
-  const content=data.items.length?`<div class="bo-list">${data.items.map(buyerOrderCard).join('')}</div>`:`<div class="section-card">${emptyState(data.counts.all?emptyTitle[filters.category]:'No orders yet',data.counts.all?emptyText[filters.category]||'Your order requests appear here.':'Explore laboratory tools and place your first order request.',data.counts.all?`<a class="btn btn-sm" href="${buyerOrderHref('all',filters.sort)}">View all orders</a>`:'<a class="btn btn-sm" href="#catalogue">Explore products</a>')}</div>`;
-  const pageLink=(page,label)=>`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters.category,filters.sort,page)}">${label}</a>`;
-  const pagination=data.pages>1?`<nav class="bo-pagination" aria-label="Order pages">${data.page>1?pageLink(data.page-1,'Previous'):'<span></span>'}<span>Page ${data.page} of ${data.pages}</span>${data.page<data.pages?pageLink(data.page+1,'Next'):'<span></span>'}</nav>`:'';
-  return {toolbar:`${tabs}${sort}`, results:`<p class="bo-results">${data.total?`${(data.page-1)*data.per_page+1}–${Math.min(data.page*data.per_page,data.total)} of ${data.total} orders`:'0 orders'}</p>${content}${pagination}`};
+  // Search by order reference or product name, in Previous orders (where the list grows).
+  const search=data.scope==='history'?`<form class="search-field bo-search" id="bo-search" role="search">${icon('search')}<label class="sr-only" for="bo-q">Search previous orders</label><input id="bo-q" type="search" name="q" value="${esc(filters.q)}" placeholder="Order number or product" autocomplete="off" maxlength="80"></form>`:'';
+  const scopeTotal=data.scopes[data.scope].total, groupLabel=(data.scopes[data.scope].groups.find(g=>g.key===data.group)||{}).label;
+  let empty;
+  if(data.scope==='active'&&!scopeTotal) empty=emptyState("You're all caught up", 'No active orders at the moment.', `<div class="empty-actions"><a class="btn btn-sm" href="#catalogue">Explore catalogue</a>${data.scopes.history.total?`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{scope:'history',group:'all',q:'',page:1})}">Previous orders</a>`:''}</div>`);
+  else if(data.scope==='history'&&!scopeTotal) empty=emptyState('No previous orders yet','Completed and cancelled orders move here automatically.',`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{scope:'active',group:'all',q:'',page:1})}">Current orders</a>`);
+  else if(filters.q) empty=emptyState('No orders match your search',`Nothing in ${groupLabel?groupLabel.toLowerCase()+' ':''}previous orders matches “${filters.q}”.`,`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{q:'',page:1})}">Clear search</a>`);
+  else empty=emptyState(data.scope==='active'?'No orders at this stage':'No orders with this status',data.scope==='active'?`None of your current orders is ${(groupLabel||'').toLowerCase()} right now.`:`None of your previous orders is ${(groupLabel||'').toLowerCase()}.`,`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{group:'all',page:1})}">${data.scope==='active'?'All active orders':'All previous orders'}</a>`);
+  const content=data.items.length?`<div class="bo-list">${data.items.map(buyerOrderCard).join('')}</div>`:`<div class="section-card">${empty}</div>`;
+  const noun=data.scope==='active'?'current':'previous';
+  return {toolbar:`${nav.primary}<div class="bo-filters">${nav.secondary}<div class="bo-tools">${search}${sort}</div></div>`,
+    results:`<p class="bo-results">${data.total?`${(data.page-1)*data.per_page+1}–${Math.min(data.page*data.per_page,data.total)} of ${data.total} ${noun} ${data.total===1?'order':'orders'}`:`0 ${noun} orders`}</p>${content}${pager(page=>buyerOrderHref(filters,{page}).slice(1),data.page,data.pages)}`};
 }
-// Highlight the chosen status at once, before its orders arrive.
-function buyerOrdersMarkTab(category) {
-  document.querySelectorAll('#bo-toolbar .chip').forEach(chip=>{const on=new URLSearchParams(chip.hash.split('?')[1]).get('category')===category;chip.classList.toggle('active',on);on?chip.setAttribute('aria-current','true'):chip.removeAttribute('aria-current')});
+// Highlight the chosen view at once, before its orders arrive.
+function buyerOrdersMarkTab(filters) {
+  document.querySelectorAll('#bo-toolbar .segment, #bo-toolbar .chip').forEach(link=>{
+    const q=new URLSearchParams(link.hash.split('?')[1]||''), scope=q.get('scope')||'active', group=q.get('group')||'all';
+    const on=link.classList.contains('segment')?scope===filters.scope:scope===filters.scope&&group===filters.group;
+    link.classList.toggle('active',on&&link.classList.contains('chip'));
+    if(on)link.setAttribute('aria-current',link.classList.contains('segment')?'page':'true');else link.removeAttribute('aria-current');
+  });
 }
 async function renderBuyerOrders() {
   if(!account||account.role==='admin')return buyerOrdersRenderOperations('orders');
@@ -110,7 +123,7 @@ async function renderBuyerOrders() {
   // Changing filter, sort or page updates the toolbar and the order list in place: the heading, the
   // layout and the scroll position stay, and the previous orders stay visible (dimmed) while loading.
   const region=$('#app #bo-results'),inPlace=!!(region&&buyerOrdersShown?.owner===owner);
-  if(inPlace){buyerOrdersMarkTab(filters.category);region.setAttribute('aria-busy','true');$('#bo-status').textContent='Updating orders…';}
+  if(inPlace){buyerOrdersMarkTab(filters);region.setAttribute('aria-busy','true');$('#bo-status').textContent='Updating orders…';}
   else{buyerOrdersShown=null;$('#app').innerHTML=buyerOrdersShell('<div class="bo-toolbar" id="bo-toolbar"></div><div id="bo-results" aria-busy="true"><div class="bo-skeletons" role="status" aria-label="Loading orders"><span class="sr-only">Loading orders…</span>'+Array.from({length:3},()=>'<div class="bo-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>').join('')+'</div></div><p id="bo-status" class="sr-only" role="status"></p>');}
   try{
     // Country names for the delivery addresses; a code is shown if the list cannot be loaded.
@@ -126,11 +139,15 @@ async function renderBuyerOrders() {
     results.innerHTML=body.results;results.removeAttribute('aria-busy');
     $('#bo-status').textContent=`${data.total} ${data.total===1?'order':'orders'}`;
     // A new page starts at its first order; filters and sort keep the reader where they are.
-    if(inPlace&&buyerOrdersShown.page!==filters.page&&buyerOrdersShown.category===filters.category&&buyerOrdersShown.sort===filters.sort&&toolbar.getBoundingClientRect().top<0)toolbar.scrollIntoView({block:'start'});
+    if(inPlace&&buyerOrdersShown.page!==filters.page&&buyerOrdersShown.scope===filters.scope&&buyerOrdersShown.group===filters.group&&buyerOrdersShown.sort===filters.sort&&toolbar.getBoundingClientRect().top<0)toolbar.scrollIntoView({block:'start'});
     buyerOrdersShown={owner,...filters};
-    $('[data-select=bo-sort] input[type=hidden]').onchange=e=>{location.hash=buyerOrderHref(filters.category,e.target.value)};
+    $('[data-select=bo-sort] input[type=hidden]').onchange=e=>{location.hash=buyerOrderHref({...filters,sort:e.target.value},{page:1})};
+    const search=$('#bo-search');
+    if(search)search.onsubmit=e=>{e.preventDefault();location.hash=buyerOrderHref(filters,{q:search.elements.q.value.trim(),page:1})};
   }catch(e){
     if(!current())return;
+    // An unknown status group (an old bookmark, for example) shows the whole scope instead of an error.
+    if(e.status===422&&filters.group!=='all'){location.replace(buyerOrderHref(filters,{group:'all',page:1}));return;}
     buyerOrdersShown=null;
     $('#app').innerHTML=buyerOrdersShell(`<div class="section-card bo-error" role="alert"><h2>Unable to load orders</h2><p>${esc(e.message)}</p><button type="button" class="secondary" id="bo-retry">Retry</button></div>`);
     $('#bo-retry').onclick=renderBuyerOrders;
@@ -166,10 +183,12 @@ document.addEventListener('click', e => { const button = e.target.closest('[data
 document.addEventListener('click', async e => {
   const button = e.target.closest('[data-received]'); if (!button) return;
   const [orderId, jobId] = button.dataset.received.split(':'), title = button.closest('.bo-shipment').querySelector('strong').textContent;
+  let completed = false;
   const ok = await actionDialog({title:'Mark as received?', confirm:'Mark as received', busy:'Saving…',
     body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(title)}</strong></div></div><ul class="ad-notes"><li>Confirm the product arrived in good condition.</li><li>The printing job is completed; the order completes once every product is received.</li></ul>`,
-    run:() => api(`/orders/${orderId}/jobs/${jobId}/received`, {method:'POST'})});
+    run:async () => { completed = (await api(`/orders/${orderId}/jobs/${jobId}/received`, {method:'POST'})).status === 'completed'; }});
   if (!ok) { if (button.isConnected) button.focus(); return; }
-  toast('Marked as received'); renderBuyerOrders();
+  // When this was the last product, the order is complete: it leaves Current orders for Previous orders.
+  toast(completed ? 'Order completed: you can find it in Previous orders' : 'Marked as received'); renderBuyerOrders();
 });
 renderOperations=function(route){if(route==='orders')return renderBuyerOrders();return buyerOrdersRenderOperations(route)};

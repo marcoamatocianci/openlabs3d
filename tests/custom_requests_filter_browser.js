@@ -1,4 +1,4 @@
-// My requests: the segmented status switch (All / Submitted / Under review / Accepted = quoted).
+// My requests: Active requests (Submitted / Under review / Accepted = quoted) and Request history (Closed).
 // Requires scripts/catalogue_preview.py (http://127.0.0.1:18101, isolated data); adds requests for buyer@example.org.
 async page => {
   const base = 'http://127.0.0.1:18101', check = (ok, message) => { if (!ok) throw Error(message); };
@@ -15,35 +15,36 @@ async page => {
   for (const [id, status] of [[created[1], 'under_review'], [created[2], 'quoted'], [created[3], 'closed']])
     check((await ctx.request.patch(`${base}/api/admin/custom-requests/${id}`, {data:{status}, headers:{'x-csrf-token':csrf}})).ok(), 'Status not set');
   await login('buyer');
-  const mine = await (await ctx.request.get(base + '/api/custom-requests')).json(), count = s => s ? mine.filter(r => r.status === s).length : mine.length;
-  await page.goto(base + '/?qa=' + Date.now() + '#my-requests');
-  await page.evaluate(() => sessionStorage.removeItem('ol3d-cr-filter'));
-  await page.reload(); await page.locator('.cr-filter').waitFor();
-  const segments = page.locator('.cr-filter .segment');
-  check(JSON.stringify(await segments.evaluateAll(b => b.map(x => x.firstChild.textContent))) === '["All","Submitted","Under review","Accepted"]', 'Segments in lifecycle order');
-  check(await page.locator('.cr-filter').getAttribute('role') === 'group' && await segments.first().getAttribute('aria-pressed') === 'true', 'All selected by default');
-  const visible = () => page.locator('.cr-card:visible').count();
-  check(await visible() === mine.length, 'All shows every request');
+  const mine = await (await ctx.request.get(base + '/api/custom-requests')).json(), count = (...s) => mine.filter(r => s.includes(r.status)).length;
+  const open = async hash => { await page.goto(base + '/?qa=' + Date.now() + '#' + hash); await page.locator('.cr-scope').waitFor(); };
+  const shown = () => page.locator('.cr-card').evaluateAll(cs => cs.map(c => c.dataset.status));
+  await open('my-requests');
+  // Level 1: Active requests by default; closed ones only in Request history.
+  check((await page.locator('.scope-nav .segment[aria-current]').innerText()).startsWith('Active requests'), 'Active requests is the default');
+  check((await shown()).length === count('submitted', 'under_review', 'quoted') && !(await shown()).includes('closed'), 'Closed requests are not in the active list');
+  check(+(await page.locator('.cr-head .chip', {hasText:'My requests'}).locator('span').innerText()) === count('submitted', 'under_review', 'quoted'), 'Tab counts active requests');
+  // Level 2: status filters of the active scope, in lifecycle order, kept in the address.
+  const chips = page.locator('.cr-scope .chips .chip');
+  check(JSON.stringify(await chips.evaluateAll(b => b.map(x => x.firstChild.textContent))) === '["All active","Submitted","Under review","Accepted"]', 'Active filters in lifecycle order');
   for (const [label, status] of [['Submitted', 'submitted'], ['Under review', 'under_review'], ['Accepted', 'quoted']]) {
-    const button = page.locator('.cr-filter .segment', {hasText:label});
-    check(+(await button.locator('.segment-count').textContent()) === count(status), label + ' count');
-    await button.click();
-    check(await button.getAttribute('aria-pressed') === 'true', label + ' pressed');
-    check(await visible() === count(status), label + ' shows only its requests');
-    check((await page.locator('.cr-card:visible').evaluateAll(cs => cs.map(c => c.dataset.status))).every(s => s === status), label + ' filters by ' + status);
-    check(+(await page.locator('#cr-filter-status').textContent()).split(' ')[0] === count(status), label + ' announced');
+    const chip = page.locator('.cr-scope .chip', {hasText:label});
+    check(+(await chip.locator('span').textContent()) === count(status), label + ' count');
+    await chip.click(); await page.waitForFunction(l => document.querySelector('.cr-scope .chip[aria-current]')?.textContent.startsWith(l), label);
+    await page.waitForFunction(n => document.querySelectorAll('.cr-card').length === n, count(status));
+    check((await shown()).every(s => s === status), label + ' filters by ' + status);
   }
-  check(await page.locator('.cr-card:visible .status').first().textContent() === 'Accepted · quote sent', 'Quoted reads as accepted to the customer');
-  // The choice survives a reload; closed requests appear only under All.
-  await page.reload(); await page.locator('.cr-filter').waitFor();
-  check(await page.locator('.cr-filter .segment[aria-pressed=true]').textContent().then(t => t.startsWith('Accepted')) && await visible() === count('quoted'), 'Filter kept after reload');
-  await page.locator('.cr-filter .segment', {hasText:'All'}).click();
-  check(await page.locator('.cr-card:visible[data-status=closed]').count() === count('closed'), 'Closed requests listed under All');
+  check(await page.locator('.cr-card .status').first().textContent() === 'Accepted · quote sent', 'Quoted reads as accepted to the customer');
+  await page.reload(); await page.locator('.cr-scope').waitFor();
+  check((await page.locator('.cr-scope .chip[aria-current]').innerText()).startsWith('Accepted') && page.url().includes('group=quoted'), 'Filter kept after reload');
+  await page.locator('.scope-nav .segment', {hasText:'Request history'}).click();
+  await page.waitForURL(/scope=history/); await page.waitForFunction(() => document.querySelector('.scope-nav .segment[aria-current]')?.textContent.includes('Request history'));
+  check(JSON.stringify(await shown()) === JSON.stringify(Array(count('closed')).fill('closed')), 'Request history holds the closed requests');
   // Hierarchy: reference and date above the title, the status note set apart.
+  await open('my-requests');
   const card = page.locator('.cr-card').first(), meta = await card.locator('.cr-meta').boundingBox(), title = await card.locator('h2').boundingBox();
   check(meta.y < title.y, 'Reference line above the title');
   check(await card.locator('.cr-status-note').evaluate(n => parseFloat(getComputedStyle(n).borderLeftWidth)) >= 3, 'Status note set apart');
   await page.setViewportSize({width:390, height:844});
   check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'No horizontal overflow on mobile');
-  return {passed:['segments', 'counts', 'filtering', 'persistence', 'customer label', 'hierarchy', 'mobile']};
+  return {passed:['active by default', 'status filters', 'customer label', 'persistence', 'request history', 'hierarchy', 'mobile']};
 }

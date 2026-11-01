@@ -285,18 +285,13 @@ def decide_revision(revision_id:int,decision:str,body:schemas.Reject,auth=Depend
         proposed=[spec(p) for p in proposal['printers']]
         # Accepted work keeps its assignment and immutable order snapshot. A proposal may only
         # remove capabilities if one proposed printer can still make each active job.
-        import math
+        from .availability import line_dimensions
         removes_capabilities=any(spec(p) not in proposed for p in before['printers'])
         for job in db.scalars(select(models.PrintingJob).where(models.PrintingJob.host_id==r.user_id,models.PrintingJob.status.in_(['accepted','printing','ready']))):
             if not removes_capabilities:continue
-            try:
-                dimensions=json.loads(job.item.manufacturing_dimensions)
-                if not dimensions:
-                    dimension=r'(\d+(?:\.\d+)?)\s*(?:mm)?'
-                    match=re.fullmatch(r'\s*'+dimension+r'\s*[x×*]\s*'+dimension+r'\s*[x×*]\s*'+dimension+r'\s*',job.item.dimensions,re.IGNORECASE)
-                    dimensions=[float(v) for v in match.groups()] if match else []
-            except (ValueError,TypeError):dimensions=[]
-            if not isinstance(dimensions,list) or len(dimensions)!=3 or any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or v<=0 for v in dimensions):
+            # The same size job assignment uses: what was sold, never the listing's current model.
+            dimensions=line_dimensions(job.item)
+            if dimensions is None:
                 fail(409,f'Complete active job {job.id} before changing equipment: its build dimensions cannot be verified')
             if not any(job.item.material in p['capabilities'] and all(a<=b for a,b in zip(sorted(dimensions),sorted([p['x'],p['y'],p['z']]))) for p in proposed):
                 fail(409,f'Equipment is required by active job {job.id}; complete or explicitly reassign that job first')

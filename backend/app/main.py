@@ -360,17 +360,18 @@ def seed_official_collection():
         if owner: seed(db,owner)
 
 @app.get('/api/listings/{listing_id}/availability')
-def product_availability(listing_id: int, response: Response, db: Session=Depends(get_db)):
+def product_availability(listing_id: int, response: Response, auth=Depends(current), db: Session=Depends(get_db)):
     p=get_listing(db,listing_id)
     if p.status != 'approved': fail(404,'Listing not available')
     response.headers['Cache-Control']='no-store'
-    return options(p)
+    # Per viewer: a host is not offered what only their own printers can make (see pricing.options).
+    return options(p,auth[0].id if auth else None)
 
 @app.post('/api/listings/{listing_id}/quote')
-def price_quote(listing_id: int, body: schemas.QuoteInput, db: Session=Depends(get_db)):
+def price_quote(listing_id: int, body: schemas.QuoteInput, auth=Depends(current), db: Session=Depends(get_db)):
     p=get_listing(db,listing_id)
     if p.status != 'approved': fail(404,'Listing not available')
-    return quote(p,body.material,body.color,body.quantity)
+    return quote(p,body.material,body.color,body.quantity,auth[0].id if auth else None)
 
 @app.put('/api/listings/{listing_id}/pricing')
 def pricing_rules(listing_id: int, body: Rules, auth=Depends(mutate), db: Session=Depends(get_db)):
