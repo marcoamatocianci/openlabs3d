@@ -88,8 +88,8 @@ with sync_playwright() as pw:
     hp.locator(DIALOG).get_by_role('button', name='Cancel').click()
     hp.wait_for_selector(f'[data-job="{job}"]', state='detached')
     ok(hp.locator(f'[data-job="{job}"]').count() == 0, 'closing the dialog refreshes the list without that job')
-    hp.wait_for_function("document.activeElement?.matches('.chip')")
-    ok(hp.evaluate("document.activeElement.matches('.chip.active')"), 'focus returns to the selected filter')
+    hp.wait_for_function("document.activeElement !== document.body")
+    ok(hp.evaluate("document.activeElement.matches('#host-jobs-board .wf-column[data-stage=available], .scope-nav [aria-current]')"), 'focus returns to the Available column the job was in (or Active jobs when none is left)')
     ok(next(j for j in buyer.request.get(BASE + '/api/orders').json() if j['id'] == stranded['id'])['jobs'][0]['status'] == 'available', 'the job is still available')
 
     # Administrators: who can take each available job, and why the others cannot.

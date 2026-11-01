@@ -7,7 +7,8 @@ let opsCart = [];
 let publicSettings = {marketplace_name:'OpenLabs3D',contact:''};
 const saveOpsCart = () => { const count=opsCart.reduce((n,i)=>n+i.quantity,0), badge=$('#count'); if(badge){badge.textContent=count;badge.hidden=!count;} };
 function deliveryText(value){try{const data=JSON.parse(value);return ['first_name','last_name','email','phone','street','additional','postal_code','city','region','country'].map(k=>data[k]).filter(Boolean).join(', ')}catch(e){return value}}
-const safeDate = value => value ? parseServerDate(value).toLocaleString() : '—';
+// Date and time in one format across the site (no seconds), e.g. “1 Nov 2026, 16:09” in the reader's locale.
+const safeDate = value => value ? parseServerDate(value).toLocaleString(undefined, {dateStyle:'medium', timeStyle:'short'}) : '—';
 const badge = value => statusBadge(value);
 const panelMessage = (title, text, href='#account', label='Sign in') => layout(empty(title,text,href,label));
 

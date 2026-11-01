@@ -32,7 +32,7 @@ def ready(page):
     page.wait_for_function("(() => { const f = buyerOrderFilters(), s = buyerOrdersShown; return !!s && s.scope === f.scope && s.group === f.group && s.q === f.q && s.sort === f.sort && s.page === f.page && !document.querySelector('#bo-results[aria-busy]'); })()")
     page.wait_for_selector('.bo-card')
     # Thumbnails on screen are recoloured and revealed; lazy ones off screen or in closed details wait.
-    page.wait_for_function("[...document.querySelectorAll('.bo-thumb img[data-color]')].filter(i => i.checkVisibility() && i.getBoundingClientRect().top < innerHeight && i.getBoundingClientRect().bottom > 0).every(i => i.classList.contains('is-ready'))")
+    page.wait_for_function("[...document.querySelectorAll('.bo-thumb img[data-color]')].filter(i => i.checkVisibility() && i.getBoundingClientRect().top < innerHeight && i.getBoundingClientRect().bottom > 0 && i.getBoundingClientRect().left < innerWidth && i.getBoundingClientRect().right > 0).every(i => i.classList.contains('is-ready'))")
 
 def click_chip(page, label, kind='.chip'):
     box = page.locator('#bo-toolbar ' + kind, has_text=label).first.bounding_box()
@@ -48,30 +48,30 @@ with sync_playwright() as pw:
     # Configuration: the newest order (OL3D-QA-1015) has three lines with different colours.
     card = p.locator('.bo-card', has_text='OL3D-QA-1015')
     p.locator('#bo-toolbar').scroll_into_view_if_needed()
-    swatches = card.locator('.bo-products').first.locator('.bo-swatch')
+    swatches = card.locator('.bo-lines .line-swatch')
     ok(swatches.count() == 2, 'card preview lines each show their purchased colour swatch')
-    ok(card.locator('.bo-config').first.inner_text() == 'PLA · Orange', 'material and colour name are shown together')
-    ok(p.evaluate("getComputedStyle(document.querySelector('[data-order-id] .bo-swatch')).backgroundColor") == 'rgb(230, 97, 0)', 'swatch uses the checkout snapshot #e66100')
-    imgs = card.locator('.bo-products').first.locator('img')
+    ok(card.locator('.line-config').first.inner_text() == 'PLA · Orange', 'material and colour name are shown together')
+    ok(card.locator('.line-swatch').first.evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(230, 97, 0)', 'swatch uses the checkout snapshot #e66100')
+    imgs = card.locator('.bo-lines img')
     orange, black = [imgs.nth(i).evaluate(MEAN) for i in range(2)]
     ok(orange and orange[0] > orange[2] + 40, f'orange line preview is tinted orange {orange and [round(v) for v in orange]}')
     ok(black and max(black) < 90, f'black line preview is tinted dark {black and [round(v) for v in black]}')
     ok(all(imgs.nth(i).evaluate("i => i.src.startsWith('data:image/')") for i in range(2)), 'previews are recoloured in the browser, not new renders')
-    card.locator('summary').click()
-    detail = card.locator('.bo-detail-body'); detail.scroll_into_view_if_needed(); ready(p)
-    ok(detail.locator('.bo-product').count() == 0, 'details do not repeat the product list shown above')
-    lines = detail.locator('.bo-job')
-    ok(lines.count() == 3, 'fulfilment lists all three products')
+    card.locator('[data-order-details]').click(); p.wait_for_selector('#modal[open]')
+    detail = p.locator('#modal')
+    lines = detail.locator('.bo-detail-line')
+    ok(lines.count() == 3, 'details list all three products once, each with its own stage')
     violet = lines.nth(2)
-    ok(violet.locator('.bo-config').inner_text() == 'PLA · Custom violet' and violet.locator('.bo-swatch').count() == 0, 'line without a snapshot shows its recorded colour name and no invented swatch')
-    ok(detail.locator('.bo-job .bo-config').count() == 3, 'fulfilment rows show each line configuration')
+    ok(violet.locator('.line-config').inner_text() == 'PLA · Custom violet' and violet.locator('.line-swatch').count() == 0, 'line without a snapshot shows its recorded colour name and no invented swatch')
+    ok(detail.locator('.bo-detail-line .line-config').count() == 3, 'detail rows show each line configuration')
     ok('Italy' in detail.locator('.bo-delivery address').inner_text(), 'delivery address shows the country name')
-    p.screenshot(path=str(OUT / 'orders-detail-1366-light.png'), full_page=True)
+    p.screenshot(path=str(OUT / 'orders-detail-1366-light.png'))
+    p.keyboard.press('Escape')
 
     # Legacy orders (before snapshots): neutral preview + recorded name, never a guessed colour.
     p.goto(BASE + '/#orders?sort=oldest'); ready(p)
-    legacy = p.locator('.bo-card').first
-    ok(legacy.locator('.bo-swatch').count() == 0 and 'PLA · Orange' in legacy.inner_text(), 'legacy order shows the colour name without a swatch')
+    legacy = p.locator('.bo-card', has_text='OL3D-QA-1001')
+    ok(legacy.locator('.line-swatch').count() == 0 and 'PLA · Orange' in legacy.inner_text(), 'legacy order shows the colour name without a swatch')
     ok(legacy.locator('img').first.evaluate("i => !i.dataset.color && !i.src.startsWith('data:')"), 'legacy order keeps the neutral product render')
 
     # Filters: in place, one request, no scroll jump, highlighted immediately.
@@ -79,13 +79,13 @@ with sync_playwright() as pw:
     p.evaluate("window.__page = document.querySelector('.bo-page'); const t = document.querySelector('#bo-toolbar'); scrollTo(0, t.getBoundingClientRect().top + scrollY - 90)")
     # Slow the order API down so the in-between state can be observed.
     p.evaluate("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/orders?') ? new Promise(r => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); })()")
-    # Level 2 (status chips) of Current orders, then level 1 to Previous orders, then its chips.
-    for label, scope, group, statuses in (('Pending', 'active', 'pending', {'Awaiting host acceptance'}),
-                                          ('In progress', 'active', 'in-progress', {'Accepted · awaiting printing', 'Production in progress', 'Ready for delivery'}),
-                                          ('Shipping', 'active', 'shipping', {'Shipped'}), ('Previous orders', 'history', 'all', {'Completed', 'Cancelled'}),
-                                          ('Completed', 'history', 'completed', {'Completed'}), ('Cancelled', 'history', 'cancelled', {'Cancelled'})):
+    # Level 1 to Previous orders, its status chips, then back to the Current orders board.
+    current = {'Awaiting a host', 'Accepted', 'In production', 'Ready to ship', 'Shipped', 'Partly shipped'}
+    for label, scope, group, statuses in (('Previous orders', 'history', 'all', {'Completed', 'Cancelled'}),
+                                          ('Completed', 'history', 'completed', {'Completed'}), ('Cancelled', 'history', 'cancelled', {'Cancelled'}),
+                                          ('Current orders', 'active', 'all', current)):
         y = p.evaluate('scrollY'); p.requests.clear()
-        primary = label == 'Previous orders'
+        primary = label in ('Previous orders', 'Current orders')
         click_chip(p, label, '.segment' if primary else '.chip')
         p.wait_for_function(f"document.querySelector('#bo-toolbar {'.segment' if primary else '.chip'}[aria-current]').textContent.startsWith('{label}')", timeout=400)
         p.wait_for_timeout(250)
@@ -93,14 +93,19 @@ with sync_playwright() as pw:
         ok(busy[0] and busy[1] > 0 and float(busy[2]) < .9, f'{label}: highlighted at once; previous orders stay, dimmed, while loading {busy}')
         ready(p)
         api = [r for r in p.requests if '/api/' in r]
-        shown = set(p.locator('.bo-card-head .status').all_inner_texts())
-        ok(api == [f'/api/orders?scope={scope}&group={group}&q=&sort=newest&page=1&paginated=true&per_page=10'], f'{label}: exactly one API request {api}')
+        shown = set(p.locator('.bo-card .status').all_inner_texts())
+        expected = f'/api/orders?scope={scope}&group={group}&q=&sort=newest&page=1&paginated=true&per_page=10' if scope == 'history' else '/api/orders?scope=active&sort=newest&paginated=true&per_page=50&page=1'
+        ok(api == [expected], f'{label}: exactly one API request {api}')
         ok(p.evaluate('window.__page === document.querySelector(".bo-page")'), f'{label}: page kept, not rebuilt')
-        ok(abs(p.evaluate('scrollY') - y) < 2, f'{label}: scroll position kept ({y} -> {p.evaluate("scrollY")})')
+        # Kept, unless the shorter list makes the page too short to stay there (the browser then clamps it).
+        kept = min(y, p.evaluate('document.documentElement.scrollHeight - innerHeight'))
+        ok(abs(p.evaluate('scrollY') - kept) < 2, f'{label}: scroll position kept ({y} -> {p.evaluate("scrollY")}, expected {kept})')
         ok(shown and shown <= statuses, f'{label}: only {scope}/{group} orders shown {shown}')
     ok(len(set(p.locator('.bo-card').evaluate_all('cs => cs.map(c => Math.round(c.getBoundingClientRect().width))'))) == 1, 'order cards keep one width')
 
     # History: back and forward restore filters without reloading the page.
+    p.go_back(); ready(p)
+    ok('group=cancelled' in p.url and p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('Cancelled'), 'Back returns to Previous orders, Cancelled')
     p.go_back(); ready(p)
     ok('group=completed' in p.url and p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('Completed'), 'Back restores the previous filter')
     p.go_forward(); ready(p)
@@ -111,18 +116,16 @@ with sync_playwright() as pw:
     for label in ('All', 'Completed', 'Cancelled'):
         click_chip(p, label)
     ready(p); p.wait_for_timeout(400)
-    ok('group=cancelled' in p.url and set(p.locator('.bo-card-head .status').all_inner_texts()) == {'Cancelled'}, 'rapid clicks settle on the last filter')
+    ok('group=cancelled' in p.url and set(p.locator('.bo-card .status').all_inner_texts()) == {'Cancelled'}, 'rapid clicks settle on the last filter')
 
-    # Sort and pages, back in Current orders.
+    # Sort, back in Current orders: every current order is on the board, so there are no pages.
     click_chip(p, 'Current orders', '.segment'); ready(p)
     p.click('[data-select=bo-sort] .cf-trigger'); p.click('[data-select=bo-sort] [role=option][data-value=oldest]'); ready(p)
-    ok(p.locator('.bo-card h2').first.inner_text() == 'OL3D-QA-1001', 'oldest-first sort')
+    ok(p.locator('#bo-board [data-stage="in-progress"] .bo-ref').first.inner_text() == 'OL3D-QA-1001', 'oldest-first sort within each stage')
     ok(p.locator('[data-select=bo-sort] input[type=hidden]').input_value() == 'oldest', 'sort control keeps its value')
-    p.evaluate("scrollTo(0, document.body.scrollHeight)"); p.locator('.bo-pagination a', has_text='Next').click(); ready(p)
-    ok('page=2' in p.url and p.locator('.bo-pagination').inner_text().count('Page 2 of 2') == 1, 'Next opens page 2')
-    ok(p.evaluate("document.querySelector('#bo-toolbar').getBoundingClientRect().top") >= 0, 'a new page scrolls back to the list start')
+    ok(p.locator('#bo-board .bo-card').count() == 11 and p.locator('.bo-pagination').count() == 0, 'all eleven current orders on one board, no pages')
     p.reload(); ready(p)
-    ok(p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('All active') and p.locator('[data-select=bo-sort] input[type=hidden]').input_value() == 'oldest', 'reload keeps filter and sort')
+    ok(p.locator('#bo-toolbar .segment[aria-current]').inner_text().startswith('Current orders') and p.locator('[data-select=bo-sort] input[type=hidden]').input_value() == 'oldest', 'reload keeps scope and sort')
 
     # Branding: the light lockup in Bright mode, the reversed one in Dark mode; favicon from the new mark.
     def logo_state(page):
@@ -142,7 +145,7 @@ with sync_playwright() as pw:
     for width, theme in ((820, 'light'), (390, 'light'), (390, 'dark'), (820, 'dark')):
         ctx, p = session(browser, width, 900, theme)
         p.goto(BASE + '/#orders?sort=newest'); ready(p); p.evaluate(f"applyTheme('{theme}')")
-        p.locator('.bo-card', has_text='OL3D-QA-1015').locator('summary').click(); p.wait_for_timeout(200)
+        p.locator('.bo-card', has_text='OL3D-QA-1015').locator('[data-order-details]').click(); p.wait_for_selector('#modal[open]'); p.wait_for_timeout(200)
         overflow = p.evaluate('document.documentElement.scrollWidth - innerWidth')
         ok(overflow <= 0, f'{width} {theme}: no horizontal overflow ({overflow})')
         top = p.evaluate("(() => { const t = document.querySelector('#topbar'), l = [...t.querySelectorAll('.brand-logo')].find(i => getComputedStyle(i).display !== 'none'), r = l.getBoundingClientRect(); return [Math.round(r.height), r.right <= t.querySelector('.topbar-actions').getBoundingClientRect().left + 1] })()")

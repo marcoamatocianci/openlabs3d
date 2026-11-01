@@ -216,6 +216,87 @@ const searchBox = (list, placeholder) => `<label class="search-field">${icon('se
 const toolbar = (...parts) => `<div class="ws-toolbar">${parts.filter(Boolean).join('')}</div>`;
 const emptyState = (title, text, action='') => `<div class="empty-state"><h3>${esc(title)}</h3><p>${esc(text)}</p>${action}</div>`;
 const statCard = (label, value, href, hint='', tone='') => `<a class="stat-card ${tone}" href="#${href}"><span>${esc(label)}</span><strong>${value}</strong>${hint ? `<small>${esc(hint)}</small>` : ''}</a>`;
+/* Workflow boards: work that moves through stages, one column per stage, in stage order. The stages,
+   and the statuses each one holds, come from the API (app/lifecycle.py groups), so a board never
+   disagrees with the server. Finished work lives in the History view, never in a column.
+   Wide enough: every column side by side, and `lane` stages (work waiting on someone else) as a full-width
+   row underneath. Narrower: the board scrolls sideways one column at a time and a strip of stage pills
+   shows which stage is in view and jumps to the others (style.css, "Workflow boards").
+   stages: [{key, label, statuses, hint}] · card(item, headingLevel) returns one <li class="wf-card">. */
+const wfScroll = {};
+function workflowBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, lane = [], limit = 0, more, empty = 'Nothing here right now.', focus = '', className = ''}) {
+  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i))), lane:lane.includes(s.key)}));
+  const count = n => `<span class="segment-count">${n}<span class="sr-only"> ${n === 1 ? 'item' : 'items'}</span></span>`;
+  const strip = `<nav class="chips wf-stages" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-wf-jump="${id}-${c.key}" aria-controls="${id}-${c.key}">${esc(c.label)}<span>${c.items.length}</span></button>`).join('')}</nav>`;
+  const column = c => {
+    const shown = limit ? c.items.slice(0, limit) : c.items, hidden = c.items.length - shown.length;
+    return `<section class="wf-column${c.lane ? ' wf-lane' : ''}${c.key === focus ? ' is-focus' : ''}" id="${id}-${c.key}" data-stage="${c.key}" tabindex="-1" aria-labelledby="${id}-${c.key}-title"><header class="wf-column-head"><h${level} class="wf-column-title" id="${id}-${c.key}-title">${esc(c.label)}</h${level}>${count(c.items.length)}</header>${c.hint ? `<p class="wf-hint">${esc(c.hint)}</p>` : ''}${shown.length ? `<ul class="wf-list">${shown.map(i => card(i, level + 1)).join('')}</ul>` : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`}${hidden > 0 && more ? more(c, hidden) : ''}</section>`;
+  };
+  return `<div class="wf ${className}" data-cols="${columns.filter(c => !c.lane).length}">${strip}<div class="wf-board" id="${id}" data-wf-board>${columns.map(column).join('')}</div></div>`;
+}
+// The stage pills mark every column that is (almost) fully in view: one on a phone, several on a tablet.
+function syncWorkflowStrip(board) {
+  const strip = board.previousElementSibling; if (!strip?.matches('.wf-stages')) return;
+  const box = board.getBoundingClientRect();
+  const inView = new Set([...board.children].filter(c => { const r = c.getBoundingClientRect(); return r.width && Math.min(r.right, box.right) - Math.max(r.left, box.left) >= r.width * .85; }).map(c => c.id));
+  strip.querySelectorAll('[data-wf-jump]').forEach(b => b.classList.toggle('active', inView.has(b.dataset.wfJump)));
+}
+// Per address (stage links included) and board: a refresh keeps the position, a stage link opens on its stage.
+const wfScrollKey = board => (location.hash || '#home') + ' ' + board.id;
+function scrollToStage(board, column, smooth) {
+  const left = column.offsetLeft - parseFloat(getComputedStyle(board).paddingLeft || 0);
+  board.scrollTo({left, behavior:smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto'});
+}
+/* After a board is drawn: open on the requested stage, or where the reader was before an in-place
+   refresh (a job that moved on, a confirmed delivery), instead of jumping back to the first column. */
+function bindWorkflowBoards(root = document) {
+  root.querySelectorAll('[data-wf-board]').forEach(board => {
+    const focus = board.querySelector('.wf-column.is-focus'), key = wfScrollKey(board);
+    if (focus && !(key in wfScroll)) scrollToStage(board, focus, false); else if (wfScroll[key]) board.scrollLeft = wfScroll[key];
+    syncWorkflowStrip(board);
+  });
+}
+document.addEventListener('click', e => {
+  const jump = e.target.closest('[data-wf-jump]'), column = jump && document.getElementById(jump.dataset.wfJump); if (!column) return;
+  scrollToStage(column.parentElement, column, true); column.focus({preventScroll:true});
+});
+let wfFrame = 0;
+document.addEventListener('scroll', e => {
+  const board = e.target.matches?.('[data-wf-board]') && e.target; if (!board) return;
+  wfScroll[wfScrollKey(board)] = board.scrollLeft;
+  cancelAnimationFrame(wfFrame); wfFrame = requestAnimationFrame(() => syncWorkflowStrip(board));
+}, true);
+addEventListener('resize', () => document.querySelectorAll('[data-wf-board]').forEach(syncWorkflowStrip));
+/* Ordered products, wherever they appear (orders, jobs, history): the current neutral product render,
+   recoloured in the browser with the purchased colour (product-visuals.js, no new renders), and the
+   material and colour as bought. Lines from before colour snapshots show their name without a swatch. */
+const orderLineHex = item => /^#[0-9a-f]{6}$/i.test(item.color_hex || '') ? item.color_hex.toLowerCase() : '';
+function orderLineConfig(item) {
+  const hex = orderLineHex(item), text = [item.material, item.color ? colorName(item.color) : ''].filter(Boolean).join(' · ');
+  return text ? `<span class="line-config">${hex ? `<span class="line-swatch" style="--swatch:${hex}" title="${esc(hex)}" aria-hidden="true"></span>` : ''}${esc(text)}</span>` : '';
+}
+function orderLineThumb(item, className = '') {
+  if (!item.thumbnail) return `<span class="row-thumb line-thumb ${className}" role="img" aria-label="Product preview unavailable">${icon('camera')}</span>`;
+  const hex = orderLineHex(item), cached = hex && tintCache.get(tintKey(item.thumbnail, hex, 160));
+  return `<span class="row-thumb line-thumb ${className}"><img ${cached ? 'class="is-ready" ' : ''}src="${esc(cached || item.thumbnail)}" data-source="${esc(item.thumbnail)}" ${hex ? `data-color="${hex}" data-tint-size="160"` : ''} ${cached ? `data-tinted="${hex}"` : ''} alt="" width="640" height="640" loading="lazy" decoding="async" onload="orderLineThumbLoaded(this)" onerror="orderLineThumbFailed(this)"></span>`;
+}
+function orderLineThumbLoaded(img) {
+  if (img.dataset.color && img.dataset.tinted !== img.dataset.color) { tintProductImage(img); if (img.src.startsWith('data:')) return; }
+  img.classList.add('is-ready');
+}
+function orderLineThumbFailed(img) {
+  const box = img.parentElement; box.setAttribute('role', 'img'); box.setAttribute('aria-label', 'Product preview unavailable'); box.innerHTML = icon('camera');
+}
+/* Read-only detail dialogs (approvals, printing jobs, orders): a header, scrolling sections and a footer. */
+const reviewItem = (label, value) => `<div><dt>${esc(label)}</dt><dd>${value || '<span class="muted">—</span>'}</dd></div>`;
+const reviewSection = (title, body) => `<section class="review-section"><h3>${esc(title)}</h3>${body}</section>`;
+function openReview(title, subtitle, body, actions) {
+  const dialog = $('#modal'); dialog.className = 'review-dialog';
+  dialog.innerHTML = `<div class="review-frame"><header class="review-head"><div><p class="ws-crumb">${esc(subtitle)}</p><h2>${esc(title)}</h2></div><button type="button" class="icon-btn" data-close-modal aria-label="Close">${icon('close')}</button></header><div class="review-body">${body}</div><footer class="review-foot"><button type="button" class="btn-ghost btn-sm" data-close-modal>Close</button>${actions || ''}</footer></div>`;
+  dialog.addEventListener('close', () => { dialog.querySelector('[data-cad-viewer]')?.disposeViewer?.(); dialog.className = ''; }, {once:true});
+  if (!dialog.open) dialog.showModal();
+  return dialog;
+}
 const rowMenu = (id, items) => `<div class="dropdown row-menu"><button type="button" class="icon-btn" id="${id}-button" data-dropdown aria-expanded="false" aria-controls="${id}" aria-label="More actions">${icon('more')}</button><div class="dropdown-menu align-end" id="${id}" hidden>${items}</div></div>`;
 // The API stores UTC timestamps without an offset; read them as UTC rather than local time.
 const parseServerDate = value => new Date(typeof value === 'string' && !/(Z|[+-]\d\d:?\d\d)$/.test(value) ? value + 'Z' : value);

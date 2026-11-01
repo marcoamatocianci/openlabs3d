@@ -77,7 +77,7 @@ with sync_playwright() as pw:
         p.wait_for_selector(DIALOG + ':not([open])', state='attached'); p.get_by_text(toast, exact=True).wait_for()
         ok(status(first) == after, f'{label}: job is now {after}, confirmed with "{toast}"')
     p.wait_for_timeout(400)
-    ok(p.evaluate("document.activeElement.classList.contains('chip') || !!document.activeElement.dataset.job"), 'focus lands back in the job list after the refresh')
+    ok(p.evaluate("!!(document.activeElement.dataset.job || document.activeElement.dataset.jobDetails)"), 'focus lands back on the job after the refresh')
     ok(p.locator(f'[data-job="{first}"]', has_text='Mark completed').count() == 0, 'hosts cannot complete a job')
 
     # Shipping: same dialog and bullets, plus the shipment form.
@@ -99,23 +99,26 @@ with sync_playwright() as pw:
     p.wait_for_selector(DIALOG + ':not([open])', state='attached'); p.get_by_text('Marked as shipped', exact=True).wait_for()
     ok(status(first) == 'shipped', 'Enter in the form marks the job shipped')
     # A shipped job stays in Active jobs (Awaiting buyer) until the buyer confirms receipt.
-    p.goto(BASE + '/#host/jobs?group=shipped'); p.wait_for_selector('.list-row')
-    shipped_row = p.locator('.list-row', has_text='Awaiting buyer confirmation')
-    ok(shipped_row.count() == 1 and p.locator('.scope-nav .segment[aria-current]').inner_text().startswith('Active jobs'), 'a shipped job stays an active job, awaiting buyer confirmation')
-    ok(p.locator('.chips .chip[aria-current]').inner_text().startswith('Awaiting buyer'), 'listed under Awaiting buyer')
-    shipped_row.locator('summary').click()
-    ok('DHL Express' in shipped_row.inner_text() and shipped_row.locator('a[href^="https://www.dhl.com"]').count() == 1, 'the shipment appears with the job')
+    p.goto(BASE + '/#host/jobs?group=shipped'); p.wait_for_selector(f'[data-job-card="{first}"]')
+    shipped_card = p.locator(f'#host-jobs-board [data-stage="shipped"] [data-job-card="{first}"]')
+    ok(shipped_card.count() == 1 and p.locator('.scope-nav .segment[aria-current]').inner_text().startswith('Active jobs'), 'a shipped job stays an active job')
+    ok(p.locator('#host-jobs-board [data-stage="shipped"].is-focus .wf-column-title').inner_text().lower() == 'awaiting buyer', 'listed under Awaiting buyer, the stage the link asked for')
+    ok('DHL Express' in shipped_card.inner_text() and shipped_card.locator('a[href^="https://www.dhl.com"]').count() == 1, 'the shipment appears with the job')
+    shipped_card.locator('[data-job-details]').click(); p.wait_for_selector('#modal[open]')
+    ok('Left with reception' in p.locator('#modal').inner_text() and p.locator('#modal [data-details-step]').count() == 0, 'its details show the shipment note and no further step')
+    p.keyboard.press('Escape')
 
     # Colours: one per category; accepted, printing, ready and shipped share one.
     third_job = order(buyer, micro); host.request.post(f'{BASE}/api/host/jobs/{third_job}/accept', headers={'X-CSRF-Token': host.csrf})
     p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{third_job}"]')
-    rows = p.evaluate("""() => [...document.querySelectorAll('#job-list .list-row, .list .list-row')].map(r => { const b = r.querySelector('.job-status'); return [b.className.match(/job-(available|active|completed|cancelled)/)[1], getComputedStyle(b).backgroundColor]; })""")
-    order_seen = [c for c, _ in rows]
-    rank = {'available': 0, 'active': 1, 'completed': 2, 'cancelled': 3}
-    ok(order_seen == sorted(order_seen, key=rank.get) and {'available', 'active'} <= set(order_seen) and not {'completed', 'cancelled'} & set(order_seen), 'Active jobs lists available, then in progress, and no finished job: ' + ','.join(order_seen))
-    colours = {}
-    for c, bg in rows: colours.setdefault(c, set()).add(bg)
-    ok(all(len(v) == 1 for v in colours.values()) and len({next(iter(v)) for v in colours.values()}) == len(colours), 'one colour per category, shared within it')
+    stages = p.evaluate("[...document.querySelectorAll('#host-jobs-board .wf-column')].map(c => c.dataset.stage)")
+    ok(stages == ['available', 'accepted', 'in-progress', 'ready', 'shipped'] and p.locator(f'#host-jobs-board [data-stage="accepted"] [data-job-card="{third_job}"]').count() == 1, 'Active jobs: one column per stage, available first, no finished stage: ' + ','.join(stages))
+    # Colours: one per category in the status badges (job details); accepted to shipped share one.
+    badges = {}
+    for jid in (second, third_job, first):
+        p.locator(f'[data-job-details="{jid}"]').first.click(); p.wait_for_selector('#modal[open]')
+        b = p.locator('#modal .job-status'); badges[jid] = (b.get_attribute('class').split('job-')[-1], b.evaluate('e => getComputedStyle(e).backgroundColor')); p.keyboard.press('Escape')
+    ok(badges[second][0] == 'available' and badges[third_job][0] == badges[first][0] == 'active' and badges[third_job][1] == badges[first][1] != badges[second][1], f'one colour per category, shared within it {badges}')
 
     # Errors stay in the dialog, in the site's style.
     p.goto(BASE + '/#host/jobs/available'); p.wait_for_selector(f'[data-job="{second}"]')

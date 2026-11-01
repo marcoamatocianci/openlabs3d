@@ -17,27 +17,28 @@ async page => {
   check((await post(`host/jobs/${job}/accept`, csrf)).ok(), 'Host accepts');
   for (const status of ['printing', 'ready']) check((await post(`host/jobs/${job}/status`, csrf, {status})).ok(), status);
   check((await post(`host/jobs/${job}/status`, csrf, {status:'shipped', carrier:'DHL', tracking_number:'QA-HIST-1'})).ok(), 'Shipped');
-  // Host overview: the shipped job sits in the Shipped column of the active board.
+  // Host overview: the shipped job sits in the Awaiting buyer column of the active board.
   await open('host');
-  check(await page.locator('.hb-column', {hasText:'Shipped'}).locator('.hb-card').count() === 1, 'Shipped job on the board');
-  check(await page.locator('.hb-section a[href="#host/jobs?scope=history"]').count() === 1, 'Job history one click away');
+  check(await page.locator('#host-overview-board [data-stage="shipped"]').locator(`[data-job-card="${job}"]`).count() === 1, 'Shipped job on the board');
+  check(await page.locator('.wf-section a[href="#host/jobs?scope=history"]').count() === 1, 'Job history one click away');
   // Printing jobs: Active jobs by default, with the shipped job; history empty for now.
   await open('host/jobs');
   check((await page.locator('.scope-nav .segment[aria-current]').innerText()).startsWith('Active jobs'), 'Active jobs is the default');
-  check(await page.locator(`.list-row:has-text("Awaiting buyer confirmation")`).count() === 1, 'Shipped job is active');
-  await open('host/jobs/accepted');   // an earlier link form keeps working
-  check((await page.locator('.chips .chip[aria-current]').innerText()).startsWith('Accepted'), 'Legacy path opens the Accepted filter');
+  check(await page.locator(`#host-jobs-board [data-stage="shipped"] [data-job-card="${job}"]`).count() === 1, 'Shipped job is active, awaiting the buyer');
+  await open('host/jobs/accepted');   // an earlier link form keeps working: it marks that stage of the board
+  check(await page.locator('#host-jobs-board [data-stage="accepted"].is-focus').count() === 1, 'Legacy path opens the board on Accepted');
   csrf = await login('buyer');
   check((await post(`orders/${order.id}/jobs/${job}/received`, csrf)).ok(), 'Buyer confirms receipt');
   csrf = await login('host');
   await open('host/jobs');
-  check(await page.locator('.list-row:has-text("Awaiting buyer confirmation")').count() === 0, 'Completed job left Active jobs');
+  check(await page.locator(`[data-job-card="${job}"]`).count() === 0, 'Completed job left Active jobs');
   await page.locator('.scope-nav .segment', {hasText:'Job history'}).click();
   await page.waitForURL(/scope=history/); await page.locator('.job-history .list-row').first().waitFor();
   const done = page.locator('.job-history .list-row').first();
-  check((await done.innerText()).includes('Completed') && await done.locator('button, a[download]').count() === 0, 'History row: completed, no actions or downloads');
-  await done.locator('summary').click();
-  check((await done.innerText()).includes('QA-HIST-1'), 'History keeps the shipment');
+  check((await done.innerText()).includes('Completed') && await done.locator('[data-job], a[download]').count() === 0, 'History row: completed, no steps or downloads');
+  await done.locator('[data-job-details]').click(); await page.locator('#modal[open]').waitFor();
+  check((await page.locator('#modal').innerText()).includes('QA-HIST-1') && await page.locator('#modal [data-details-step], #modal a[download]').count() === 0, 'History details keep the shipment, read-only');
+  await page.keyboard.press('Escape');
   // Administrator: orders, approvals and requests.
   csrf = await login('admin');
   await open('admin/orders');

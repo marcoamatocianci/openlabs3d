@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request, Response, Query
 from typing import Literal
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
-from sqlalchemy import select, update, delete, func, exists
+from sqlalchemy import select, update, delete, func, exists, literal, cast, String
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -36,16 +36,25 @@ def shipment_data(job):
     if not job.shipped_at: return None
     return {'carrier':job.carrier, 'tracking_number':job.tracking_number, 'tracking_url':job.tracking_url, 'note':job.shipping_note, 'shipped_at':job.shipped_at}
 
-def job_data(job):
+def job_data(job, thumbnail=''):
     item = job.item
-    return {'id':job.id, 'order_id':job.order_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at, 'shipment':shipment_data(job),
-            'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents,
+    return {'id':job.id, 'order_id':job.order_id, 'item_id':job.item_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at, 'shipment':shipment_data(job),
+            'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents, 'thumbnail':thumbnail,
                     # Which model this line is made from; the file itself is served by /api/jobs/{id}/cad.
                     'listing_version':item.listing_version, 'cad_status':item.cad_status, 'cad_format':item.cad_path.rsplit('.',1)[-1].upper() if item.cad_path else '', 'cad_sha256':item.cad_sha256}}
 
+def listing_thumbnails(db, listing_ids):
+    """{listing id: preview URL} in one query. Only publicly viewable products get a preview; the image
+    route enforces the same rule, so this never widens access."""
+    from .visuals import visual_data
+    thumbnails = {}
+    for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(set(listing_ids)))) if listing_ids else []:
+        visual = visual_data(p) if p.status == 'approved' and not p.removed else {}
+        thumbnails[p.id] = visual.get('thumbnail', '') if visual.get('status') == 'ready' else ''
+    return thumbnails
+
 def orders_data(orders, db):
     """Serialize orders with a fixed number of queries (jobs, history, listings), whatever the page size."""
-    from .visuals import visual_data
     if not orders: return []
     ids = [o.id for o in orders]
     jobs = db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.order_id.in_(ids)).order_by(models.PrintingJob.id)).all()
@@ -55,22 +64,16 @@ def orders_data(orders, db):
     history = {}
     for e in db.scalars(select(models.Activity).where(models.Activity.subject.in_(subjects)).order_by(models.Activity.created_at, models.Activity.id)):
         history.setdefault(e.subject, []).append(e)
-    listing_ids = {i.listing_id for o in orders for i in o.items}
-    listings = {p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(listing_ids)))}
-    thumbnails = {}
-    for p in listings.values():
-        # Only publicly viewable products get a preview URL; the image route enforces the same rule.
-        visual = visual_data(p) if p.status == 'approved' and not p.removed else {}
-        thumbnails[p.id] = visual.get('thumbnail', '') if visual.get('status') == 'ready' else ''
+    thumbnails = listing_thumbnails(db, {i.listing_id for o in orders for i in o.items})
     def item_data(i):
-        return {'color':i.color, 'color_hex':i.color_hex, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material, 'thumbnail':thumbnails.get(i.listing_id, '')}
+        return {'id':i.id, 'color':i.color, 'color_hex':i.color_hex, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material, 'thumbnail':thumbnails.get(i.listing_id, '')}
     result = []
     for order in orders:
         order_jobs = by_order.get(order.id, [])
         events = sorted([e for s in [f'order:{order.id}', *[f'job:{j.id}' for j in order_jobs]] for e in history.get(s, [])], key=lambda e: (e.created_at, e.id))
         result.append({'id':order.id, 'reference':order.reference, 'buyer_id':order.buyer_id, 'status':order.status, 'total_cents':order.total_cents, 'currency':order.currency, 'created_at':order.created_at,
             'contact':order.contact, 'address':order.address, 'items':[item_data(i) for i in order.items],
-            'jobs':[job_data(j) for j in order_jobs], 'history':[{'action':e.action,'created_at':e.created_at} for e in events]})
+            'jobs':[job_data(j, thumbnails.get(j.item.listing_id, '')) for j in order_jobs], 'history':[{'action':e.action,'created_at':e.created_at} for e in events]})
     return result
 
 def order_data(order, db): return orders_data([order], db)[0]
@@ -273,6 +276,25 @@ def my_orders(auth=Depends(require), db: Session=Depends(get_db),
     query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page, owned)
     return {'items':orders_data(db.scalars(query).all(),db), 'q':q.strip(), **meta}
 
+@router.delete('/orders/{order_id}')
+def delete_pending_order(order_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
+    """Delete only a buyer's order that has never had a job accepted by a host."""
+    order = db.scalar(select(models.Order).where(models.Order.id == order_id, models.Order.buyer_id == auth[0].id))
+    if not order: fail(404, 'Order not found')
+    unavailable = exists(select(models.PrintingJob.id).where(models.PrintingJob.order_id == order_id, (models.PrintingJob.status != 'available') | models.PrintingJob.host_id.is_not(None)))
+    accepted = exists(select(models.Activity.id).where(models.Activity.action == 'job.accepted', models.Activity.subject.in_(select(literal('job:') + cast(models.PrintingJob.id, String)).where(models.PrintingJob.order_id == order_id))))
+    # Claim the order before deleting its jobs. Host acceptance checks this status too.
+    claimed = db.execute(update(models.Order).where(models.Order.id == order_id, models.Order.buyer_id == auth[0].id, models.Order.status == 'pending', ~unavailable, ~accepted).values(status='cancelled')).rowcount
+    if not claimed: fail(409, 'This order can no longer be deleted because a host has accepted a product or its status has changed.')
+    job_subjects = select(literal('job:') + cast(models.PrintingJob.id, String)).where(models.PrintingJob.order_id == order_id)
+    db.execute(delete(models.Activity).where((models.Activity.subject == f'order:{order_id}') | models.Activity.subject.in_(job_subjects)))
+    db.execute(delete(models.PrintingJob).where(models.PrintingJob.order_id == order_id))
+    db.execute(delete(models.OrderItem).where(models.OrderItem.order_id == order_id))
+    db.execute(delete(models.Order).where(models.Order.id == order_id))
+    log(db, auth[0].id, 'order.deleted', f'deleted-order:{uuid.uuid4()}', order.reference)
+    db.commit()
+    return {'message':'Order deleted'}
+
 # Once any product has left the host, the delivery address is fixed.
 ADDRESS_LOCKED = ('shipped','completed')
 
@@ -315,12 +337,15 @@ def eligibility(db, job, hosts):
 
 def host_job_rows(db, jobs, me):
     orders={o.id:o for o in db.scalars(select(models.Order).where(models.Order.id.in_({j.order_id for j in jobs})))}
+    thumbnails=listing_thumbnails(db, {j.item.listing_id for j in jobs})
     result=[]
     for job in jobs:
         # Available jobs are listed only when this host may take them now: never their own orders,
         # and only with one approved printer that fits the line and stocks its exact material and shade.
         if job.host_id != me and job_ineligibility(job, me): continue
-        item=job_data(job)
+        item=job_data(job, thumbnails.get(job.item.listing_id, ''))
+        # The reference the buyer sees on their order, so both sides name the same order.
+        item['order_reference']=orders[job.order_id].reference
         if job.host_id==me and job.status in ('accepted','printing','ready','shipped','completed'):
             order=orders[job.order_id]
             item['fulfillment']={'contact':order.contact,'address':order.address}
@@ -418,16 +443,17 @@ def self_assigned_open(db):
 
 @router.get('/admin/orders')
 def all_orders(auth=Depends(admin), db: Session=Depends(get_db), paginated:bool=False, scope:Literal['active','history']='active', group:str='all',
-               q:str=Query('',max_length=80), attention:Literal['own-order','unmatched']|None=None, page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+               q:str=Query('',max_length=80), attention:Literal['own-order','unmatched','unassigned']|None=None, page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
     """Without paginated: every order (original contract). With it: Active orders or Order history, one
     status group, optional search by reference or product, one page. attention narrows the list to the
-    orders behind an overview warning: a job held by its own buyer, or an available job no host can take."""
+    orders behind an overview warning: a job held by its own buyer, an available job no host can take, or
+    any job still waiting for a host (whatever the order's own stage: a partly made order is in progress)."""
     query=select(models.Order).options(selectinload(models.Order.items)).order_by(models.Order.created_at.desc(),models.Order.id.desc())
     meta=None
     if paginated:
         from .lifecycle import ORDER_SCOPES
         if attention:
-            jobs=self_assigned_open(db) if attention=='own-order' else unmatched_job_ids(db)
+            jobs=self_assigned_open(db) if attention=='own-order' else unmatched_job_ids(db) if attention=='unmatched' else select(models.PrintingJob.id).where(models.PrintingJob.status=='available')
             query=query.where(models.Order.id.in_(select(models.PrintingJob.order_id).where(models.PrintingJob.id.in_(jobs))))
         query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page)
     data=admin_orders_data(db, db.scalars(query).all())

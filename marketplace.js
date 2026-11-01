@@ -90,7 +90,8 @@ filter = async function(keepPage=false) {
     const samples=state.products.filter(p=>!p.api&&p.state==='approved'&&(!f.get('category')||p.category===f.get('category'))&&(p.name+' '+p.compat).toLowerCase().includes((f.get('q')||'').toLowerCase())&&match(p));
     if (!$('#results')) return;
     $('#results').innerHTML=products.map(card).join('') || `<div class="cf-empty">${emptyState('No products match these filters','Try a higher maximum price, another material or category, or clear the filters.','<button type="button" class="btn btn-sm" data-cf-clear>Clear filters</button>')}</div>`;
-    $('#marketplace-pages').innerHTML=`<button class="secondary" ${marketplacePage<=1?'disabled':''} onclick="marketplacePage--;filter(true)">Previous</button> <span>Page ${marketplacePage} · ${data.total} matching published listings</span> <button class="secondary" ${marketplacePage*data.per_page>=data.total?'disabled':''} onclick="marketplacePage++;filter(true)">Next</button>`;
+    // Page controls only when there is more than one page; otherwise just the count.
+    $('#marketplace-pages').innerHTML=data.total>data.per_page?`<button class="secondary" ${marketplacePage<=1?'disabled':''} onclick="marketplacePage--;filter(true)">Previous</button> <span>Page ${marketplacePage} · ${data.total} matching published listings</span> <button class="secondary" ${marketplacePage*data.per_page>=data.total?'disabled':''} onclick="marketplacePage++;filter(true)">Next</button>`:`<span>${data.total} matching published ${data.total===1?'listing':'listings'}</span>`;
 
   } catch(e) { if(request!==catalogueRequest || !$('#results')) return; $('#results').innerHTML='<p>Marketplace unavailable. Please try again later.</p>'; showError(e); }
 };

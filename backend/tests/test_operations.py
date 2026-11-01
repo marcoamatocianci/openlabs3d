@@ -419,6 +419,39 @@ def test_buyer_changes_delivery_address_until_something_ships():
     assert buyer.put('/api/orders/999999/address',json=new,headers=headers(token)).status_code==404
 
 
+def test_buyer_deletes_only_orders_never_accepted():
+    from app import models
+    buyer, other = TestClient(app), TestClient(app)
+    token=register(buyer,'delete-orders-buyer@example.org')
+    other_token=register(other,'delete-orders-other@example.org')
+    uid=buyer.get('/api/auth/me').json()['user']['id']
+    with SessionLocal() as db:
+        product=models.Listing(owner_id=uid,title='Test item',price_cents=100,material='PLA',status='archived')
+        db.add(product);db.flush(); ids={}; job_ids={}
+        for state in ('available','partial','reopened'):
+            order=models.Order(buyer_id=uid,reference='DELETE-'+state,idempotency_key='delete-'+state,contact=CONTACT,address=ADDRESS,total_cents=100,status='pending')
+            db.add(order);db.flush()
+            item=models.OrderItem(order_id=order.id,listing_id=product.id,title='Test',quantity=1,price_cents=100,material='PLA',dimensions='10 mm')
+            db.add(item);db.flush()
+            job=models.PrintingJob(order_id=order.id,item_id=item.id,status='accepted' if state=='partial' else 'available')
+            db.add(job);db.flush();ids[state]=order.id;job_ids[state]=job.id
+            if state=='reopened': db.add(models.Activity(actor_id=uid,action='job.accepted',subject=f'job:{job.id}'))
+        db.commit()
+    path=lambda state: f'/api/orders/{ids[state]}'
+    assert other.delete(path('available'),headers=headers(other_token)).status_code==404
+    assert buyer.delete(path('available')).status_code==403
+    assert buyer.delete(path('partial'),headers=headers(token)).status_code==409
+    assert buyer.delete(path('reopened'),headers=headers(token)).status_code==409
+    assert buyer.delete(path('available'),headers=headers(token)).status_code==200
+    assert buyer.delete(path('available'),headers=headers(token)).status_code==404
+    assert all(o['id'] != ids['available'] for o in buyer.get('/api/orders').json())
+    with SessionLocal() as db:
+        assert db.get(models.Order,ids['available']) is None
+        assert db.get(models.PrintingJob,job_ids['available']) is None
+        assert db.get(models.Order,ids['partial']) is not None
+        assert db.get(models.Order,ids['reopened']) is not None
+
+
 def test_active_work_and_history_follow_the_authoritative_status():
     """Completed and cancelled work leaves the active lists by itself; nothing is flagged or removed."""
     from app.models import Order, CustomRequest
@@ -454,6 +487,12 @@ def test_active_work_and_history_follow_the_authoritative_status():
     active=jobs('scope=active')
     assert {j['id'] for j in active['items']}>={shipped} and not {done,dropped}&{j['id'] for j in active['items']}
     assert {g['key']:g['count'] for g in active['scopes']['active']['groups']}['shipped']==1
+    # Boards place each job by the statuses its group holds (app/lifecycle.py), and the host sees the
+    # order reference the buyer sees.
+    from app.lifecycle import JOB_SCOPES
+    assert [(g['key'],tuple(g['statuses'])) for g in active['scopes']['active']['groups']]==[(k,v) for k,_,v in JOB_SCOPES['active']]
+    held=next(j for j in active['items'] if j['id']==shipped)
+    assert held['order_reference']==order['reference'] and held['item_id'] in {i['id'] for i in order['items']} and 'thumbnail' in held['item']
     assert [j['id'] for j in jobs('scope=active&group=shipped')['items']]==[shipped]
     history=jobs('scope=history')
     assert {j['id'] for j in history['items']}=={done,dropped} and history['scopes']['history']['total']==2
@@ -482,6 +521,15 @@ def test_active_work_and_history_follow_the_authoritative_status():
     assert order['id'] not in [o['id'] for o in admin_orders('scope=active')['items']]
     assert order['id'] in [o['id'] for o in buyer.get('/api/orders?paginated=true&scope=history').json()['items']]
     assert admin_orders('scope=history&q='+order['reference'])['total']==1
+    # A product being printed and another still waiting for a host: the order is in progress, yet the
+    # overview warning "printing job without a host" finds it.
+    mixed=buyer.post('/api/orders',json={'idempotency_key':'history_scope_order_3','contact':CONTACT,'address':ADDRESS,'items':lines[:2]},headers=headers(buyer_token)).json()
+    started=mixed['jobs'][0]['id']
+    assert host.post(f'/api/host/jobs/{started}/accept',headers=headers(host_token)).status_code==200
+    assert host.post(f'/api/host/jobs/{started}/status',json={'status':'printing'},headers=headers(host_token)).status_code==200
+    found=lambda q:[o['id'] for o in admin_orders(q)['items']]
+    assert mixed['id'] in found('attention=unassigned') and mixed['id'] in found('group=in-progress') and mixed['id'] not in found('group=pending')
+    assert order['id'] not in found('attention=unassigned')
     # Custom requests: accepted (quoted) stays active; closed is history; reopening brings it back.
     rid=buyer.post('/api/custom-requests',data={'payload':__import__('json').dumps({'idempotency_key':'history_scope_request','title':'Scope holder','application':'A holder used to test active and history lists.','dimensions':'10 x 10 x 10 mm','quantity':1})},headers=headers(buyer_token)).json()['id']
     def request_scope():

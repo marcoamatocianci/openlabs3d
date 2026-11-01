@@ -57,11 +57,13 @@ def scope_of(scopes, status):
 
 
 def summary(scopes, by_status):
-    """Counts for the navigation: {'active': {'total', 'groups': [{key, label, count}]}, 'history': {...}}.
+    """Counts for the navigation: {'active': {'total', 'groups': [{key, label, statuses, count}]}, 'history': {...}}.
     by_status maps each status to its number of records."""
     result = {}
     for scope in SCOPES:
-        groups = [{'key': key, 'label': label, 'count': sum(by_status.get(s, 0) for s in values)} for key, label, values in scopes[scope]]
+        # statuses: which record statuses each group holds, so a board can place every record in its
+        # column without a second, client-side copy of this classification.
+        groups = [{'key': key, 'label': label, 'statuses': list(values), 'count': sum(by_status.get(s, 0) for s in values)} for key, label, values in scopes[scope]]
         result[scope] = {'total': sum(g['count'] for g in groups), 'groups': groups}
     return result
 

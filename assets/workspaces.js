@@ -86,7 +86,7 @@ function productRow(p, admin=true) {
 function hostRow(h) {
   adminHostsCache[h.id] = h;
   const actions = `<button type="button" class="btn-ghost btn-sm" onclick="hostDetails(${h.id})">View details</button>` + (h.status === 'pending' ? `<button type="button" class="btn btn-sm" onclick="adminAction('/admin/hosts/${h.id}/approve','Approve this printing host?',{})">Approve</button><button type="button" class="btn-ghost btn-sm" onclick="rejectHost(${h.id})">Reject</button>`
-    : h.status === 'approved' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/suspend','Suspend this host? They stop receiving printing jobs.',{})">Suspend</button>`
+    : h.status === 'approved' ? `<button type="button" class="btn-ghost btn-sm danger-text" onclick="adminAction('/admin/hosts/${h.id}/suspend','Suspend this host? They stop receiving printing jobs.',{})">Suspend</button>`
     : h.status === 'suspended' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/hosts/${h.id}/restore','Restore this host?',{})">Restore</button>` : '');
   const details = [['Printers', h.printers], ['Technologies', h.technologies], ['Capabilities', h.capabilities], ['Workshop', h.additional], ['Contact', h.contact], ['Submitted', h.submitted_at && safeDate(h.submitted_at)], ['Review note', h.rejection_reason]].filter(([, v]) => v);
   return `<article class="list-row" data-search="${esc([h.name, userName(h.user), h.user.email, h.region, h.materials].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml(h.user, 36)}</span><div class="row-main"><span class="row-title">${esc(h.name || userName(h.user))}</span><span class="row-meta">${esc([h.user.email, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · '))}</span></div><span class="row-value">${esc(h.materials || '—')}${h.active_jobs != null ? `<small>${h.active_jobs} active · ${h.completed_jobs} completed</small>` : ''}</span><span class="row-status">${statusBadge(h.status)}</span><div class="row-actions">${actions}</div><details class="row-details"><summary>Details</summary><dl class="detail-grid">${details.map(([k, v]) => `<div><dt>${k}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></details></article>`;
@@ -203,12 +203,13 @@ function jobEligibility(j, index) {
 }
 // Overview warnings that open the orders behind them (admin/orders?attention=…).
 const ORDER_ATTENTION = {'own-order':'Orders with a job accepted by its own buyer, before hosts were barred from their own orders. Nothing is changed automatically: review each job below.',
+  unassigned:'Orders with a printing job still waiting for a host, whatever stage the rest of the order has reached.',
   unmatched:'Orders with an available job that no approved host can make with its current printers and stock. The reasons are listed per host below.'};
 const adminPages = {
   async 'admin'() {
     const [o, activity, users, suggestions] = await Promise.all([api('/admin/overview'), api('/admin/activity'), api('/admin/users'), api('/admin/printer-suggestions')]), approvals = o.pending_hosts + o.products_pending + (o.pending_equipment || 0) + suggestions.length;
     setNavCount('approvals', approvals);
-    const attention = [[o.pending_equipment, 'equipment update awaiting review', 'equipment updates awaiting review', 'admin/pending'], [o.pending_hosts, 'host application', 'host applications', 'admin/pending'], [o.products_pending, 'product listing awaiting review', 'product listings awaiting review', 'admin/pending'], [suggestions.length, 'printer suggestion to review', 'printer suggestions to review', 'admin/pending?type=printers'], [o.available_jobs, 'printing job without a host', 'printing jobs without a host', 'admin/orders/pending'], [o.unmatched_jobs, 'available job no approved host can make', 'available jobs no approved host can make', 'admin/orders?attention=unmatched'], [o.self_assigned_jobs, 'job accepted by its own buyer', 'jobs accepted by their own buyer', 'admin/orders?attention=own-order'], [o.custom_requests_new, 'new custom request', 'new custom requests', 'admin/requests/submitted']].filter(([n]) => n);
+    const attention = [[o.pending_equipment, 'equipment update awaiting review', 'equipment updates awaiting review', 'admin/pending'], [o.pending_hosts, 'host application', 'host applications', 'admin/pending'], [o.products_pending, 'product listing awaiting review', 'product listings awaiting review', 'admin/pending'], [suggestions.length, 'printer suggestion to review', 'printer suggestions to review', 'admin/pending?type=printers'], [o.available_jobs, 'printing job without a host', 'printing jobs without a host', 'admin/orders?attention=unassigned'], [o.unmatched_jobs, 'available job no approved host can make', 'available jobs no approved host can make', 'admin/orders?attention=unmatched'], [o.self_assigned_jobs, 'job accepted by its own buyer', 'jobs accepted by their own buyer', 'admin/orders?attention=own-order'], [o.custom_requests_new, 'new custom request', 'new custom requests', 'admin/requests/submitted']].filter(([n]) => n);
     setNavCount('requests', o.custom_requests_new || 0);
     const stats = [statCard('Active orders', o.orders_active, 'admin/orders', `${o.orders_history} in Order history`), statCard('Pending orders', o.orders_pending, 'admin/orders/pending', 'Waiting for a printing host'), statCard('Active printing hosts', o.hosts, 'admin/hosts/approved', o.pending_hosts ? `${o.pending_hosts} awaiting review` : ''), statCard('Pending approvals', approvals, 'admin/pending', 'Hosts, equipment, products and printers'), statCard('Published products', o.products_approved, 'admin/products/approved', `${o.products} in total`)];
     return {title:'Overview', body:`<div class="stat-grid">${stats.join('')}</div><div class="ws-columns"><section class="section-card"><header class="card-head"><h2>Needs attention</h2></header>${attention.length ? `<ul class="attention-list">${attention.map(([n, one, many, href]) => `<li><a href="#${href}"><strong>${n}</strong><span>${esc(n === 1 ? one : many)}</span><span class="textlink">Review →</span></a></li>`).join('')}</ul>` : emptyState('All clear', 'Nothing is waiting for an administrator right now.')}</section><section class="section-card"><header class="card-head"><h2>Recent activity</h2><a class="textlink" href="#admin/activity">View all</a></header>${activityList(activity.slice(0, 8), userIndex(users))}</section></div>`};
@@ -251,7 +252,7 @@ const adminPages = {
     const selected = route.split('/')[2] || '', all = await api('/admin/users'), items = all.filter(u => !selected || u.role === selected);
     adminUsersCache = userIndex(all);
     const filters = statusFilters('admin/users', [['buyer', 'Buyers'], ['host', 'Hosts'], ['admin', 'Admins']], all, 'role');
-    const row = u => `<article class="list-row" data-search="${esc([u.username, u.email, u.role].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml(u, 36)}</span><div class="row-main"><a class="row-title row-link" href="#admin/users/${u.id}">${esc(userName(u))}${u.id === account.id ? ' <span class="muted">(you)</span>' : ''}</a><span class="row-meta">@${esc(u.username)} · ${esc(u.email)}</span></div><span class="row-value"><small>Joined ${parseServerDate(u.created_at).toLocaleDateString()}</small></span><span class="row-status">${statusBadge(u.role, roleLabel(u.role))}${u.active ? '' : statusBadge('suspended', 'Suspended')}${u.email_verified ? '' : statusBadge('pending', 'Unverified')}</span><div class="row-actions">${u.role !== 'admin' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/users/${u.id}/${u.active ? 'suspend' : 'restore'}','${u.active ? 'Suspend this account? The user is signed out.' : 'Restore this account?'}')">${u.active ? 'Suspend' : 'Restore'}</button>` : ''}${rowMenu('user-menu-' + u.id, `<button type="button" class="menu-item danger-text" onclick="deleteUserDialog(${u.id})">Delete account…</button>`)}</div></article>`;
+    const row = u => `<article class="list-row" data-search="${esc([u.username, u.email, u.role].join(' ').toLowerCase())}"><span class="row-avatar">${avatarHtml(u, 36)}</span><div class="row-main"><a class="row-title row-link" href="#admin/users/${u.id}">${esc(userName(u))}${u.id === account.id ? ' <span class="muted">(you)</span>' : ''}</a><span class="row-meta">@${esc(u.username)} · ${esc(u.email)}</span></div><span class="row-value"><small>Joined ${parseServerDate(u.created_at).toLocaleDateString()}</small></span><span class="row-status">${statusBadge(u.role, roleLabel(u.role))}${u.active ? '' : statusBadge('suspended', 'Suspended')}${u.email_verified ? '' : statusBadge('pending', 'Unverified')}</span><div class="row-actions">${u.role !== 'admin' ? `<button type="button" class="btn-ghost btn-sm${u.active ? ' danger-text' : ''}" onclick="adminAction('/admin/users/${u.id}/${u.active ? 'suspend' : 'restore'}','${u.active ? 'Suspend this account? The user is signed out.' : 'Restore this account?'}')">${u.active ? 'Suspend' : 'Restore'}</button>` : ''}${rowMenu('user-menu-' + u.id, `<button type="button" class="menu-item danger-text" onclick="deleteUserDialog(${u.id})">Delete account…</button>`)}</div></article>`;
     return {title:'Users', body:toolbar(filterChips('Role', filters, selected), searchBox('user-list', 'Search name, username or email')) + filteredList('user-list', items.map(row), 'No users here', 'No accounts have this role.', 'No users match your search.')};
   },
   async 'admin/orders'(route) {
@@ -270,7 +271,7 @@ const adminPages = {
       const titles = o.items.map(i => `${i.quantity} × ${i.title}`);
       const ownOrder = o.jobs.some(j => j.conflict === 'own_order'), unmatched = o.jobs.some(j => j.eligibility && !j.eligibility.some(h => !h.reason));
       const jobs = o.jobs.map(j => `<li><span>${esc(j.item.title)}</span>${statusBadge(j.status)}<span class="muted">${j.host_id ? 'Host: ' + esc(personName(index, j.host_id)) : 'No host yet'}</span>${j.conflict === 'own_order' ? statusBadge('rejected', 'Host is the buyer') : ''}${jobEligibility(j, index)}${jobModel(j)}${j.status === 'accepted' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/jobs/${j.id}/reopen','Return this job to the available pool?')">Reopen job</button>` : ''}</li>`).join('');
-      return `<article class="list-row order-row" data-search="${esc([o.reference, personName(index, o.buyer_id), ...titles].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title mono">${esc(o.reference)}</span><span class="row-meta">${esc(personName(index, o.buyer_id))} · ${safeDate(o.created_at)}</span></div><span class="row-main row-summary">${esc(titles[0] || '')}${titles.length > 1 ? ` <span class="muted">+${titles.length - 1} more</span>` : ''}</span><span class="row-value">${money(o.total_cents / 100)}</span><span class="row-status">${statusBadge(o.status)}${ownOrder ? statusBadge('rejected', 'Host is the buyer') : ''}${unmatched ? statusBadge('rejected', 'No eligible host') : ''}</span><div class="row-actions">${['pending', 'accepted'].includes(o.status) ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/orders/${o.id}/cancel','Cancel order ${esc(o.reference)}? Jobs that have not started printing are cancelled.')">Cancel order</button>` : ''}</div><details class="row-details" ${attention ? 'open' : ''}><summary>Jobs, delivery and history</summary><ul class="job-list">${jobs}</ul><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(o.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(o.address))}</dd></div><div><dt>History</dt><dd>${o.history.map(e => `${esc(safeDate(e.created_at))} · ${esc(e.action)}`).join('<br>') || 'No events yet.'}</dd></div></dl></details></article>`;
+      return `<article class="list-row order-row" data-search="${esc([o.reference, personName(index, o.buyer_id), ...titles].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title mono">${esc(o.reference)}</span><span class="row-meta">${esc(personName(index, o.buyer_id))} · ${safeDate(o.created_at)}</span></div><span class="row-main row-summary">${esc(titles[0] || '')}${titles.length > 1 ? ` <span class="muted">+${titles.length - 1} more</span>` : ''}</span><span class="row-value">${money(o.total_cents / 100)}</span><span class="row-status">${statusBadge(o.status)}${ownOrder ? statusBadge('rejected', 'Host is the buyer') : ''}${unmatched ? statusBadge('rejected', 'No eligible host') : ''}</span><div class="row-actions">${['pending', 'accepted'].includes(o.status) ? `<button type="button" class="btn-ghost btn-sm danger-text" onclick="adminAction('/admin/orders/${o.id}/cancel','Cancel order ${esc(o.reference)}? Jobs that have not started printing are cancelled.')">Cancel order</button>` : ''}</div><details class="row-details" ${attention ? 'open' : ''}><summary>Jobs, delivery and history</summary><ul class="job-list">${jobs}</ul><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(o.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(o.address))}</dd></div><div><dt>History</dt><dd>${o.history.map(e => `${esc(safeDate(e.created_at))} · ${esc(e.action)}`).join('<br>') || 'No events yet.'}</dd></div></dl></details></article>`;
     };
     const label = (data.scopes[data.scope].groups.find(g => g.key === data.group) || {}).label;
     const empty = attention ? ['Nothing needs attention', 'No order has this problem any more.'] : data.scope === 'active' && !data.scopes.active.total ? ['No active orders', 'Every order is completed or cancelled. Past orders are in Order history.'] : data.scope === 'history' && !data.scopes.history.total ? ['No order history yet', 'Completed and cancelled orders move here automatically.'] : view.q ? ['No orders match your search', `Nothing here matches “${view.q}”.`] : [`No ${(label || '').toLowerCase()} orders`, 'No order is at this stage right now.'];
@@ -364,11 +365,27 @@ const shipmentDetails = s => s ? `<div><dt>Shipment</dt><dd>${esc(s.carrier)} ·
 // assignment on every download, so the link stops working once the job is completed or reassigned.
 const jobModel = j => ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="btn-ghost btn-sm" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
 const jobModelNote = j => j.item.cad_status === 'unverified' ? '<span class="row-meta">Model version not recorded at purchase: this is the model on file when versioning began.</span>' : '';
+// The order as both sides name it: the reference the buyer sees on My orders.
+const jobOrderRef = j => j.order_reference || `Order #${j.order_id}`;
+const jobSearchText = j => [j.item.title, j.item.material, colorName(j.item.color), jobOrderRef(j), 'order ' + j.order_id].join(' ').toLowerCase();
+// The host's next step on a job: accept it, or move it one stage on. Steps always go through jobAction's dialog.
+const jobStep = j => j.status === 'available' ? ['accept', 'Accept job'] : j.host_id === account.id && nextJobStep[j.status];
+const jobStepButton = (j, className = 'btn btn-sm') => { const step = jobStep(j); return step ? `<button type="button" class="${className}" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : ''; };
+const jobDownload = (j, className) => j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) && ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="${className}" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
+const jobTracking = s => s ? (s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number)) : '';
+// When the job reached its current stage: the closest thing to a deadline the marketplace records.
+const JOB_SINCE = {available:'Listed', accepted:'Accepted', printing:'Printing started', ready:'Printed', shipped:'Shipped', completed:'Completed', cancelled:'Cancelled'};
+const jobSince = j => JOB_SINCE[j.status] ? `${JOB_SINCE[j.status]} ${timeAgo(j.status === 'shipped' && j.shipment?.shipped_at || j.updated_at)}` : '';
+/* Job card, shared by the Printing jobs board and the overview: what to make, in which material and
+   colour, for which order, since when, and the one next step. Everything else is in Details. */
+function jobCard(j, level = 3) {
+  const i = j.item, shipped = j.status === 'shipped' && j.shipment;
+  return `<li class="wf-card job-card" data-job-card="${j.id}" data-search="${esc(jobSearchText(j))}"><div class="wf-card-main">${orderLineThumb(i)}<div class="wf-card-copy"><h${level} class="wf-card-title">${esc(i.title)}</h${level}></div></div><p class="wf-card-config">${orderLineConfig(i)}<span class="wf-qty">× ${i.quantity}</span></p><p class="wf-card-ref">Order ${esc(jobOrderRef(j))}</p><p class="wf-card-meta"><span>${money(i.price_cents * i.quantity / 100)}</span><span>${esc(jobSince(j))}</span></p>${shipped ? `<p class="wf-card-note">${esc(j.shipment.carrier)} · Tracking ${jobTracking(j.shipment)}</p>` : ''}<div class="wf-card-links"><button type="button" class="wf-link" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button>${jobDownload(j, 'wf-link')}</div>${jobStepButton(j, 'btn btn-sm wf-primary')}</li>`;
+}
+// Job history: one compact row per job, with the product, its configuration and the outcome.
 function jobRow(j) {
-  const i = j.item, step = j.host_id === account.id && nextJobStep[j.status];
-  const action = (j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModel(j) : '') + (j.status === 'available' ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'accept')">Accept job</button>` : step ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : '');
-  const hex = /^#[0-9a-f]{6}$/i.test(i.color_hex || '') ? i.color_hex : '';
-  return `<article class="list-row job-row" data-search="${esc([i.title, i.material, colorName(i.color), 'order ' + j.order_id].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta job-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" title="${esc(hex)}" aria-hidden="true"></span>` : ''}<span>${esc([i.material, colorName(String(i.color).split('~')[0]), i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span></span>${j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) ? jobModelNote(j) : ''}</div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${jobBadge(j.status)}${['completed', 'cancelled'].includes(j.status) ? `<small class="job-status-note">${esc(safeDate(j.updated_at))}</small>` : ''}</span><div class="row-actions">${action}</div>${j.fulfillment ? `<details class="row-details"><summary>Buyer contact and delivery</summary><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div>${shipmentDetails(j.shipment)}</dl></details>` : ''}</article>`;
+  const i = j.item;
+  return `<article class="list-row job-row" data-search="${esc(jobSearchText(j))}">${orderLineThumb(i)}<div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta job-meta">${orderLineConfig(i)}<span>${esc([i.dimensions, jobOrderRef(j)].filter(Boolean).join(' · '))}</span></span></div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${jobBadge(j.status)}<small class="job-status-note">${esc(safeDate(j.updated_at))}</small></span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button></div></article>`;
 }
 /* Job steps are confirmed in a site-styled dialog (not the browser's confirm box) that shows which
    job changes and what the step means for the buyer. */
@@ -397,7 +414,7 @@ function jobSummary(j, action) {
     <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Awaiting buyer confirmation</small>' : ''}</li>`).join('')}</ol>`;
 }
 /** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
-function actionDialog({title, body, confirm, busy, run, setup}) {
+function actionDialog({title, body, confirm, busy, run, setup, initialFocus}) {
   return new Promise(resolve => {
     let d = $('#action-dialog');
     if (!d) { d = document.createElement('dialog'); d.id = 'action-dialog'; d.className = 'ad-dialog'; d.setAttribute('aria-labelledby', 'ad-title'); document.body.append(d); keepFocusInside(d); }
@@ -421,12 +438,12 @@ function actionDialog({title, body, confirm, busy, run, setup}) {
     d.querySelector('form')?.addEventListener('submit', e => { e.preventDefault(); button.click(); });
     d.querySelector('form')?.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches('input:not(.cf-input):not(.country-search)')) { e.preventDefault(); button.click(); } });
     setup?.(d);
-    d.showModal(); (d.querySelector('.ad-body input:not([type=hidden]), .ad-body .cf-trigger') || button).focus();
+    d.showModal(); ((initialFocus && d.querySelector(initialFocus)) || d.querySelector('.ad-body input:not([type=hidden]), .ad-body .cf-trigger') || button).focus();
   });
 }
 // Overrides the browser confirm box from operations.js.
 jobAction = async function(id, action) {
-  const step = JOB_STEPS[action], trigger = document.activeElement;
+  const step = JOB_STEPS[action], trigger = document.activeElement, stage = $(`[data-job-card="${id}"]`)?.closest('.wf-column')?.dataset.stage;
   if (!step) return;
   let refused = false;
   const ok = await actionDialog({title:step.title, confirm:step.confirm, busy:step.busy,
@@ -440,8 +457,10 @@ jobAction = async function(id, action) {
     }});
   if (!ok && !refused) { if (trigger?.isConnected) trigger.focus(); return; }
   if (ok) toast(step.done);
-  // Return focus to the same job once the list has refreshed (its next step, or the selected filter).
-  const app = $('#app'), watch = new MutationObserver(() => { const next = app.querySelector(`[data-job="${id}"]`) || app.querySelector('.ws-main .chip.active'); if (next && !app.querySelector('.ws-main[aria-busy]')) { watch.disconnect(); next.focus(); } });
+  // Return focus to the same job once the board has refreshed: its next step, or its card when it has
+  // none left (shipped); a job that left the board (taken meanwhile) hands focus to the column it was in,
+  // or to the selected view when the board is now empty.
+  const app = $('#app'), watch = new MutationObserver(() => { const next = app.querySelector(`[data-job="${id}"]`) || app.querySelector(`[data-job-details="${id}"]`) || (stage && app.querySelector(`.wf-column[data-stage="${stage}"]`)) || app.querySelector('.ws-main .scope-nav [aria-current]'); if (next && !app.querySelector('.ws-main[aria-busy]')) { watch.disconnect(); next.focus(); } });
   watch.observe(app, {childList:true, subtree:true}); setTimeout(() => watch.disconnect(), 3000);
   render();
 };
@@ -456,48 +475,69 @@ function hostJobsView(route) {
   return {scope:legacy ? legacy[0] : q.scope === 'history' ? 'history' : 'active', group:legacy ? legacy[1] : q.group || 'all', q:(q.q || '').slice(0, 80), page:Math.max(1, parseInt(q.page || '1', 10) || 1)};
 }
 const hostJobsHref = (view, params = {}) => scopeHref('host/jobs', {scope:view.scope, group:view.group, q:view.q}, params);
-// A compact card for the overview board: what it is, its stage, and the next step.
-function jobCard(j) {
-  const i = j.item, step = nextJobStep[j.status], hex = /^#[0-9a-f]{6}$/i.test(i.color_hex || '') ? i.color_hex : '';
-  return `<li class="hb-card"><div class="hb-card-head"><strong>${esc(i.title)} <span class="muted">× ${i.quantity}</span></strong>${jobBadge(j.status, false)}</div><p class="hb-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" aria-hidden="true"></span>` : ''}${esc([i.material, colorName(String(i.color).split('~')[0]), 'Order #' + j.order_id].filter(Boolean).join(' · '))}</p>${step || ['accepted', 'printing', 'ready'].includes(j.status) ? `<div class="hb-actions">${['accepted', 'printing', 'ready'].includes(j.status) ? jobModel(j) : ''}${step ? `<button type="button" class="btn btn-sm" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : ''}</div>` : ''}</li>`;
+// One sentence per stage under its column title (the stages themselves come from the API).
+const HOST_STAGE_HINTS = {available:'Fits one of your approved printers and a colour you stock.', accepted:'Start printing when you are ready.', 'in-progress':'Mark it ready once printed.', ready:'Pack it, then add the tracking details.', shipped:'Completes when the buyer confirms receipt. Nothing to do.'};
+const hostStages = data => data.scopes.active.groups.map(g => ({...g, hint:HOST_STAGE_HINTS[g.key] || ''}));
+// Job progress as the buyer will see it, with the current stage marked.
+function jobFlow(j) {
+  const reached = j.status === 'completed' ? JOB_FLOW.length : JOB_FLOW.findIndex(([s]) => s === j.status);
+  return `<ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Buyer confirms receipt</small>' : ''}</li>`).join('')}</ol>`;
 }
-const HOST_BOARD = [['accepted', 'Accepted', 'Start printing when you are ready.'], ['production', 'In production', 'Printing, or printed and ready to ship.'], ['shipped', 'Shipped', 'Completes when the buyer confirms receipt.']];
+// Everything about one job, read-only, with its next step in the footer.
+function jobDetails(id) {
+  const j = hostJobs[id]; if (!j) return;
+  const i = j.item, step = jobStep(j), dimensions = i.dimensions ? reviewItem('Dimensions', esc(i.dimensions)) : '';
+  const product = `<div class="detail-product">${orderLineThumb(i, 'detail-thumb')}<div><strong>${esc(i.title)}</strong>${orderLineConfig(i)}<span class="muted">Quantity ${i.quantity} · ${money(i.price_cents / 100)} each · ${money(i.price_cents * i.quantity / 100)} in total</span></div></div><dl class="detail-grid">${reviewItem('Order', esc(jobOrderRef(j)))}${reviewItem('Status', jobBadge(j.status, false))}${dimensions}${reviewItem('Last update', esc(safeDate(j.updated_at)))}</dl>`;
+  const model = jobDownload(j, 'btn-ghost btn-sm') ? reviewSection('Model', `<p class="muted">The exact model version the buyer ordered.</p><div class="actions">${jobDownload(j, 'btn-ghost btn-sm')}</div>${jobModelNote(j)}`) : '';
+  const delivery = j.fulfillment ? reviewSection('Buyer contact and delivery', `<dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div>${shipmentDetails(j.shipment)}</dl><p class="muted">Agree payment and delivery directly with the buyer before printing.</p>`)
+    : j.status === 'available' ? reviewSection('Before you accept', '<ul class="ad-notes"><li>You commit to printing this item in the material and colour shown.</li><li>The buyer’s contact and delivery details become visible once the job is yours.</li><li>Agree payment and delivery directly with the buyer before printing.</li></ul>') : '';
+  const dialog = openReview(i.title, `Printing job · ${jobOrderRef(j)}`, reviewSection('Product', product) + reviewSection('Progress', jobFlow(j)) + model + delivery, step ? `<button type="button" class="btn btn-sm" data-details-step>${step[1]}</button>` : '');
+  // The confirmation replaces the details, so only one dialog is open at a time.
+  dialog.querySelector('[data-details-step]')?.addEventListener('click', () => { dialog.close(); jobAction(j.id, step[0]); });
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-job-details]'); if (b) jobDetails(+b.dataset.jobDetails); });
 const hostPages = {
   async 'host'() {
     const [data, listings] = await Promise.all([api('/host/jobs?scope=active'), api('/listings/mine')]), jobs = data.items; rememberJobs(jobs);
     const mine = jobs.filter(j => j.host_id === account.id), available = jobs.filter(j => j.status === 'available');
     setNavCount('jobs', available.length);
-    const columns = {accepted:mine.filter(j => j.status === 'accepted'), production:mine.filter(j => ['printing', 'ready'].includes(j.status)), shipped:mine.filter(j => j.status === 'shipped')};
     const rejected = listings.filter(p => p.status === 'rejected').length, pending = listings.filter(p => p.status === 'pending').length, done = data.scopes.history.groups.find(g => g.key === 'completed')?.count || 0;
     const stats = [statCard('Available jobs', available.length, 'host/jobs?group=available', 'Matching your printers and materials'), statCard('Active jobs', mine.length, 'host/jobs', 'Accepted, in production or shipped'), statCard('Completed', done, 'host/jobs?scope=history&group=completed', 'In your job history'), statCard('Published listings', listings.filter(p => p.status === 'approved').length, 'my-listings', pending ? `${pending} awaiting review` : '')];
     const notices = [rejected ? `<div class="banner warning"><span>${rejected === 1 ? 'One listing was' : rejected + ' listings were'} returned by an administrator with review notes.</span><a class="btn-ghost btn-sm" href="#my-listings">Review listings</a></div>` : ''].join('');
-    const board = `<div class="hb-board">${HOST_BOARD.map(([key, label, hint]) => `<section class="hb-column" aria-labelledby="hb-${key}"><header class="hb-column-head"><h3 id="hb-${key}">${label}</h3><span class="segment-count">${columns[key].length}</span></header><p class="hb-hint">${hint}</p>${columns[key].length ? `<ul class="hb-list">${columns[key].map(jobCard).join('')}</ul>` : `<p class="hb-empty">Nothing here right now.</p>`}</section>`).join('')}</div>`;
-    return {title:'Overview', action:available.length ? `<a class="btn btn-sm" href="#host/jobs?group=available">View ${available.length} available job${available.length === 1 ? '' : 's'}</a>` : '', body:`${notices}<div class="stat-grid">${stats.join('')}</div><section class="section-card hb-section"><header class="card-head"><div><h2>Your active jobs</h2><p class="muted">Agree payment and delivery directly with the buyer before printing.</p></div><a class="textlink" href="#host/jobs?scope=history">${icon('history')} Job history</a></header>${mine.length ? board : emptyState('No active jobs', available.length ? 'Accept an available job to start printing.' : 'New jobs matching your printers and materials will appear in Printing jobs.', available.length ? '<a class="btn btn-sm" href="#host/jobs?group=available">Browse available jobs</a>' : '')}</section>`};
+    // The same stages and cards as Printing jobs, without the available pool: a summary of the host's own work.
+    const board = workflowBoard({id:'host-overview-board', label:'Your active jobs', stages:hostStages(data).filter(s => s.key !== 'available'), items:mine, card:jobCard, level:3, limit:3, className:'wf-compact',
+      more:(c, n) => `<a class="wf-more" href="#host/jobs?group=${c.key}">${n} more in Printing jobs</a>`});
+    return {title:'Overview', action:available.length ? `<a class="btn btn-sm" href="#host/jobs?group=available">View ${available.length} available job${available.length === 1 ? '' : 's'}</a>` : '', body:`${notices}<div class="stat-grid">${stats.join('')}</div><section class="wf-section" aria-labelledby="host-overview-title"><header class="wf-section-head"><div><h2 id="host-overview-title">Your active jobs</h2><p class="muted">Agree payment and delivery directly with the buyer before printing.</p></div><a class="textlink" href="#host/jobs?scope=history">${icon('history')} Job history</a></header>${mine.length ? board : `<div class="section-card">${emptyState('No active jobs', available.length ? 'Accept an available job to start printing.' : 'New jobs matching your printers and materials will appear in Printing jobs.', available.length ? '<a class="btn btn-sm" href="#host/jobs?group=available">Browse available jobs</a>' : '')}</div>`}</section>`,
+      bind:() => bindWorkflowBoards()};
   },
   async 'host/jobs'(route) {
-    const view = hostJobsView(route);
+    const view = hostJobsView(route), active = view.scope === 'active';
     let data;
-    try { data = await api('/host/jobs?' + new URLSearchParams({scope:view.scope, group:view.group, q:view.q, page:view.page})); }
+    // The board shows every active stage at once (a stage in the address only scrolls to it); history is filtered by page.
+    try { data = await api('/host/jobs?' + new URLSearchParams(active ? {scope:'active'} : {scope:'history', group:view.group, q:view.q, page:view.page})); }
     catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + hostJobsHref(view, {group:'all', page:1})); return {title:'Printing jobs', body:''}; } throw e; }
     rememberJobs(data.items);
     setNavCount('jobs', data.scopes.active.groups.find(g => g.key === 'available').count);
     const nav = scopeNav({label:'Printing jobs', base:'host/jobs', data, names:HOST_SCOPE_NAMES});
-    const items = data.scope === 'active' ? [...data.items].sort((a, b) => jobOrder.indexOf(a.status) - jobOrder.indexOf(b.status)) : data.items;
-    const label = (data.scopes[data.scope].groups.find(g => g.key === data.group) || {}).label;
-    let empty;
-    if (data.scope === 'active' && !data.scopes.active.total) empty = ["You're all caught up", 'No jobs to accept or make right now. New order requests matching your printers and materials appear here.'];
-    else if (data.scope === 'history' && !data.scopes.history.total) empty = ['No job history yet', 'Jobs move here once their buyer confirms receipt, or if they are cancelled.'];
-    else if (view.q) empty = ['No jobs match your search', `Nothing in your job history matches “${view.q}”.`];
-    else empty = [`No ${(label || '').toLowerCase()} jobs`, data.scope === 'active' ? 'None of your active jobs is at this stage.' : 'None of your past jobs has this status.'];
-    const tools = data.scope === 'active' ? (items.length ? searchBox('job-list', 'Search active jobs') : '') : `<form class="search-field" id="job-history-search" role="search">${icon('search')}<label class="sr-only" for="job-q">Search job history</label><input id="job-q" type="search" name="q" value="${esc(view.q)}" placeholder="Search by product" autocomplete="off" maxlength="80"></form>`;
-    const intro = data.scope === 'active' ? 'A job is listed when one of your approved printers fits the product and you stock its exact material and colour. Jobs from your own orders are never listed. Buyer contact and delivery details appear once a job is yours.' : 'Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.';
-    const list = items.length ? `<div class="list${data.scope === 'history' ? ' job-history' : ''}" id="job-list">${items.map(jobRow).join('')}${listEmpty('No jobs match your search.')}</div>` : `<div class="list">${emptyState(...empty)}</div>`;
-    return {title:'Printing jobs', body:`<p class="muted ws-intro">${intro}</p>${nav.primary}${toolbar(nav.secondary, tools)}${list}${data.scope === 'history' ? pager(page => hostJobsHref(view, {page}), data.page, data.pages) : ''}`,
-      bind:() => { const form = $('#job-history-search'); if (form) form.onsubmit = e => { e.preventDefault(); location.hash = '#' + hostJobsHref(view, {q:form.elements.q.value.trim(), page:1}); }; }};
+    if (active) {
+      const intro = '<p class="muted ws-intro">Accept jobs that fit your approved printers and stocked colours, then move each one through production to shipping. Jobs from your own orders are never listed. Completed and cancelled jobs move to Job history.</p>';
+      if (!data.items.length) return {title:'Printing jobs', body:`${intro}${nav.primary}<div class="section-card">${emptyState("You're all caught up", 'No jobs to accept or make right now. New order requests matching your printers and materials appear here.', data.scopes.history.total ? `<a class="btn-ghost btn-sm" href="#${hostJobsHref(view, {scope:'history', group:'all', q:'', page:1})}">Job history</a>` : '')}</div>`};
+      const board = workflowBoard({id:'host-jobs-board', label:'Active jobs', stages:hostStages(data), items:data.items, card:jobCard, level:2, lane:['shipped'], focus:view.group,
+        empty:c => c.key === 'available' ? 'No new jobs match your printers and stock right now.' : 'Nothing here right now.'});
+      return {title:'Printing jobs', body:`${intro}<div class="wf-toolbar">${nav.primary}${searchBox('host-jobs-search', 'Search active jobs')}</div><div id="host-jobs-search">${board}${listEmpty('No active jobs match your search.')}</div>`, bind:() => bindWorkflowBoards()};
+    }
+    const label = (data.scopes.history.groups.find(g => g.key === data.group) || {}).label;
+    const empty = !data.scopes.history.total ? ['No job history yet', 'Jobs move here once their buyer confirms receipt, or if they are cancelled.']
+      : view.q ? ['No jobs match your search', `Nothing in your job history matches “${view.q}”.`] : [`No ${(label || '').toLowerCase()} jobs`, 'None of your past jobs has this status.'];
+    const tools = `<form class="search-field" id="job-history-search" role="search">${icon('search')}<label class="sr-only" for="job-q">Search job history</label><input id="job-q" type="search" name="q" value="${esc(view.q)}" placeholder="Search by product" autocomplete="off" maxlength="80"></form>`;
+    const list = data.items.length ? `<div class="list job-history" id="job-list">${data.items.map(jobRow).join('')}</div>` : `<div class="list">${emptyState(...empty)}</div>`;
+    return {title:'Printing jobs', body:`<p class="muted ws-intro">Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.</p>${nav.primary}${toolbar(nav.secondary, tools)}${list}${pager(page => hostJobsHref(view, {page}), data.page, data.pages)}`,
+      bind:() => { const form = $('#job-history-search'); form.onsubmit = e => { e.preventDefault(); location.hash = '#' + hostJobsHref(view, {q:form.elements.q.value.trim(), page:1}); }; }};
   },
   async 'my-listings'() {
     const items = (await api('/listings/mine')).filter(p => !p.removed);
-    return {title:'My listings', action:`<a class="btn btn-sm" href="#create-listing">${icon('plus')}New listing</a>`, body:`<p class="muted ws-intro">An administrator reviews every listing before it is published. Changing a published listing sends it back for review.</p>` + (items.length ? `<div class="list">${items.map(p => productRow(p, false)).join('')}</div>` : `<div class="list">${emptyState('No listings yet', 'Create a listing with photographs and a 3D model, then submit it for review.', '<a class="btn btn-sm" href="#create-listing">Create listing</a>')}</div>`)};
+    // One way to start a listing: the header action, or the empty state's when there is nothing yet.
+    return {title:'My listings', action:items.length ? `<a class="btn btn-sm" href="#create-listing">${icon('plus')}New listing</a>` : '', body:`<p class="muted ws-intro">An administrator reviews every listing before it is published. Changing a published listing sends it back for review.</p>` + (items.length ? `<div class="list">${items.map(p => productRow(p, false)).join('')}</div>` : `<div class="list">${emptyState('No listings yet', 'Create a listing with photographs and a 3D model, then submit it for review.', `<a class="btn btn-sm" href="#create-listing">${icon('plus')}New listing</a>`)}</div>`)};
   },
   'my-printers': equipmentOverview, 'my-printers/materials': equipmentOverview,
   async 'host/profile'() {
@@ -515,15 +555,7 @@ render();
 
 
 /* Read-only review dialogs for Approvals: everything submitted, before Approve or Reject. */
-const reviewItem = (label, value) => `<div><dt>${esc(label)}</dt><dd>${value || '<span class="muted">—</span>'}</dd></div>`;
-const reviewSection = (title, body) => `<section class="review-section"><h3>${esc(title)}</h3>${body}</section>`;
-function openReview(title, subtitle, body, actions) {
-  const dialog = $('#modal'); dialog.className = 'review-dialog';
-  dialog.innerHTML = `<div class="review-frame"><header class="review-head"><div><p class="ws-crumb">${esc(subtitle)}</p><h2>${esc(title)}</h2></div><button type="button" class="icon-btn" data-close-modal aria-label="Close">${icon('close')}</button></header><div class="review-body">${body}</div><footer class="review-foot"><button type="button" class="btn-ghost btn-sm" data-close-modal>Close</button>${actions}</footer></div>`;
-  dialog.addEventListener('close', () => { dialog.querySelector('[data-cad-viewer]')?.disposeViewer?.(); dialog.className = ''; }, {once:true});
-  dialog.showModal();
-  return dialog;
-}
+// reviewItem, reviewSection and openReview are shared building blocks (navigation.js).
 async function productDetails(id) {
   try {
     const [listings, users] = await Promise.all([api('/admin/listings'), api('/admin/users')]);
