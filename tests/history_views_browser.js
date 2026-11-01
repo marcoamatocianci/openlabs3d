@@ -15,24 +15,25 @@ async page => {
   const job = order.jobs[0].id;
   csrf = await login('host');
   check((await post(`host/jobs/${job}/accept`, csrf)).ok(), 'Host accepts');
-  for (const status of ['printing', 'ready']) check((await post(`host/jobs/${job}/status`, csrf, {status})).ok(), status);
+  check((await post(`host/jobs/${job}/status`, csrf, {status:'ready'})).ok(), 'ready (straight from accepted)');
   check((await post(`host/jobs/${job}/status`, csrf, {status:'shipped', carrier:'DHL', tracking_number:'QA-HIST-1'})).ok(), 'Shipped');
-  // Host overview: the shipped job sits in the Awaiting buyer column of the active board.
+  // Host overview: the shipped job counts under Awaiting buyer; job history is one click away.
   await open('host');
-  check(await page.locator('#host-overview-board [data-stage="shipped"]').locator(`[data-job-card="${job}"]`).count() === 1, 'Shipped job on the board');
-  check(await page.locator('.wf-section a[href="#host/jobs?scope=history"]').count() === 1, 'Job history one click away');
-  // Printing jobs: Active jobs by default, with the shipped job; history empty for now.
-  await open('host/jobs');
-  check((await page.locator('.scope-nav .segment[aria-current]').innerText()).startsWith('Active jobs'), 'Active jobs is the default');
-  check(await page.locator(`#host-jobs-board [data-stage="shipped"] [data-job-card="${job}"]`).count() === 1, 'Shipped job is active, awaiting the buyer');
-  await open('host/jobs/accepted');   // an earlier link form keeps working: it marks that stage of the board
-  check(await page.locator('#host-jobs-board [data-stage="accepted"].is-focus').count() === 1, 'Legacy path opens the board on Accepted');
+  const awaiting = +(await page.locator('.ho-stat[data-stage="shipped"] .ho-stat-count').innerText());
+  check(awaiting >= 1 && await page.locator('#app [data-job-card]').count() === 0, 'Shipped job counted under Awaiting buyer (no job cards on the overview)');
+  check(await page.locator('.ho-head a[href="#host/jobs?scope=history"]').count() === 1, 'Job history one click away');
+  // Printing jobs: active jobs by default, with the shipped job; history one button away.
+  await open('host/jobs?group=shipped');
+  check(await page.locator('#ws-title').innerText() === 'Printing jobs' && await page.locator('.ws-actions a', {hasText:'Job history'}).count() === 1, 'Active jobs is the default, Job history a secondary button');
+  check(await page.locator(`#host-jobs-board .sb-col.is-open[data-stage="shipped"] [data-job-card="${job}"]`).count() === 1, 'Shipped job is active, awaiting the buyer');
+  await open('host/jobs/accepted');   // an earlier link form keeps working: it opens the stage that holds accepted jobs
+  check(await page.locator('#host-jobs-board .sb-col.is-open[data-stage="in-production"]').count() === 1, 'Legacy path opens the board on In production');
   csrf = await login('buyer');
   check((await post(`orders/${order.id}/jobs/${job}/received`, csrf)).ok(), 'Buyer confirms receipt');
   csrf = await login('host');
   await open('host/jobs');
   check(await page.locator(`[data-job-card="${job}"]`).count() === 0, 'Completed job left Active jobs');
-  await page.locator('.scope-nav .segment', {hasText:'Job history'}).click();
+  await page.locator('.ws-actions a', {hasText:'Job history'}).click();
   await page.waitForURL(/scope=history/); await page.locator('.job-history .list-row').first().waitFor();
   const done = page.locator('.job-history .list-row').first();
   check((await done.innerText()).includes('Completed') && await done.locator('[data-job], a[download]').count() === 0, 'History row: completed, no steps or downloads');

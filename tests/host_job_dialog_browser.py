@@ -47,9 +47,9 @@ with sync_playwright() as pw:
     ok(p.evaluate("document.querySelector('#action-dialog').matches(':modal')") and d.get_by_role('heading', name='Accept this printing job?').is_visible(), 'Accept opens the site dialog')
     ok(not native, 'no browser confirm box')
     text = d.inner_text()
-    ok('Microtube Rack' in text and '× 2' in text and 'PLA · Orange' in text and f'Order #' in text, 'shows the product, quantity, material and colour')
+    ok('Microtube Rack' in text and '× 2' in text and 'PLA · Orange' in text and 'Order OL3D-' in text, 'shows the product, quantity, material and colour, and the order as the buyer names it')
     ok(d.locator('.ad-swatch').evaluate('e => getComputedStyle(e).backgroundColor') == 'rgb(230, 97, 0)', 'colour swatch uses the ordered shade')
-    ok(d.locator('.ad-flow [aria-current=step]').inner_text().strip() == 'Accepted', 'progress shows the next step')
+    ok(d.locator('.ad-flow [aria-current=step]').inner_text().strip() == 'In production', 'progress shows the next step: In production')
     ok('contact and delivery details become visible' in text, 'explains what accepting means')
     ok(p.evaluate("document.activeElement.dataset.adConfirm !== undefined"), 'focus starts on the action')
     ok(p.evaluate("getComputedStyle(document.documentElement).overflow") == 'hidden', 'page behind does not scroll')
@@ -66,26 +66,27 @@ with sync_playwright() as pw:
     open_step(p, first, 'Accept job'); p.mouse.click(8, 450)
     ok(p.locator(DIALOG + '[open]').count() == 0, 'clicking outside closes it')
 
-    # Each step up to shipped.
-    for label, title, after, toast in (('Accept job', 'Accept this printing job?', 'accepted', 'Job accepted'), ('Start printing', 'Start printing?', 'printing', 'Printing started'),
-                                       ('Mark ready', 'Mark as ready for delivery?', 'ready', 'Marked ready for delivery')):
-        if label != 'Accept job': p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{first}"]')
+    # Each step up to shipped: accepting puts the job in production; Mark ready to ship follows directly.
+    for label, title, after, toast, stage in (('Accept job', 'Accept this printing job?', 'accepted', 'Job accepted', 'available'),
+                                              ('Mark ready to ship', 'Mark as ready to ship?', 'ready', 'Marked ready to ship', 'in-production')):
+        if label != 'Accept job': p.goto(BASE + f'/#host/jobs?group={stage}'); p.wait_for_selector(f'[data-job="{first}"]')
         open_step(p, first, label)
         ok(d.get_by_role('heading', name=title).is_visible(), f'{label}: dialog titled "{title}"')
-        if label == 'Mark ready': p.screenshot(path=str(OUT / 'ready-1366-light.png'))
+        if label != 'Accept job': p.screenshot(path=str(OUT / 'ready-1366-light.png'))
         d.get_by_role('button', name=label).click()
         p.wait_for_selector(DIALOG + ':not([open])', state='attached'); p.get_by_text(toast, exact=True).wait_for()
         ok(status(first) == after, f'{label}: job is now {after}, confirmed with "{toast}"')
-    p.wait_for_timeout(400)
-    ok(p.evaluate("!!(document.activeElement.dataset.job || document.activeElement.dataset.jobDetails)"), 'focus lands back on the job after the refresh')
+        p.wait_for_function("document.activeElement?.closest('.sb-col.is-open')")
+        ok(p.locator('.sb-col.is-open').get_attribute('data-stage') == stage, f'{label}: the stage it was done from stays open, and keeps focus')
+    ok(p.get_by_text('Start printing').count() == 0, 'no Start printing step')
     ok(p.locator(f'[data-job="{first}"]', has_text='Mark completed').count() == 0, 'hosts cannot complete a job')
 
     # Shipping: same dialog and bullets, plus the shipment form.
-    p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{first}"]')
+    p.goto(BASE + '/#host/jobs?group=ready'); p.wait_for_selector(f'[data-job="{first}"]')
     open_step(p, first, 'Mark shipped')
     ok(d.get_by_role('heading', name='Mark as shipped?').is_visible() and d.locator('.ad-notes li').count() == 3, 'Mark shipped opens the job dialog with its notes')
-    ok(d.locator('.ad-flow [aria-current=step]').inner_text().strip() == 'Shipped', 'progress shows Shipped between Ready and Completed')
-    ok([t.strip().split('\n')[0] for t in d.locator('.ad-flow li').all_inner_texts()] == ['Accepted', 'Printing', 'Ready', 'Shipped', 'Completed'] and 'Awaiting buyer confirmation' in d.locator('.ad-flow li').last.inner_text(), 'Completed waits for the buyer')
+    ok(d.locator('.ad-flow [aria-current=step]').inner_text().strip() == 'Shipped', 'progress shows Shipped between Ready to ship and Completed')
+    ok([t.strip().split('\n')[0] for t in d.locator('.ad-flow li').all_inner_texts()] == ['In production', 'Ready to ship', 'Shipped', 'Completed'] and 'Awaiting buyer confirmation' in d.locator('.ad-flow li').last.inner_text(), 'Completed waits for the buyer')
     ok(p.evaluate("document.activeElement.name") == 'carrier', 'focus starts in the shipment form')
     p.screenshot(path=str(OUT / 'shipped-1366-light.png'))
     d.get_by_role('button', name='Mark shipped').click()
@@ -101,8 +102,8 @@ with sync_playwright() as pw:
     # A shipped job stays in Active jobs (Awaiting buyer) until the buyer confirms receipt.
     p.goto(BASE + '/#host/jobs?group=shipped'); p.wait_for_selector(f'[data-job-card="{first}"]')
     shipped_card = p.locator(f'#host-jobs-board [data-stage="shipped"] [data-job-card="{first}"]')
-    ok(shipped_card.count() == 1 and p.locator('.scope-nav .segment[aria-current]').inner_text().startswith('Active jobs'), 'a shipped job stays an active job')
-    ok(p.locator('#host-jobs-board [data-stage="shipped"].is-focus .wf-column-title').inner_text().lower() == 'awaiting buyer', 'listed under Awaiting buyer, the stage the link asked for')
+    ok(shipped_card.count() == 1 and p.locator('#ws-title').inner_text() == 'Printing jobs', 'a shipped job stays an active job')
+    ok(p.locator('#host-jobs-board .sb-col.is-open[data-stage="shipped"] .sb-title').inner_text() == 'Awaiting buyer', 'listed under Awaiting buyer, the stage the link opened')
     ok('DHL Express' in shipped_card.inner_text() and shipped_card.locator('a[href^="https://www.dhl.com"]').count() == 1, 'the shipment appears with the job')
     shipped_card.locator('[data-job-details]').click(); p.wait_for_selector('#modal[open]')
     ok('Left with reception' in p.locator('#modal').inner_text() and p.locator('#modal [data-details-step]').count() == 0, 'its details show the shipment note and no further step')
@@ -110,12 +111,13 @@ with sync_playwright() as pw:
 
     # Colours: one per category; accepted, printing, ready and shipped share one.
     third_job = order(buyer, micro); host.request.post(f'{BASE}/api/host/jobs/{third_job}/accept', headers={'X-CSRF-Token': host.csrf})
-    p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{third_job}"]')
-    stages = p.evaluate("[...document.querySelectorAll('#host-jobs-board .wf-column')].map(c => c.dataset.stage)")
-    ok(stages == ['available', 'accepted', 'in-progress', 'ready', 'shipped'] and p.locator(f'#host-jobs-board [data-stage="accepted"] [data-job-card="{third_job}"]').count() == 1, 'Active jobs: one column per stage, available first, no finished stage: ' + ','.join(stages))
+    p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{third_job}"]', state='attached')   # in a collapsed stage
+    stages = p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => c.dataset.stage)")
+    ok(stages == ['available', 'in-production', 'ready', 'shipped'] and p.locator(f'#host-jobs-board [data-stage="in-production"] [data-job-card="{third_job}"]').count() == 1, 'Active jobs: one stage each, available first, no finished stage: ' + ','.join(stages))
     # Colours: one per category in the status badges (job details); accepted to shipped share one.
     badges = {}
-    for jid in (second, third_job, first):
+    for jid, stage in ((second, 'available'), (third_job, 'in-production'), (first, 'shipped')):
+        p.locator(f'#host-jobs-board .sb-head[data-sb-open="{stage}"]').click()
         p.locator(f'[data-job-details="{jid}"]').first.click(); p.wait_for_selector('#modal[open]')
         b = p.locator('#modal .job-status'); badges[jid] = (b.get_attribute('class').split('job-')[-1], b.evaluate('e => getComputedStyle(e).backgroundColor')); p.keyboard.press('Escape')
     ok(badges[second][0] == 'available' and badges[third_job][0] == badges[first][0] == 'active' and badges[third_job][1] == badges[first][1] != badges[second][1], f'one colour per category, shared within it {badges}')

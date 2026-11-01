@@ -27,7 +27,7 @@ with sync_playwright() as pw:
       p.locator('.ws-switch').click()
       p.screenshot(path=str(OUT/f'admin-approvals-tabs-{width}-{theme}.png'))
      # Exercise last/first links with their real route handlers and persisted selected states.
-     groups=p.locator('.chips,.segmented,.eq-tabs')
+     groups=p.locator('.chips:visible,.segmented:visible,.eq-tabs:visible')   # e.g. stage pills hide when the board is wide
      if groups.count():
       group=groups.first
       for edge in ('last','first'):

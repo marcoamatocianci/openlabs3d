@@ -1,8 +1,9 @@
 # OpenLabs3D: workflow boards and platform UI/UX audit
 
-Date: 2026-11-01 · Branch `claude/review-fixes` (working tree) · Scope: Printing jobs, host overview, My
+Date: 2026-11-01 · Branch `claude/review-fixes`, then `v6` · Scope: Printing jobs, host overview, My
 orders, and a consistency and usability review of every page for guests, buyers, printing hosts and
-administrators.
+administrators. A second pass the same day separated the host overview from Printing jobs (§1, "Second
+pass").
 
 Findings are marked **Fixed** (changed and verified in the browser), **Documented** (a recommendation, not
 implemented) or **Intentional** (looks inconsistent but is deliberate). Usability problems (§4) are kept apart
@@ -20,14 +21,53 @@ it lives in History.
 
 | Page | Before | After |
 |------|--------|-------|
-| **Printing jobs** (host) | One list of every active job, filtered by status chips | Board: **Available · Accepted · In progress · Ready to ship** side by side, with **Awaiting buyer** (shipped, nothing left to do) as a full-width lane underneath. Job history stays a compact, searchable, filterable list |
-| **Host overview** | Its own three-column board (separate markup and CSS) | The same component, cards and stages as Printing jobs, without the available pool, at most three cards per stage, with "N more in Printing jobs" |
+| **Printing jobs** (host) | One list of every active job, filtered by status chips | Expandable board (second pass): **Available · In production · Ready to ship · Awaiting buyer**. One stage is open with detailed cards; the others are compact columns. Job history is a secondary button to a compact, searchable, filterable list |
+| **Host overview** | Its own three-column board (separate markup and CSS) | Second pass: four stage counts, what needs attention, one line of activity and **Manage printing jobs**. No job cards |
 | **My orders** (buyer) | A long column of large cards, filtered by status chips; details expanded inside each card | Board: **Pending · In progress · Shipping**. Previous orders is a compact searchable list. Both open the same order-details dialog |
 
-**Job cards** show:
-- the tinted product preview, product name, material and the ordered colour with its swatch, and the quantity;
+### Second pass: a simpler overview and an expandable Printing jobs board
+
+The first pass gave the overview the same board as Printing jobs, so the two pages repeated each other.
+They now answer different questions.
+
+**Host overview: "what is happening right now?"**
+- **Four summary cards:** Available, In production, Ready to ship, Awaiting buyer. Each shows its count, an icon in the stage's status colour and one line of description. The counts come from the same API response as the board, so the two pages always agree.
+- **Each card opens Printing jobs on its stage** (`#host/jobs?group=ready`).
+- **Alerts, only when there are any:** no approved printers; no materials in stock (so no job can match); an equipment update awaiting review or not approved; listings returned with review notes.
+- **One activity line:** jobs in hand and their value, completed jobs, published listings.
+- **Actions:** **Manage printing jobs →** is the page action, with Job history as a quiet link.
+- **Removed:** the board, the job cards and the previous four stat cards.
+
+**Printing jobs: where the work is done.** It uses `stageBoard()` in `navigation.js`, built on the same
+stages from the API and the same card renderer.
+- **Wide** (board ≥ 760 px; desktop, and 900 px without the sidebar):
+  - the four stages sit side by side and one is open;
+  - the open stage takes about 58% of the row and shows full job cards;
+  - the other stages shrink to compact columns with an icon, name, count and up to three coloured previews. Clicking one opens it (WAI-ARIA accordion pattern: `aria-expanded`; `aria-disabled` on the open header).
+- **Narrower** (1024 px with the sidebar, tablets, phones): rounded stage pills, 2×2 on phones and one row of four from 600 px, with the open stage underneath.
+- **Switching** is local: no request and no reload. The width animates (0.32 s) only while switching, never on load or resize, and not at all with reduced motion.
+- **Remembering the stage:** the open stage is written to the address (`replaceState`, no history entry) and to the session. A refresh, or a return from another page, reopens it. Without either, the first stage with work opens.
+- **Old links** (`?group=accepted`, `?group=in-progress`, `#host/jobs/accepted`) open In production.
+- **After a step,** the open stage stays open. Focus goes to the job if it is still there, otherwise to the card now in its place. The stage the job moved to lights up once with its new count.
+- **Search** filters cards in every stage and turns the counts into match counts. Stages without matches are dimmed, and the open stage says when none of its own cards match.
+
+**Accepted vs In progress.** The host sees one stage, **In production** (`JOB_SCOPES`: `accepted` and
+`printing`). Accepting puts a job there at once. Its next step is **Mark ready to ship**: the backend now
+allows `ready` from `accepted` as well as from `printing`. The internal states are kept:
+- **Reporting the print start is optional.** `printing` still exists, and "Report printing started" is offered only in the job details.
+- **Nothing is recorded that the host did not report.** A job that skips the report gets no `printing` status and no `job.printing` event.
+- **The card says which:** a small Accepted or Printing badge.
+- **Administrator rules are unchanged:** reopen only `accepted` jobs; cancel only `pending` or `accepted` orders. A host who prints without reporting it can therefore still have the job reopened or cancelled until it is marked ready. Reporting the start protects it, as before.
+- **The buyer still sees "In production"** once a print start is reported, or when another product of the order is further along. The lifecycle groups for orders are unchanged.
+
+**Job cards** (the open stage of Printing jobs) show:
+- the tinted product preview, product name, quantity, material and the ordered colour with its swatch;
+- dimensions and the model file ("STL model");
 - the order reference (the same one the buyer sees), the value, and when the job reached its stage ("Accepted 2 hours ago");
-- one primary action (Accept job / Start printing / Mark ready / Mark shipped), with **Details** and **Download STL** as quiet links.
+- in In production, whether printing was reported;
+- the actions this stage allows: Accept job, Mark ready to ship or Mark shipped, plus **Details** and **Download STL** (only once the job is yours).
+
+Cards stack when the stage is narrower than 420 px.
 
 Shipped jobs show the carrier and tracking instead of an action. **Details** opens a dialog with:
 - the product and the order;
@@ -61,21 +101,23 @@ Previous orders.
 - **Narrower:** one column at a time (`min(86%, 300px)`), scroll-snapped, with the next column peeking in.
   A strip of stage pills with counts shows which stage is in view and jumps to the others.
 
-| Width | Printing jobs | My orders |
+| Width | Printing jobs (second pass) | My orders |
 |-------|---------------|-----------|
-| 1440 / 1366 / 1280 | 4 columns + lane | 3 columns |
-| 1024 (sidebar shown) | scroll, ~2 columns in view, strip | 3 columns |
-| 768 | scroll, 2 columns + peek, strip | 3 columns |
-| 430 / 390 / 375 / 320 | 1 column + peek, strip | 1 column + peek, strip |
+| 1440 / 1366 / 1280, 900 | 4 stages side by side, one open | 3 columns |
+| 1024 (sidebar shown) / 768 | 4 stage pills in a row, one stage below | 3 columns |
+| 430 / 390 / 375 / 320 | 2×2 stage pills, one stage below | 1 column + peek, strip |
 
-Never any page-level horizontal overflow. After an action, the board keeps its sideways position (per
-address); a stage link (`#host/jobs?group=ready`, `#orders?group=shipping`) opens on that stage and marks it.
+Never any page-level horizontal overflow. After an action, My orders keeps its sideways position (per
+address) and Printing jobs keeps its open stage. A stage link (`#host/jobs?group=ready`,
+`#orders?group=shipping`) opens on that stage.
 
 ## 2. Shared components created or reused
 
 | Component | Where | Used by |
 |-----------|-------|---------|
-| `workflowBoard`, `bindWorkflowBoards`, stage strip, `syncWorkflowStrip`, `scrollToStage` | `navigation.js` | Printing jobs, host overview, My orders |
+| `workflowBoard`, `bindWorkflowBoards`, stage strip, `syncWorkflowStrip`, `scrollToStage` | `navigation.js` | My orders (Printing jobs and the host overview until the second pass) |
+| `stageBoard`, `openStage`, `syncStageMatches` (expandable board) and `.sb-*` / `.jc-*` styles | `navigation.js`, `style.css` | Printing jobs |
+| `.ho-*` summary cards and alerts | `workspaces.js`, `style.css` | Host overview |
 | `.wf-*` styles (column, card, lane, strip, section head, toolbar) | `style.css` "Workflow boards" | the same three pages; replaces the separate `.hb-*` overview board |
 | `orderLineThumb` / `orderLineConfig` (tinted preview, swatch + "Material · Colour") | `navigation.js` | job cards, job history rows, order cards, order rows, both details dialogs. Host and buyer now name colours identically |
 | `openReview` / `reviewSection` / `reviewItem` (detail dialog) | moved from `workspaces.js` to `navigation.js` | admin approvals (unchanged), job details (new), order details (new) |
@@ -169,8 +211,8 @@ pricing, matching or eligibility change.
 
 | Area | Why | Status |
 |------|-----|--------|
-| Printing jobs (host) | Each job moves through five stages with one host action per stage; hosts work across stages at once | Implemented |
-| Host overview | Summary of the same board | Implemented |
+| Printing jobs (host) | Each job moves through four stages with one host action per stage; hosts work across stages at once | Implemented (expandable, one stage open) |
+| Host overview | A summary, not a second workspace | Second pass: counts per stage instead of a board |
 | My orders (buyer) | Few items per buyer; the question is "where is each order?" | Implemented |
 | Admin custom requests | Three active states (Submitted → Under review → Quoted/Accepted) worked one request at a time | **Recommended later** (R5): volumes are low today and each request needs its details dialog; the list with status chips works. The component can be reused as is |
 | Admin orders | — | A compact overview already exists: stage pills with counts, plus the overview's "Needs attention" links (now correct, U1). A board would hide search and comparison, which administrators need here |
@@ -239,11 +281,55 @@ What the new board suite verifies:
 - All 38 pages for the four roles at 1440 and 390 px: 0 px overflow on every page.
 - The local Docker site with the development accounts after the backend rebuild: Printing jobs, Job history, My orders, Previous orders, admin overview and the new attention filter render with no console errors.
 
+### Second pass (host overview and expandable Printing jobs)
+
+Run after the second-pass changes, each suite against a freshly started fixture:
+
+| Suite | Fixture | Result |
+|-------|---------|--------|
+| `tests/workflow_boards_browser.py` (host part rewritten) | workflow_preview | **130/130** |
+| `tests/host_job_dialog_browser.py` | catalogue_preview | **41/41**, no native dialogs |
+| `tests/job_eligibility_browser.py` | catalogue_preview | **26/26** |
+| `tests/integrity_browser.py` | catalogue_preview | **24/24** |
+| `tests/my_orders_browser.py` | orders_preview | **57/57** |
+| `tests/buyer_orders_browser.js` | orders_preview | **passed** (17 groups) |
+| `tests/history_views_browser.js`, `tests/workspace_overview_browser.js` | equipment_preview | **passed** |
+| `tests/admin_approvals_browser.js`, `tests/checkout_contact_browser.js` | equipment_preview | **passed** |
+| `tests/custom_requests_filter_browser.js`, `tests/account_locations_browser.js` | catalogue_preview | **passed** |
+| `tests/unified_navigation_browser.py` | workflow_preview | **passed** |
+| Backend `pytest tests/` | temporary databases | **152 passed** |
+
+What the board suite now verifies, against the spec's checklist:
+- **Overview:** exactly four summary cards with the API counts and the board's stage names; no job cards, previews or board; Manage printing jobs is the page action. Each card opens Printing jobs on its stage.
+- **Expandable board:**
+  - exactly one stage is open after every switch, with `aria-expanded` to match;
+  - the open stage takes 55–65% of the row; collapsed stages are at least 100 px wide, show no cards, and their names fit;
+  - switching sends no request and causes no reload, and the address remembers the stage.
+- **Cards:** every In production card shows the product, recoloured preview, material and swatch, quantity, dimensions, model file, order reference, time in stage and Download; Accepted or Printing as reported.
+- **Workflow:**
+  - Accept puts the job in In production at once, with counts, the navigation badge and the server in agreement, focus kept in the open stage, and the destination stage lit up;
+  - reporting the print start is optional;
+  - Mark ready to ship works from accepted and from printing; Mark shipped moves the job to Awaiting buyer with its tracking;
+  - after the buyer confirms receipt, the job is in Job history only;
+  - overview counts equal the board's and the server's;
+  - old links open In production; no "Start printing" anywhere.
+- **Search:** stage counts become match counts, and clearing the search restores them.
+- **Widths and themes:**
+  - 320 and 390 px with touch: a 2×2 grid of 44 px pills, one stage, stacked cards with full-width 44 px actions;
+  - 768 and 1024 px: four pills in one row;
+  - 900 px: side by side;
+  - no page overflow in Bright or Dark.
+
+The local Docker backend was rebuilt after backing up the development database to
+`backups/pre-stage-board-20261101-184904.db` (no migration). On :8080 with the development host account, the
+overview, Printing jobs (In production opened from its card) and Job history render at 1440 and 390 px
+without console errors or overflow.
+
 ## 10. Unresolved limitations
 
 - **No deadline or estimated delivery** exists in the data model (U10, R6).
 - **Current orders load in full** (pages of 50, fetched together). That is right for a buyer's active orders, but there is no upper bound for an extreme account.
-- **Board search filters cards** but leaves column counts at their totals (R7).
+- **Board search on My orders filters cards** but leaves column counts at their totals (R7). Printing jobs shows match counts per stage (second pass).
 - **Accessibility was verified with keyboard and focus checks and ARIA structure**, not with a screen reader. Columns are labelled sections with headings, counts carry text for assistive technology, and the strip uses buttons.
 - **Development database:** before the Docker backend was rebuilt to serve the new response fields, it was backed up to `backups/pre-workflow-boards-20261101-162538.db`. There was no migration.
-- **Out of scope by instruction:** prices, matching and eligibility rules, CAD models, lifecycle semantics, payments and migrations are unchanged.
+- **Out of scope by instruction:** prices, matching and eligibility rules, CAD models, payments and migrations are unchanged. The only lifecycle change (second pass) allows Mark ready to ship straight from accepted. Statuses, order aggregation and administrator rules are as before.

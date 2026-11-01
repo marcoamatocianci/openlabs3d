@@ -353,7 +353,9 @@ async function verifyPrinterSuggestion(n) {
 }
 
 /* Printing host workspace */
-const nextJobStep = {accepted:['printing', 'Start printing'], printing:['ready', 'Mark ready'], ready:['shipped', 'Mark shipped']};
+// Accepted and printing jobs are both "In production": the next step from either is Mark ready to ship.
+// Reporting the print start is optional (the job details offer it); nothing waits for it.
+const nextJobStep = {accepted:['ready', 'Mark ready to ship'], printing:['ready', 'Mark ready to ship'], ready:['shipped', 'Mark shipped']};
 // "All" lists the categories left to right as the filter chips do: available, accepted, in progress, completed.
 const jobOrder = ['available', 'accepted', 'printing', 'ready', 'shipped', 'completed', 'cancelled'];
 // One colour per category: available, everything the host is working on, completed (tokens in style.css).
@@ -374,14 +376,21 @@ const jobStepButton = (j, className = 'btn btn-sm') => { const step = jobStep(j)
 const jobDownload = (j, className) => j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) && ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="${className}" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
 const jobTracking = s => s ? (s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number)) : '';
 // When the job reached its current stage: the closest thing to a deadline the marketplace records.
-const JOB_SINCE = {available:'Listed', accepted:'Accepted', printing:'Printing started', ready:'Printed', shipped:'Shipped', completed:'Completed', cancelled:'Cancelled'};
+const JOB_SINCE = {available:'Listed', accepted:'Accepted', printing:'Printing started', ready:'Ready', shipped:'Shipped', completed:'Completed', cancelled:'Cancelled'};
 const jobSince = j => JOB_SINCE[j.status] ? `${JOB_SINCE[j.status]} ${timeAgo(j.status === 'shipped' && j.shipment?.shipped_at || j.updated_at)}` : '';
-/* Job card, shared by the Printing jobs board and the overview: what to make, in which material and
-   colour, for which order, since when, and the one next step. Everything else is in Details. */
+/* Job card in the open stage of Printing jobs: what to make (preview in the ordered colour, quantity),
+   how (material, exact colour, dimensions, model file), for which order, its value and time in stage,
+   and the actions this stage allows. Buyer contact, address and shipment stay in Details. */
+const jobFile = i => i.cad_format ? `${i.cad_format} model` : '';
 function jobCard(j, level = 3) {
   const i = j.item, shipped = j.status === 'shipped' && j.shipment;
-  return `<li class="wf-card job-card" data-job-card="${j.id}" data-search="${esc(jobSearchText(j))}"><div class="wf-card-main">${orderLineThumb(i)}<div class="wf-card-copy"><h${level} class="wf-card-title">${esc(i.title)}</h${level}></div></div><p class="wf-card-config">${orderLineConfig(i)}<span class="wf-qty">× ${i.quantity}</span></p><p class="wf-card-ref">Order ${esc(jobOrderRef(j))}</p><p class="wf-card-meta"><span>${money(i.price_cents * i.quantity / 100)}</span><span>${esc(jobSince(j))}</span></p>${shipped ? `<p class="wf-card-note">${esc(j.shipment.carrier)} · Tracking ${jobTracking(j.shipment)}</p>` : ''}<div class="wf-card-links"><button type="button" class="wf-link" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button>${jobDownload(j, 'wf-link')}</div>${jobStepButton(j, 'btn btn-sm wf-primary')}</li>`;
+  // In production holds two statuses: say which (accepted, or printing reported).
+  const sub = ['accepted', 'printing'].includes(j.status) ? `<span class="jc-sub">${jobBadge(j.status, false)}</span>` : '';
+  const spec = [i.dimensions, jobFile(i)].filter(Boolean).map(esc).join('<span aria-hidden="true"> · </span>');
+  return `<li class="wf-card job-card jc" data-job-card="${j.id}" data-search="${esc(jobSearchText(j))}">${orderLineThumb(i, 'jc-thumb')}<div class="jc-main"><h${level} class="jc-title">${esc(i.title)}</h${level}><p class="jc-config">${orderLineConfig(i)}</p>${spec ? `<p class="jc-spec">${spec}</p>` : ''}<p class="jc-ref">Order ${esc(jobOrderRef(j))}</p></div><div class="jc-side"><span class="jc-qty">× ${i.quantity}<span class="sr-only"> ${i.quantity === 1 ? 'piece' : 'pieces'}</span></span><strong class="jc-value">${money(i.price_cents * i.quantity / 100)}</strong><span class="jc-since">${esc(jobSince(j))}</span>${sub}</div>${shipped ? `<p class="jc-note">${esc(j.shipment.carrier)} · Tracking ${jobTracking(j.shipment)}</p>` : ''}<div class="jc-foot"><div class="wf-card-links"><button type="button" class="wf-link" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button>${jobDownload(j, 'wf-link')}</div>${jobStepButton(j, 'btn btn-sm jc-primary')}</div></li>`;
 }
+// A collapsed stage's preview: the product in its colour, small.
+const jobPeek = j => orderLineThumb(j.item, 'sb-peek-thumb');
 // Job history: one compact row per job, with the product, its configuration and the outcome.
 function jobRow(j) {
   const i = j.item;
@@ -393,12 +402,15 @@ let hostJobs = {};
 const rememberJobs = jobs => { hostJobs = Object.fromEntries(jobs.map(j => [j.id, j])); };
 const JOB_STEPS = {
   accept:{title:'Accept this printing job?', confirm:'Accept job', busy:'Accepting…', done:'Job accepted', notes:['You commit to printing this item in the material and colour shown.', 'The buyer’s contact and delivery details become visible to you.', 'Agree payment and delivery directly with the buyer before printing.']},
-  printing:{title:'Start printing?', confirm:'Start printing', busy:'Updating…', done:'Printing started', notes:['The buyer sees that production has started.', 'Use the model from this job: it is the exact version the buyer ordered.']},
-  ready:{title:'Mark as ready for delivery?', confirm:'Mark ready', busy:'Updating…', done:'Marked ready for delivery', notes:['The buyer is told the item is ready.', 'Pack it, then mark it shipped with the tracking details.']},
+  // Optional, from the job details: the job is already in production; this only tells the buyer printing began.
+  printing:{title:'Report that printing started?', confirm:'Report printing started', busy:'Updating…', done:'Printing start reported', notes:['Optional: the job stays in In production either way.', 'The buyer sees that printing has started.', 'Use the model from this job: it is the exact version the buyer ordered.']},
+  ready:{title:'Mark as ready to ship?', confirm:'Mark ready to ship', busy:'Updating…', done:'Marked ready to ship', notes:['The buyer is told the item is ready.', 'Pack it, then mark it shipped with the tracking details.']},
   shipped:{title:'Mark as shipped?', confirm:'Mark shipped', busy:'Updating…', done:'Marked as shipped', notes:['The buyer sees the carrier and tracking details below.', 'The job completes when the buyer confirms they received it.', 'The model download is no longer available.'], form:true}
 };
-// Shipped sits under "In progress"; the last step completes only when the buyer confirms receipt.
-const JOB_FLOW = [['accepted', 'Accepted'], ['printing', 'Printing'], ['ready', 'Ready'], ['shipped', 'Shipped'], ['completed', 'Completed']];
+// The host's stages (accepted and printing are both In production); the last step completes only when
+// the buyer confirms receipt.
+const JOB_FLOW = [['in-production', 'In production'], ['ready', 'Ready to ship'], ['shipped', 'Shipped'], ['completed', 'Completed']];
+const jobFlowStage = status => ['accepted', 'printing'].includes(status) ? 'in-production' : status;
 const shipmentForm = () => `<form class="ad-form" id="shipment-form" novalidate><div class="fields"><label>Carrier or delivery method<input name="carrier" required maxlength="80" autocomplete="off" placeholder="e.g. DHL, Poste Italiane, courier"></label><label>Tracking number<input name="tracking_number" required maxlength="80" autocomplete="off"></label><label class="wide"><span>Tracking link <span class="optional">(optional)</span></span><input name="tracking_url" type="url" maxlength="500" placeholder="https://"></label><label class="wide"><span>Note for the buyer <span class="optional">(optional)</span></span><textarea name="note" rows="2" maxlength="500"></textarea></label></div></form>`;
 function shipmentInput(form) {
   if (!form.reportValidity()) throw Error('Enter the carrier and tracking number.');
@@ -409,8 +421,8 @@ function shipmentInput(form) {
 function jobSummary(j, action) {
   if (!j) return '';
   const i = j.item, hex = /^#[0-9a-f]{6}$/i.test(i.color_hex || '') ? i.color_hex : '';
-  const target = action === 'accept' ? 'accepted' : action, reached = JOB_FLOW.findIndex(([s]) => s === target);
-  return `<div class="ad-job"><div class="ad-job-main"><strong>${esc(i.title)} × ${i.quantity}</strong><span class="ad-job-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" aria-hidden="true"></span>` : ''}${esc([i.material, colorName(i.color)].filter(Boolean).join(' · '))}</span><span class="ad-job-meta">${esc([i.dimensions, 'Order #' + j.order_id].filter(Boolean).join(' · '))}</span></div><strong class="ad-job-value">${money(i.price_cents * i.quantity / 100)}</strong></div>
+  const target = jobFlowStage(action === 'accept' ? 'accepted' : action), reached = JOB_FLOW.findIndex(([s]) => s === target);
+  return `<div class="ad-job"><div class="ad-job-main"><strong>${esc(i.title)} × ${i.quantity}</strong><span class="ad-job-meta">${hex ? `<span class="ad-swatch" style="--swatch:${hex}" aria-hidden="true"></span>` : ''}${esc([i.material, colorName(i.color)].filter(Boolean).join(' · '))}</span><span class="ad-job-meta">${esc([i.dimensions, 'Order ' + jobOrderRef(j)].filter(Boolean).join(' · '))}</span></div><strong class="ad-job-value">${money(i.price_cents * i.quantity / 100)}</strong></div>
     <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Awaiting buyer confirmation</small>' : ''}</li>`).join('')}</ol>`;
 }
 /** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
@@ -443,7 +455,8 @@ function actionDialog({title, body, confirm, busy, run, setup, initialFocus}) {
 }
 // Overrides the browser confirm box from operations.js.
 jobAction = async function(id, action) {
-  const step = JOB_STEPS[action], trigger = document.activeElement, stage = $(`[data-job-card="${id}"]`)?.closest('.wf-column')?.dataset.stage;
+  const step = JOB_STEPS[action], trigger = document.activeElement, before = $(`.sb-col.is-open [data-job-card="${id}"]`);
+  const place = before ? [...before.parentElement.children].indexOf(before) : 0;
   if (!step) return;
   let refused = false;
   const ok = await actionDialog({title:step.title, confirm:step.confirm, busy:step.busy,
@@ -457,10 +470,20 @@ jobAction = async function(id, action) {
     }});
   if (!ok && !refused) { if (trigger?.isConnected) trigger.focus(); return; }
   if (ok) toast(step.done);
-  // Return focus to the same job once the board has refreshed: its next step, or its card when it has
-  // none left (shipped); a job that left the board (taken meanwhile) hands focus to the column it was in,
-  // or to the selected view when the board is now empty.
-  const app = $('#app'), watch = new MutationObserver(() => { const next = app.querySelector(`[data-job="${id}"]`) || app.querySelector(`[data-job-details="${id}"]`) || (stage && app.querySelector(`.wf-column[data-stage="${stage}"]`)) || app.querySelector('.ws-main .scope-nav [aria-current]'); if (next && !app.querySelector('.ws-main[aria-busy]')) { watch.disconnect(); next.focus(); } });
+  // Once the page has refreshed, the open stage stays open. Focus returns to the same job when it is still
+  // there (its next step, or its details); a job that moved on to another stage leaves focus on the card now
+  // in its place (or the stage itself), and the stage it moved to lights up briefly with its new count.
+  const app = $('#app'), watch = new MutationObserver(() => {
+    if (app.querySelector('.ws-main[aria-busy]')) return;
+    const card = app.querySelector(`[data-job-card="${id}"]`), open = app.querySelector('.sb-col.is-open');
+    let next = card?.closest('.sb-col.is-open') && (card.querySelector(`[data-job="${id}"]`) || card.querySelector('[data-job-details]'));
+    if (!next && open) { const cards = open.querySelectorAll('[data-job-card]'); next = cards[Math.min(place, cards.length - 1)]?.querySelector('[data-job], [data-job-details]') || open.querySelector('.sb-head'); }
+    next ||= app.querySelector('.ws-main .empty-state a, .ws-main .ws-actions a');
+    if (!next) return;
+    watch.disconnect(); next.focus();
+    const moved = card && !card.closest('.sb-col.is-open') && card.closest('.sb-col')?.dataset.stage;
+    if (moved) app.querySelectorAll(`.sb-col[data-stage="${moved}"], .sb-pills [data-sb-open="${moved}"]`).forEach(el => { el.classList.add('sb-bump'); setTimeout(() => el.classList.remove('sb-bump'), 1600); });
+  });
   watch.observe(app, {childList:true, subtree:true}); setTimeout(() => watch.disconnect(), 3000);
   render();
 };
@@ -469,69 +492,109 @@ jobAction = async function(id, action) {
 inPageRoutes.add('#host/jobs');
 const HOST_SCOPE_NAMES = {active:'Active jobs', history:'Job history'};
 // Earlier links named the status in the path (#host/jobs/accepted); they open the same view.
-const LEGACY_JOB_PATHS = {available:['active', 'available'], accepted:['active', 'accepted'], 'in-progress':['active', 'in-progress'], ready:['active', 'ready'], shipped:['active', 'shipped'], completed:['history', 'completed'], cancelled:['history', 'cancelled']};
+const LEGACY_JOB_PATHS = {available:['active', 'available'], accepted:['active', 'in-production'], 'in-progress':['active', 'in-production'], ready:['active', 'ready'], shipped:['active', 'shipped'], completed:['history', 'completed'], cancelled:['history', 'cancelled']};
+// Accepted and In progress were separate stages before In production joined them.
+const LEGACY_JOB_STAGES = {accepted:'in-production', 'in-progress':'in-production', printing:'in-production'};
 function hostJobsView(route) {
-  const q = hashQuery(), legacy = LEGACY_JOB_PATHS[route.split('/')[2]];
-  return {scope:legacy ? legacy[0] : q.scope === 'history' ? 'history' : 'active', group:legacy ? legacy[1] : q.group || 'all', q:(q.q || '').slice(0, 80), page:Math.max(1, parseInt(q.page || '1', 10) || 1)};
+  const q = hashQuery(), legacy = LEGACY_JOB_PATHS[route.split('/')[2]], scope = legacy ? legacy[0] : q.scope === 'history' ? 'history' : 'active';
+  const group = legacy ? legacy[1] : q.group || 'all';
+  return {scope, group:scope === 'active' ? LEGACY_JOB_STAGES[group] || group : group, q:(q.q || '').slice(0, 80), page:Math.max(1, parseInt(q.page || '1', 10) || 1)};
 }
 const hostJobsHref = (view, params = {}) => scopeHref('host/jobs', {scope:view.scope, group:view.group, q:view.q}, params);
-// One sentence per stage under its column title (the stages themselves come from the API).
-const HOST_STAGE_HINTS = {available:'Fits one of your approved printers and a colour you stock.', accepted:'Start printing when you are ready.', 'in-progress':'Mark it ready once printed.', ready:'Pack it, then add the tracking details.', shipped:'Completes when the buyer confirms receipt. Nothing to do.'};
-const hostStages = data => data.scopes.active.groups.map(g => ({...g, hint:HOST_STAGE_HINTS[g.key] || ''}));
+/* The host's four stages come from the API (app/lifecycle.py JOB_SCOPES); this adds how each one looks and
+   reads: one sentence under the open stage, the overview's description, an icon and the status tone. */
+const HOST_STAGE_UI = {
+  available:{hint:'Fits one of your approved printers and a colour you stock.', summary:'Match your printers and stock', icon:'inbox', tone:'available'},
+  'in-production':{hint:'Accepted and being made. Mark each job ready once printed.', summary:'Accepted and being made', icon:'layers', tone:'active'},
+  ready:{hint:'Printed. Pack it, then add the tracking details.', summary:'Printed, waiting to be shipped', icon:'box', tone:'active'},
+  shipped:{hint:'Completes when the buyer confirms receipt. Nothing to do.', summary:'Shipped, waiting for receipt', icon:'truck', tone:'neutral'}
+};
+const hostStages = data => data.scopes.active.groups.map(g => ({...g, ...HOST_STAGE_UI[g.key]}));
+// The open stage of Printing jobs: the address (a link from the overview, or the last switch), else the
+// stage open last in this session, else the first stage with work.
+const HOST_STAGE_KEY = 'openlabs-host-stage';
+const rememberedHostStage = () => { try { return sessionStorage.getItem(HOST_STAGE_KEY) || ''; } catch (e) { return ''; } };
 // Job progress as the buyer will see it, with the current stage marked.
 function jobFlow(j) {
-  const reached = j.status === 'completed' ? JOB_FLOW.length : JOB_FLOW.findIndex(([s]) => s === j.status);
+  const reached = j.status === 'completed' ? JOB_FLOW.length : JOB_FLOW.findIndex(([s]) => s === jobFlowStage(j.status));
   return `<ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Buyer confirms receipt</small>' : ''}</li>`).join('')}</ol>`;
 }
 // Everything about one job, read-only, with its next step in the footer.
 function jobDetails(id) {
   const j = hostJobs[id]; if (!j) return;
-  const i = j.item, step = jobStep(j), dimensions = i.dimensions ? reviewItem('Dimensions', esc(i.dimensions)) : '';
-  const product = `<div class="detail-product">${orderLineThumb(i, 'detail-thumb')}<div><strong>${esc(i.title)}</strong>${orderLineConfig(i)}<span class="muted">Quantity ${i.quantity} · ${money(i.price_cents / 100)} each · ${money(i.price_cents * i.quantity / 100)} in total</span></div></div><dl class="detail-grid">${reviewItem('Order', esc(jobOrderRef(j)))}${reviewItem('Status', jobBadge(j.status, false))}${dimensions}${reviewItem('Last update', esc(safeDate(j.updated_at)))}</dl>`;
+  const i = j.item, step = jobStep(j), dimensions = i.dimensions ? reviewItem('Dimensions', esc(i.dimensions)) : '', file = jobFile(i) ? reviewItem('Model file', esc(jobFile(i))) : '';
+  const product = `<div class="detail-product">${orderLineThumb(i, 'detail-thumb')}<div><strong>${esc(i.title)}</strong>${orderLineConfig(i)}<span class="muted">Quantity ${i.quantity} · ${money(i.price_cents / 100)} each · ${money(i.price_cents * i.quantity / 100)} in total</span></div></div><dl class="detail-grid">${reviewItem('Order', esc(jobOrderRef(j)))}${reviewItem('Status', jobBadge(j.status, false))}${dimensions}${file}${reviewItem('Last update', esc(safeDate(j.updated_at)))}</dl>`;
   const model = jobDownload(j, 'btn-ghost btn-sm') ? reviewSection('Model', `<p class="muted">The exact model version the buyer ordered.</p><div class="actions">${jobDownload(j, 'btn-ghost btn-sm')}</div>${jobModelNote(j)}`) : '';
   const delivery = j.fulfillment ? reviewSection('Buyer contact and delivery', `<dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(j.fulfillment.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(j.fulfillment.address))}</dd></div>${shipmentDetails(j.shipment)}</dl><p class="muted">Agree payment and delivery directly with the buyer before printing.</p>`)
     : j.status === 'available' ? reviewSection('Before you accept', '<ul class="ad-notes"><li>You commit to printing this item in the material and colour shown.</li><li>The buyer’s contact and delivery details become visible once the job is yours.</li><li>Agree payment and delivery directly with the buyer before printing.</li></ul>') : '';
-  const dialog = openReview(i.title, `Printing job · ${jobOrderRef(j)}`, reviewSection('Product', product) + reviewSection('Progress', jobFlow(j)) + model + delivery, step ? `<button type="button" class="btn btn-sm" data-details-step>${step[1]}</button>` : '');
+  // Reporting the print start is optional and never needed to move on, so it is offered only here.
+  const started = j.status === 'accepted' && j.host_id === account.id ? '<button type="button" class="btn-ghost btn-sm" data-details-printing>Report printing started</button>' : '';
+  const dialog = openReview(i.title, `Printing job · ${jobOrderRef(j)}`, reviewSection('Product', product) + reviewSection('Progress', jobFlow(j)) + model + delivery, started + (step ? `<button type="button" class="btn btn-sm" data-details-step>${step[1]}</button>` : ''));
+  if (started) dialog.querySelector('.review-foot').classList.add('has-wrap');
   // The confirmation replaces the details, so only one dialog is open at a time.
   dialog.querySelector('[data-details-step]')?.addEventListener('click', () => { dialog.close(); jobAction(j.id, step[0]); });
+  dialog.querySelector('[data-details-printing]')?.addEventListener('click', () => { dialog.close(); jobAction(j.id, 'printing'); });
 }
 document.addEventListener('click', e => { const b = e.target.closest('[data-job-details]'); if (b) jobDetails(+b.dataset.jobDetails); });
+/* Overview: what is happening right now, in a few seconds. Four stage counts (each opens Printing jobs on
+   that stage), what needs attention, and one line of activity. The jobs themselves live in Printing jobs. */
+const hostStageCard = s => `<a class="ho-stat" href="#host/jobs?group=${s.key}" data-stage="${s.key}" data-tone="${s.tone}"><span class="ho-stat-head"><span class="ho-stat-icon" aria-hidden="true">${icon(s.icon)}</span><span class="ho-stat-label">${esc(s.label)}</span></span><strong class="ho-stat-count">${s.count}</strong><small class="ho-stat-hint">${esc(s.summary)}</small></a>`;
+const hostAlert = ([tone, text, href, label]) => `<div class="banner ${tone}"><span>${esc(text)}</span><a class="btn-ghost btn-sm" href="#${href}">${esc(label)}</a></div>`;
+const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+const HOST_EMPTY_STAGE = {available:'No new jobs match your printers and stock right now.', 'in-production':'Nothing in production. Accepted jobs appear here.', ready:'Nothing waiting to be shipped.', shipped:'Nothing waiting for a buyer’s confirmation.'};
 const hostPages = {
   async 'host'() {
-    const [data, listings] = await Promise.all([api('/host/jobs?scope=active'), api('/listings/mine')]), jobs = data.items; rememberJobs(jobs);
-    const mine = jobs.filter(j => j.host_id === account.id), available = jobs.filter(j => j.status === 'available');
-    setNavCount('jobs', available.length);
-    const rejected = listings.filter(p => p.status === 'rejected').length, pending = listings.filter(p => p.status === 'pending').length, done = data.scopes.history.groups.find(g => g.key === 'completed')?.count || 0;
-    const stats = [statCard('Available jobs', available.length, 'host/jobs?group=available', 'Matching your printers and materials'), statCard('Active jobs', mine.length, 'host/jobs', 'Accepted, in production or shipped'), statCard('Completed', done, 'host/jobs?scope=history&group=completed', 'In your job history'), statCard('Published listings', listings.filter(p => p.status === 'approved').length, 'my-listings', pending ? `${pending} awaiting review` : '')];
-    const notices = [rejected ? `<div class="banner warning"><span>${rejected === 1 ? 'One listing was' : rejected + ' listings were'} returned by an administrator with review notes.</span><a class="btn-ghost btn-sm" href="#my-listings">Review listings</a></div>` : ''].join('');
-    // The same stages and cards as Printing jobs, without the available pool: a summary of the host's own work.
-    const board = workflowBoard({id:'host-overview-board', label:'Your active jobs', stages:hostStages(data).filter(s => s.key !== 'available'), items:mine, card:jobCard, level:3, limit:3, className:'wf-compact',
-      more:(c, n) => `<a class="wf-more" href="#host/jobs?group=${c.key}">${n} more in Printing jobs</a>`});
-    return {title:'Overview', action:available.length ? `<a class="btn btn-sm" href="#host/jobs?group=available">View ${available.length} available job${available.length === 1 ? '' : 's'}</a>` : '', body:`${notices}<div class="stat-grid">${stats.join('')}</div><section class="wf-section" aria-labelledby="host-overview-title"><header class="wf-section-head"><div><h2 id="host-overview-title">Your active jobs</h2><p class="muted">Agree payment and delivery directly with the buyer before printing.</p></div><a class="textlink" href="#host/jobs?scope=history">${icon('history')} Job history</a></header>${mine.length ? board : `<div class="section-card">${emptyState('No active jobs', available.length ? 'Accept an available job to start printing.' : 'New jobs matching your printers and materials will appear in Printing jobs.', available.length ? '<a class="btn btn-sm" href="#host/jobs?group=available">Browse available jobs</a>' : '')}</div>`}</section>`,
-      bind:() => bindWorkflowBoards()};
+    const [data, listings, printers, revision] = await Promise.all([api('/host/jobs?scope=active'), api('/listings/mine'), api('/host/equipment'), api('/host/equipment-revision')]);
+    rememberJobs(data.items);
+    const stages = hostStages(data), count = key => stages.find(s => s.key === key)?.count || 0;
+    setNavCount('jobs', count('available'));
+    const inHand = data.items.filter(j => j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status)), worth = inHand.reduce((n, j) => n + j.item.price_cents * j.item.quantity, 0);
+    const completed = data.scopes.history.groups.find(g => g.key === 'completed')?.count || 0;
+    const live = listings.filter(p => p.status === 'approved' && !p.removed).length, review = listings.filter(p => p.status === 'pending').length, returned = listings.filter(p => p.status === 'rejected').length;
+    const stocked = printers.some(p => Object.keys(p.material_colors || {}).length);
+    // Only what stops jobs reaching this host, or waits on it outside Printing jobs.
+    const alerts = [
+      !printers.length ? ['warning', 'No approved printers yet. Jobs are offered once an administrator approves your equipment.', 'my-printers', 'My equipment']
+        : !stocked ? ['warning', 'No materials in stock, so no jobs can match. Add the materials and colours you own.', 'my-printers/materials', 'Materials & Colors'] : null,
+      revision?.status === 'pending' ? ['info', 'Equipment update awaiting administrator review. Your approved equipment stays active meanwhile.', 'my-printers', 'View update'] : null,
+      revision?.status === 'rejected' ? ['danger', 'Your last equipment update was not approved.', 'my-printers', 'Review notes'] : null,
+      returned ? ['warning', `${returned === 1 ? 'One listing was' : returned + ' listings were'} returned by an administrator with review notes.`, 'my-listings', 'Review listings'] : null
+    ].filter(Boolean);
+    const activity = [inHand.length ? `${plural(inHand.length, 'job')} in hand, worth ${money(worth / 100)}` : 'No jobs in hand',
+      `<a class="textlink" href="#host/jobs?scope=history&amp;group=completed">${plural(completed, 'completed job')}</a>`,
+      `<a class="textlink" href="#my-listings">${plural(live, 'published listing')}</a>${review ? ` (${review} in review)` : ''}`];
+    return {title:'Overview', action:`<a class="btn btn-sm ho-manage" href="#host/jobs">Manage printing jobs${icon('arrow')}</a>`,
+      body:`${alerts.length ? `<section class="ho-alerts" aria-label="Needs your attention">${alerts.map(hostAlert).join('')}</section>` : ''}<section class="ho-section" aria-labelledby="ho-title"><header class="ho-head"><h2 id="ho-title">Printing activity</h2><a class="textlink" href="#host/jobs?scope=history">${icon('history')}Job history</a></header><div class="ho-stats">${stages.map(hostStageCard).join('')}</div><p class="ho-summary">${activity.join('<span aria-hidden="true"> · </span>')}</p></section>`};
   },
   async 'host/jobs'(route) {
     const view = hostJobsView(route), active = view.scope === 'active';
     let data;
-    // The board shows every active stage at once (a stage in the address only scrolls to it); history is filtered by page.
+    // Active jobs come all at once (one board, every stage); history is filtered by page.
     try { data = await api('/host/jobs?' + new URLSearchParams(active ? {scope:'active'} : {scope:'history', group:view.group, q:view.q, page:view.page})); }
     catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + hostJobsHref(view, {group:'all', page:1})); return {title:'Printing jobs', body:''}; } throw e; }
     rememberJobs(data.items);
-    setNavCount('jobs', data.scopes.active.groups.find(g => g.key === 'available').count);
-    const nav = scopeNav({label:'Printing jobs', base:'host/jobs', data, names:HOST_SCOPE_NAMES});
+    const stages = hostStages(data);
+    setNavCount('jobs', stages.find(g => g.key === 'available').count);
     if (active) {
-      const intro = '<p class="muted ws-intro">Accept jobs that fit your approved printers and stocked colours, then move each one through production to shipping. Jobs from your own orders are never listed. Completed and cancelled jobs move to Job history.</p>';
-      if (!data.items.length) return {title:'Printing jobs', body:`${intro}${nav.primary}<div class="section-card">${emptyState("You're all caught up", 'No jobs to accept or make right now. New order requests matching your printers and materials appear here.', data.scopes.history.total ? `<a class="btn-ghost btn-sm" href="#${hostJobsHref(view, {scope:'history', group:'all', q:'', page:1})}">Job history</a>` : '')}</div>`};
-      const board = workflowBoard({id:'host-jobs-board', label:'Active jobs', stages:hostStages(data), items:data.items, card:jobCard, level:2, lane:['shipped'], focus:view.group,
-        empty:c => c.key === 'available' ? 'No new jobs match your printers and stock right now.' : 'Nothing here right now.'});
-      return {title:'Printing jobs', body:`${intro}<div class="wf-toolbar">${nav.primary}${searchBox('host-jobs-search', 'Search active jobs')}</div><div id="host-jobs-search">${board}${listEmpty('No active jobs match your search.')}</div>`, bind:() => bindWorkflowBoards()};
+      const historyLink = `<a class="btn-ghost btn-sm" href="#host/jobs?scope=history">${icon('history')}Job history<span class="segment-count">${data.scopes.history.total}</span></a>`;
+      const intro = '<p class="muted ws-intro">Accept jobs that fit your approved printers and stocked colours, make them, then ship them. Jobs from your own orders are never listed. Completed and cancelled jobs move to Job history.</p>';
+      if (!data.items.length) return {title:'Printing jobs', action:historyLink, body:`${intro}<div class="section-card">${emptyState("You're all caught up", 'No jobs to accept or make right now. New order requests matching your printers and materials appear here.')}</div>`};
+      const open = stages.some(s => s.key === view.group) ? view.group : rememberedHostStage();
+      const board = stageBoard({id:'host-jobs-board', label:'Active jobs', stages, items:data.items, card:jobCard, peek:jobPeek, level:2, open, empty:c => HOST_EMPTY_STAGE[c.key] || 'Nothing here right now.'});
+      // Switching stage rewrites the address (no new history entry, no reload) so a refresh, or a return
+      // from another page, opens the same stage.
+      const remember = (key, address) => { try { sessionStorage.setItem(HOST_STAGE_KEY, key); } catch (e) {} if (address) history.replaceState(history.state, '', '#' + hostJobsHref({...view, group:key})); };
+      return {title:'Printing jobs', action:historyLink, body:`${intro}<div class="wf-toolbar">${searchBox('host-jobs-search', 'Search active jobs')}</div><div id="host-jobs-search">${board}${listEmpty('No active jobs match your search.')}</div>`,
+        bind:() => { const b = $('#host-jobs-board'); remember(b.dataset.open, false); b.addEventListener('stagechange', e => remember(e.detail.key, true)); }};
     }
+    const nav = scopeNav({label:'Printing jobs', base:'host/jobs', data, names:HOST_SCOPE_NAMES});
     const label = (data.scopes.history.groups.find(g => g.key === data.group) || {}).label;
     const empty = !data.scopes.history.total ? ['No job history yet', 'Jobs move here once their buyer confirms receipt, or if they are cancelled.']
       : view.q ? ['No jobs match your search', `Nothing in your job history matches “${view.q}”.`] : [`No ${(label || '').toLowerCase()} jobs`, 'None of your past jobs has this status.'];
     const tools = `<form class="search-field" id="job-history-search" role="search">${icon('search')}<label class="sr-only" for="job-q">Search job history</label><input id="job-q" type="search" name="q" value="${esc(view.q)}" placeholder="Search by product" autocomplete="off" maxlength="80"></form>`;
     const list = data.items.length ? `<div class="list job-history" id="job-list">${data.items.map(jobRow).join('')}</div>` : `<div class="list">${emptyState(...empty)}</div>`;
-    return {title:'Printing jobs', body:`<p class="muted ws-intro">Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.</p>${nav.primary}${toolbar(nav.secondary, tools)}${list}${pager(page => hostJobsHref(view, {page}), data.page, data.pages)}`,
+    return {title:'Job history', action:`<a class="btn-ghost btn-sm" href="#host/jobs">${icon('back')}Active jobs<span class="segment-count">${data.scopes.active.total}</span></a>`,
+      body:`<p class="muted ws-intro">Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.</p>${toolbar(nav.secondary, tools)}${list}${pager(page => hostJobsHref(view, {page}), data.page, data.pages)}`,
       bind:() => { const form = $('#job-history-search'); form.onsubmit = e => { e.preventDefault(); location.hash = '#' + hostJobsHref(view, {q:form.elements.q.value.trim(), page:1}); }; }};
   },
   async 'my-listings'() {

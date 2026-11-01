@@ -476,11 +476,19 @@ def test_active_work_and_history_follow_the_authoritative_status():
     dropped=withdrawn['jobs'][0]['id']
     assert host.post(f'/api/host/jobs/{dropped}/accept',headers=headers(host_token)).status_code==200
     assert admin.post(f'/api/admin/orders/{withdrawn["id"]}/cancel',headers=headers(admin_token)).status_code==200
-    for job in (done,shipped):
+    # Reporting the print start is optional: one job goes through printing, the other straight from
+    # accepted to ready, and only the first gets a printing status or event.
+    for job,steps in ((done,('printing','ready')),(shipped,('ready',))):
         assert host.post(f'/api/host/jobs/{job}/accept',headers=headers(host_token)).status_code==200
-        for status in ('printing','ready'):
+        for status in steps:
             assert host.post(f'/api/host/jobs/{job}/status',json={'status':status},headers=headers(host_token)).status_code==200
+        assert host.post(f'/api/host/jobs/{job}/status',json={'status':'printing'},headers=headers(host_token)).status_code==409, 'no way back to printing'
         ship_job(host,host_token,job)
+    from app.models import Activity
+    with SessionLocal() as db:
+        events=lambda job:set(db.scalars(select(Activity.action).where(Activity.subject==f'job:{job}')))
+        assert {'job.accepted','job.printing','job.ready','job.shipped'}<=events(done)
+        assert {'job.accepted','job.ready','job.shipped'}<=events(shipped) and 'job.printing' not in events(shipped)
     assert buyer.post(f'/api/orders/{order["id"]}/jobs/{done}/received',headers=headers(buyer_token)).status_code==200
     jobs=lambda q:host.get('/api/host/jobs?'+q).json()
     # Host: shipped work stays active until the buyer confirms; completed and cancelled go to history.
@@ -524,9 +532,15 @@ def test_active_work_and_history_follow_the_authoritative_status():
     # A product being printed and another still waiting for a host: the order is in progress, yet the
     # overview warning "printing job without a host" finds it.
     mixed=buyer.post('/api/orders',json={'idempotency_key':'history_scope_order_3','contact':CONTACT,'address':ADDRESS,'items':lines[:2]},headers=headers(buyer_token)).json()
-    started=mixed['jobs'][0]['id']
+    started,waiting=[j['id'] for j in mixed['jobs']]
     assert host.post(f'/api/host/jobs/{started}/accept',headers=headers(host_token)).status_code==200
+    # The host sees accepted and printing jobs as one stage, In production.
+    in_production=lambda:[j['id'] for j in jobs('scope=active&group=in-production')['items']]
+    assert started in in_production() and waiting not in in_production()
     assert host.post(f'/api/host/jobs/{started}/status',json={'status':'printing'},headers=headers(host_token)).status_code==200
+    assert started in in_production()
+    assert host.post(f'/api/host/jobs/{waiting}/status',json={'status':'ready'},headers=headers(host_token)).status_code==404, 'only the host holding a job moves it on'
+    assert host.get('/api/host/jobs?scope=active&group=accepted').status_code==422
     found=lambda q:[o['id'] for o in admin_orders(q)['items']]
     assert mixed['id'] in found('attention=unassigned') and mixed['id'] in found('group=in-progress') and mixed['id'] not in found('group=pending')
     assert order['id'] not in found('attention=unassigned')

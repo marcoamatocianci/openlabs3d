@@ -1498,15 +1498,11 @@ a.segment{text-decoration:none}
 /* Product configurator: nothing can be ordered (no host, or only the viewer's own printers). */
 .availability-message.is-unavailable{padding:10px 12px;border-left:3px solid var(--warning-fg);border-radius:0 8px 8px 0;background:var(--warning-bg);color:var(--warning-fg);font-weight:600}
 .is-unorderable #live-price{min-height:0}.is-unorderable .quantity-label{display:none}
-/* Workflow boards (navigation.js workflowBoard), shared by Printing jobs, the host overview and My orders.
-   Two surfaces only: a quiet column on the page and white cards inside it. Narrow by default: one column
-   at a time, scrolled sideways, with the stage strip. Wide enough for every main column (container
-   queries below): all side by side, and "lane" stages as a full-width row underneath. */
+/* Workflow boards (navigation.js workflowBoard): My orders. Printing jobs uses the expandable stage board
+   (.sb-*, below) with the same card surface. Two surfaces only: a quiet column on the page and white cards
+   inside it. Narrow by default: one column at a time, scrolled sideways, with the stage strip. Wide enough
+   for every column (container queries below): all side by side. */
 .wf{--wf-gap:12px;container-type:inline-size;min-width:0}
-.wf-section{margin:0 0 16px}
-.wf-section-head{display:flex;align-items:flex-end;justify-content:space-between;flex-wrap:wrap;gap:6px 16px;margin:0 0 12px}
-.wf-section-head h2{margin:0;font-size:18px;line-height:1.3;letter-spacing:-.02em}.wf-section-head p{margin:2px 0 0}
-.wf-section-head .textlink{display:inline-flex;align-items:center;gap:5px}.wf-section-head .icon{width:15px;height:15px}
 .wf-toolbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px 16px;margin:0 0 14px}
 .wf-toolbar>.scope-nav{margin:0}.wf-toolbar>.search-field{flex:0 1 280px;min-width:0}
 .wf-stages{margin:0 0 10px}
@@ -1519,25 +1515,12 @@ a.segment{text-decoration:none}
 .wf-hint{margin:-4px 0 2px;color:var(--subtle);font-size:12px;line-height:1.45}
 .wf-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .wf-empty{margin:0;padding:16px 10px;border:1px dashed var(--line);border-radius:10px;color:var(--subtle);font-size:12.5px;line-height:1.5;text-align:center}
-.wf-more{align-self:flex-start;color:var(--teal);font-size:12px;font-weight:600}.wf-more:hover{text-decoration:underline}
 .wf-card{display:flex;flex-direction:column;gap:8px;min-width:0;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
 .wf-card[hidden]{display:none}
-.wf-card-main{display:flex;align-items:flex-start;gap:10px;min-width:0}
 .wf-card .line-thumb{width:48px;height:48px;border:1px solid var(--line);border-radius:8px;color:var(--subtle)}.wf-card .line-thumb>.icon{width:20px;height:20px}
-.wf-card-copy{flex:1;min-width:0}
-.wf-card-title{margin:0;font-family:inherit;font-size:13.5px;font-weight:700;line-height:1.35;letter-spacing:0;color:var(--ink);overflow-wrap:anywhere}
-.wf-card-ref{margin:0;color:var(--subtle);font-size:11.5px;line-height:1.4;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.wf-card-note{margin:0;color:var(--subtle);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
-.wf-card-main{min-height:48px}.wf-compact .wf-card-main{min-height:40px}.wf-card-main .wf-card-copy{align-self:center}
-.wf-card-config{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0;line-height:1.5}
-.wf-qty{flex:none;color:var(--ink);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
-.wf-card-meta{display:flex;flex-wrap:wrap;justify-content:space-between;gap:2px 10px;margin:0;color:var(--subtle);font-size:12px;line-height:1.5}
-.wf-card-meta>span:first-child:not(:only-child){color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
 .wf-card-links{display:flex;flex-wrap:wrap;align-items:center;gap:0 16px;margin:-2px 0}
 .wf-link{display:inline-flex;align-items:center;min-height:28px;padding:0;border:0;background:none;color:var(--teal);font-size:12px;font-weight:600;line-height:1.3;text-decoration:none;cursor:pointer}
 .wf-link:hover{text-decoration:underline}.wf-link:focus-visible{outline:2px solid var(--focus,var(--teal));outline-offset:2px;border-radius:3px}
-.wf-card .wf-primary{justify-content:center;width:100%;margin:0}
-.wf-compact .wf-card .line-thumb{width:40px;height:40px}
 /* The purchased configuration and its preview, everywhere a product line appears. */
 .line-config{display:inline-flex;align-items:center;gap:7px;min-width:0;color:var(--subtle);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
 .line-swatch{flex:none;width:12px;height:12px;border-radius:50%;background:var(--swatch);box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ink) 25%,transparent)}
@@ -1550,8 +1533,6 @@ a.segment{text-decoration:none}
 @container (min-width:876px){
  .wf[data-cols="4"] .wf-stages{display:none}
  .wf[data-cols="4"] .wf-board{grid-auto-flow:row;grid-template-columns:repeat(4,minmax(0,1fr));overflow:visible;scroll-snap-type:none;padding:0}
- .wf[data-cols="4"] .wf-lane{grid-column:1/-1}
- .wf[data-cols="4"] .wf-lane .wf-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr))}
 }
 @media(pointer:coarse){.wf-link{min-height:44px}}
 @media(max-width:700px){.wf-toolbar>.search-field{flex:1 1 100%}}
@@ -1573,3 +1554,109 @@ input:where(:not([type=checkbox],[type=radio],[type=range],[type=color])),select
 .cf-select .cf-input{border-radius:var(--control-radius) 0 0 var(--control-radius)}
 /* Destructive actions in a row or card: identifiable (red text) without competing with the main action. */
 .btn-ghost.danger-text:hover{background:var(--danger-bg);border-color:color-mix(in srgb,var(--danger-fg) 35%,var(--line))}
+/* Expandable stage boards (navigation.js stageBoard): Printing jobs. One stage open at a time.
+   Narrow (phones, tablets, the 1024 px layout with its sidebar): stage pills, then the open stage alone.
+   Wide (container ≥ 760 px): the stages side by side; the open one takes about 60% of the row with full
+   cards, the others are compact columns (name, count, previews) that open on click. */
+:is(.sb-col,.sb-pills .chip,.ho-stat)[data-tone=available]{--tone-bg:var(--job-available-bg);--tone-fg:var(--job-available-fg)}
+:is(.sb-col,.sb-pills .chip,.ho-stat)[data-tone=active]{--tone-bg:var(--job-active-bg);--tone-fg:var(--job-active-fg)}
+:is(.sb-col,.sb-pills .chip,.ho-stat)[data-tone=neutral]{--tone-bg:var(--neutral-bg);--tone-fg:var(--neutral-fg)}
+.sb{container-type:inline-size;min-width:0}
+.sb .sb-pills{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;width:auto;margin:0 0 12px;padding:0;overflow:visible}
+.sb .sb-pills .chip{justify-content:flex-start;gap:8px;min-width:0;padding:0 12px;white-space:normal;text-align:left;line-height:1.15}
+.sb .sb-pills .chip>span{margin-left:auto}
+.sb-dot{flex:none;width:8px;height:8px;border-radius:50%;background:var(--tone-fg,var(--subtle))}
+.sb-pills .chip[aria-pressed=true] .sb-dot{box-shadow:0 0 0 2px color-mix(in srgb,var(--internal-nav-on-active) 70%,transparent)}
+.sb-pills .chip.no-match:not([aria-pressed=true]){opacity:.55}
+.sb-track{display:flex;flex-direction:column;gap:12px;min-width:0}
+.sb-col{display:flex;flex-direction:column;min-width:0;border:1px solid var(--line);border-radius:12px;background:color-mix(in srgb,var(--surface) 45%,var(--paper))}
+.sb-col:not(.is-open){display:none}
+.sb-col.is-open{border-color:var(--accent-line)}
+.sb-heading{margin:0;font:inherit;letter-spacing:0}
+.sb-head{display:flex;flex-direction:column;align-items:stretch;gap:4px;width:100%;margin:0;padding:12px 14px 10px;border:0;border-radius:12px;background:none;color:var(--ink);font:inherit;text-align:left}
+.sb-head[aria-disabled=true]{cursor:default}
+.sb-head:focus-visible{outline:2px solid var(--focus,var(--teal));outline-offset:-2px}
+.sb-head-row{display:flex;align-items:center;gap:9px;min-width:0}
+.sb-icon{display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:8px;background:var(--tone-bg);color:var(--tone-fg)}
+.sb-icon .icon{width:16px;height:16px}
+.sb-title{flex:1;min-width:0;font-size:14px;font-weight:700;line-height:1.3;letter-spacing:-.005em;overflow-wrap:break-word}
+.sb-hint{color:var(--subtle);font-size:12.5px;line-height:1.45}
+.sb-peek{display:none}
+.sb-body{display:none;padding:0 12px 12px}
+.sb-col.is-open .sb-body{display:block;animation:sb-in .26s ease-out both}
+@keyframes sb-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.sb-list{container:jobs/inline-size;display:flex;flex-direction:column;gap:10px;margin:0;padding:0;list-style:none}
+.sb-nomatch{margin:0;padding:14px 10px;border:1px dashed var(--line);border-radius:10px;color:var(--subtle);font-size:12.5px;text-align:center}
+.sb-col.no-match .sb-list{display:none}
+/* A job that moved to another stage: that stage lights up once, with its new count. */
+.sb-bump{animation:sb-bump 1.4s ease-out}
+@keyframes sb-bump{0%,100%{box-shadow:0 0 0 0 transparent}25%{box-shadow:0 0 0 4px var(--accent-line)}}
+@container (min-width:600px){.sb .sb-pills{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@container (min-width:760px){
+ .sb .sb-pills{display:none}
+ .sb-track{flex-direction:row;align-items:stretch}
+ .sb-col,.sb-col:not(.is-open){display:flex;flex:1 1 0;transition:border-color .15s,background-color .15s}
+ /* Animated only while the reader switches stage (navigation.js openStage), never on load or resize. */
+ .sb.is-switching .sb-col{transition:flex-grow .32s cubic-bezier(.2,.7,.2,1),border-color .15s,background-color .15s}
+ .sb-col.is-open{flex-grow:4.2}
+ .sb-col:not(.is-open) .sb-heading{flex:1;display:flex}
+ .sb-col:not(.is-open) .sb-head{flex:1;justify-content:flex-start;gap:10px;padding:12px;cursor:pointer}
+ .sb-col:not(.is-open) .sb-head-row{flex-direction:column;align-items:flex-start;gap:8px}
+ .sb-col:not(.is-open) .sb-title{flex:none;font-size:13px}
+ .sb-col:not(.is-open) .segment-count{height:auto;min-width:0;padding:0;background:none;color:var(--ink);font-size:26px;font-weight:700;line-height:1;letter-spacing:-.02em}
+ .sb-col:not(.is-open) .sb-hint{display:none}
+ .sb-col:not(.is-open) .sb-peek{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-top:2px}
+ .sb-col:not(.is-open):hover{border-color:var(--control-border);background:color-mix(in srgb,var(--surface) 75%,var(--paper))}
+ .sb-col.no-match:not(.is-open){opacity:.55}
+}
+.sb-peek .line-thumb{width:26px;height:26px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--subtle)}
+.sb-peek .line-thumb>.icon{width:13px;height:13px}
+.sb-peek-more{color:var(--subtle);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums}
+/* Job cards in the open stage: preview · product and configuration · quantity, value, time in stage;
+   then the shipment (Awaiting buyer) and the actions. One column; stacked when the stage is narrow. */
+.wf-card.jc{display:grid;grid-template-columns:72px minmax(0,1fr) auto;grid-template-areas:"thumb main side" "note note note" "foot foot foot";gap:10px 14px;padding:14px}
+.wf-card.jc[hidden]{display:none}
+.jc .jc-thumb{grid-area:thumb;width:72px;height:72px;border:1px solid var(--line);border-radius:10px;color:var(--subtle)}
+.jc-main{grid-area:main;display:flex;flex-direction:column;gap:3px;min-width:0}
+.jc-title{margin:0 0 2px;font-family:inherit;font-size:14.5px;font-weight:700;line-height:1.3;letter-spacing:0;color:var(--ink);overflow-wrap:anywhere}
+.jc-config,.jc-spec,.jc-ref{margin:0;color:var(--subtle);font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.jc-ref{font-variant-numeric:tabular-nums}
+.jc-side{grid-area:side;display:flex;flex-direction:column;align-items:flex-end;gap:4px;text-align:right}
+.jc-qty{padding:2px 9px;border-radius:999px;background:var(--neutral-bg);color:var(--neutral-fg);font-size:12px;font-weight:700;font-variant-numeric:tabular-nums}
+.jc-value{color:var(--ink);font-size:15px;font-weight:700;font-variant-numeric:tabular-nums}
+.jc-since{color:var(--subtle);font-size:11.5px;line-height:1.35}
+.jc-sub .status{font-size:10.5px;padding:3px 8px}
+.jc-note{grid-area:note;margin:0;padding:8px 10px;border-radius:8px;background:var(--neutral-bg);color:var(--neutral-fg);font-size:12px;line-height:1.5;overflow-wrap:anywhere}
+.jc-foot{grid-area:foot;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;padding-top:10px;border-top:1px solid var(--line)}
+.jc-foot .wf-card-links{margin:0}
+.jc-primary{margin:0 0 0 auto}
+@container jobs (max-width:420px){
+ .wf-card.jc{grid-template-columns:56px minmax(0,1fr);grid-template-areas:"thumb main" "side side" "note note" "foot foot";gap:10px 12px;padding:12px}
+ .jc .jc-thumb{width:56px;height:56px}
+ .jc-side{flex-direction:row;flex-wrap:wrap;align-items:center;gap:4px 10px;text-align:left}
+ .jc-value{order:-1}
+ .jc-foot .jc-primary{flex:1 1 100%;justify-content:center;margin:0}
+}
+@media(prefers-reduced-motion:reduce){.sb-col,.sb-col:not(.is-open){transition:none!important}.sb-col.is-open .sb-body,.sb-bump{animation:none}}
+/* Host overview: four stage counts, what needs attention, one line of activity. Lighter than Printing jobs. */
+.ho-alerts{display:grid;gap:8px;margin:0 0 22px}.ho-alerts .banner{margin:0}
+.ho-head{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:6px 16px;margin:0 0 12px}
+.ho-head h2{margin:0;font-size:18px;line-height:1.3;letter-spacing:-.02em}
+.ho-head .textlink{display:inline-flex;align-items:center;gap:5px}.ho-head .icon{width:15px;height:15px}
+.ho-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ho-stat{display:flex;flex-direction:column;gap:8px;min-width:0;padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--surface);color:var(--ink);transition:border-color .15s,box-shadow .15s}
+.ho-stat:hover{border-color:var(--control-border);box-shadow:0 2px 10px rgba(29,53,87,.06)}
+.ho-stat:focus-visible{outline:2px solid var(--focus,var(--teal));outline-offset:2px}
+.ho-stat-head{display:flex;align-items:center;gap:9px;min-width:0;color:var(--subtle);font-size:13px;font-weight:600;line-height:1.3}
+.ho-stat-icon{display:grid;place-items:center;flex:none;width:30px;height:30px;border-radius:9px;background:var(--tone-bg);color:var(--tone-fg)}
+.ho-stat-icon .icon{width:16px;height:16px}
+.ho-stat-count{font-size:30px;font-weight:700;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ho-stat-hint{color:var(--subtle);font-size:12px;line-height:1.4}
+.ho-summary{margin:14px 0 0;color:var(--subtle);font-size:13px;line-height:1.6}
+.ho-summary .textlink{font-size:inherit}
+.ho-manage .icon{order:1}
+@media(max-width:600px){.ho-stats{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.ho-stat{padding:14px}.ho-stat-count{font-size:26px}}
+@media(prefers-reduced-motion:reduce){.ho-stat{transition:none}}
+/* Job details on phones: three footer actions (Close, the optional printing report, the next step) wrap,
+   with the next step on its own full-width row. */
+@media(max-width:640px){.review-foot.has-wrap{flex-wrap:wrap}.review-foot.has-wrap>[data-details-step]{flex:1 1 100%;order:3}}

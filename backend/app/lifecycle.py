@@ -20,9 +20,10 @@ ORDER_SCOPES = {
                 ('cancelled', 'Cancelled', ('cancelled',))),
 }
 JOB_SCOPES = {
+    # Accepted and printing are one stage for the host: a job is in production from the moment it is
+    # accepted. Both statuses stay (printing records that the host reported starting the print).
     'active': (('available', 'Available', ('available',)),
-               ('accepted', 'Accepted', ('accepted',)),
-               ('in-progress', 'In progress', ('printing',)),
+               ('in-production', 'In production', ('accepted', 'printing')),
                ('ready', 'Ready to ship', ('ready',)),
                ('shipped', 'Awaiting buyer', ('shipped',))),
     'history': (('completed', 'Completed', ('completed',)),

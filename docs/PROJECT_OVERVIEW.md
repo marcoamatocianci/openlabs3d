@@ -18,7 +18,8 @@ A marketplace that connects **laboratories (buyers)** with independent **3D-prin
 - Buyers configure a product (material, color, quantity), add it to a basket and submit an
   **order request**. No payment or shipping is integrated: buyer and host arrange both directly.
 - Each order line becomes a **printing job** that an eligible approved host accepts and moves
-  through `accepted → printing → ready → completed`.
+  through `accepted → ready → shipped → completed` (the buyer completes it by confirming receipt;
+  reporting `printing` between accepted and ready is optional).
 - A product configuration is only purchasable if some approved host has a printer that is
   certified for the material, actually stocks that material in the requested color, and has a
   build volume large enough for the model.

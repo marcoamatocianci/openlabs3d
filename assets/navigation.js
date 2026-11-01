@@ -5,7 +5,11 @@ const iconPaths = {
   cart:'<path d="M3 4h2l2.3 10.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.9-1.4L21 8H6.1"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/>',
   more:'<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
   plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>', history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4.2l2.8 1.8"/>',
-  camera:'<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.2" r="3.4"/>', logout:'<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>'
+  camera:'<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.2" r="3.4"/>', logout:'<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>',
+  arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>', back:'<path d="M19 12H5M11 6l-6 6 6 6"/>',
+  // Printing job stages: new work, in production, packed, on its way.
+  inbox:'<path d="M4 13.5 6.3 6h11.4l2.3 7.5V19H4z"/><path d="M4 13.5h4.6l1.3 2.2h4.2l1.3-2.2H20"/>', layers:'<path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/>',
+  box:'<path d="M4 7.6 12 4l8 3.6v8.8L12 20l-8-3.6z"/><path d="M4 7.6 12 11l8-3.4M12 11v9"/>', truck:'<path d="M3 6.5h11v9.5H3zM14 9.5h3.6L21 13v3h-7"/><circle cx="7" cy="17.6" r="1.7"/><circle cx="17.2" cy="17.6" r="1.7"/>'
 };
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${iconPaths[name]}</svg>`;
 const currentRoute = () => (location.hash || '#home').slice(1).split('?')[0];
@@ -219,20 +223,16 @@ const statCard = (label, value, href, hint='', tone='') => `<a class="stat-card 
 /* Workflow boards: work that moves through stages, one column per stage, in stage order. The stages,
    and the statuses each one holds, come from the API (app/lifecycle.py groups), so a board never
    disagrees with the server. Finished work lives in the History view, never in a column.
-   Wide enough: every column side by side, and `lane` stages (work waiting on someone else) as a full-width
-   row underneath. Narrower: the board scrolls sideways one column at a time and a strip of stage pills
-   shows which stage is in view and jumps to the others (style.css, "Workflow boards").
+   Wide enough: every column side by side. Narrower: the board scrolls sideways one column at a time and a
+   strip of stage pills shows which stage is in view and jumps to the others (style.css, "Workflow boards").
    stages: [{key, label, statuses, hint}] · card(item, headingLevel) returns one <li class="wf-card">. */
 const wfScroll = {};
-function workflowBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, lane = [], limit = 0, more, empty = 'Nothing here right now.', focus = '', className = ''}) {
-  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i))), lane:lane.includes(s.key)}));
+function workflowBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, empty = 'Nothing here right now.', focus = ''}) {
+  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i)))}));
   const count = n => `<span class="segment-count">${n}<span class="sr-only"> ${n === 1 ? 'item' : 'items'}</span></span>`;
   const strip = `<nav class="chips wf-stages" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-wf-jump="${id}-${c.key}" aria-controls="${id}-${c.key}">${esc(c.label)}<span>${c.items.length}</span></button>`).join('')}</nav>`;
-  const column = c => {
-    const shown = limit ? c.items.slice(0, limit) : c.items, hidden = c.items.length - shown.length;
-    return `<section class="wf-column${c.lane ? ' wf-lane' : ''}${c.key === focus ? ' is-focus' : ''}" id="${id}-${c.key}" data-stage="${c.key}" tabindex="-1" aria-labelledby="${id}-${c.key}-title"><header class="wf-column-head"><h${level} class="wf-column-title" id="${id}-${c.key}-title">${esc(c.label)}</h${level}>${count(c.items.length)}</header>${c.hint ? `<p class="wf-hint">${esc(c.hint)}</p>` : ''}${shown.length ? `<ul class="wf-list">${shown.map(i => card(i, level + 1)).join('')}</ul>` : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`}${hidden > 0 && more ? more(c, hidden) : ''}</section>`;
-  };
-  return `<div class="wf ${className}" data-cols="${columns.filter(c => !c.lane).length}">${strip}<div class="wf-board" id="${id}" data-wf-board>${columns.map(column).join('')}</div></div>`;
+  const column = c => `<section class="wf-column${c.key === focus ? ' is-focus' : ''}" id="${id}-${c.key}" data-stage="${c.key}" tabindex="-1" aria-labelledby="${id}-${c.key}-title"><header class="wf-column-head"><h${level} class="wf-column-title" id="${id}-${c.key}-title">${esc(c.label)}</h${level}>${count(c.items.length)}</header>${c.hint ? `<p class="wf-hint">${esc(c.hint)}</p>` : ''}${c.items.length ? `<ul class="wf-list">${c.items.map(i => card(i, level + 1)).join('')}</ul>` : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`}</section>`;
+  return `<div class="wf" data-cols="${columns.length}">${strip}<div class="wf-board" id="${id}" data-wf-board>${columns.map(column).join('')}</div></div>`;
 }
 // The stage pills mark every column that is (almost) fully in view: one on a phone, several on a tablet.
 function syncWorkflowStrip(board) {
@@ -267,6 +267,52 @@ document.addEventListener('scroll', e => {
   cancelAnimationFrame(wfFrame); wfFrame = requestAnimationFrame(() => syncWorkflowStrip(board));
 }, true);
 addEventListener('resize', () => document.querySelectorAll('[data-wf-board]').forEach(syncWorkflowStrip));
+/* Expandable stage boards (Printing jobs): the stages and cards of a workflow board, one stage open at a
+   time. Wide: the open stage takes about 60% of the row with its full cards; the others shrink to compact
+   columns (name, count, a few previews) that open on click. Narrower: stage pills above the open stage.
+   Switching is local: no request, no re-render. The page decides what to remember (a 'stagechange' event).
+   stages: [{key, label, statuses, hint, tone, icon}] · open: the stage to show first (falls back to the
+   first stage with work) · peek(item): a small preview for a collapsed column. */
+function stageBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, open = '', empty = 'Nothing here right now.', peek}) {
+  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i)))}));
+  const current = (columns.find(c => c.key === open) || columns.find(c => c.items.length) || columns[0]).key;
+  const pills = `<nav class="chips sb-pills" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-sb-open="${c.key}" data-tone="${c.tone || ''}" aria-controls="${id}-${c.key}" aria-pressed="${c.key === current}"><i class="sb-dot" aria-hidden="true"></i>${esc(c.label)}<span data-sb-count>${c.items.length}</span></button>`).join('')}</nav>`;
+  const column = c => {
+    const on = c.key === current, more = c.items.length - 3;
+    const previews = peek && c.items.length ? `<span class="sb-peek" aria-hidden="true">${c.items.slice(0, 3).map(peek).join('')}${more > 0 ? `<span class="sb-peek-more">+${more}</span>` : ''}</span>` : '';
+    const body = c.items.length ? `<ul class="sb-list">${c.items.map(i => card(i, level + 1)).join('')}</ul><p class="sb-nomatch" hidden>Nothing in this stage matches your search.</p>`
+      : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`;
+    return `<section class="sb-col${on ? ' is-open' : ''}" id="${id}-${c.key}" data-stage="${c.key}" data-tone="${c.tone || ''}" aria-labelledby="${id}-${c.key}-title"><h${level} class="sb-heading"><button type="button" class="sb-head" data-sb-open="${c.key}" aria-expanded="${on}" aria-controls="${id}-${c.key}-body"${on ? ' aria-disabled="true"' : ''}><span class="sb-head-row"><span class="sb-icon" aria-hidden="true">${c.icon ? icon(c.icon) : ''}</span><span class="sb-title" id="${id}-${c.key}-title">${esc(c.label)}</span><span class="segment-count" data-sb-count>${c.items.length}</span></span>${c.hint ? `<span class="sb-hint">${esc(c.hint)}</span>` : ''}${previews}</button></h${level}><div class="sb-body" id="${id}-${c.key}-body">${body}</div></section>`;
+  };
+  return `<div class="sb" id="${id}" data-stage-board data-open="${current}">${pills}<div class="sb-track">${columns.map(column).join('')}</div></div>`;
+}
+function openStage(board, key) {
+  const target = board.querySelector(`.sb-col[data-stage="${key}"]`); if (!target || target.classList.contains('is-open')) return false;
+  board.dataset.open = key; board.classList.add('is-switching');
+  clearTimeout(board.switching); board.switching = setTimeout(() => board.classList.remove('is-switching'), 400);
+  board.querySelectorAll('.sb-col').forEach(col => {
+    const on = col === target, head = col.querySelector('.sb-head');
+    col.classList.toggle('is-open', on); head.setAttribute('aria-expanded', String(on));
+    if (on) head.setAttribute('aria-disabled', 'true'); else head.removeAttribute('aria-disabled');
+  });
+  board.querySelectorAll('.sb-pills [data-sb-open]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sbOpen === key)));
+  board.dispatchEvent(new CustomEvent('stagechange', {bubbles:true, detail:{key}}));
+  return true;
+}
+document.addEventListener('click', e => {
+  const control = e.target.closest('[data-sb-open]'), board = control?.closest('[data-stage-board]');
+  if (board) openStage(board, control.dataset.sbOpen);
+});
+// While searching, each stage counts its matching cards, and the open stage says when none of its own match.
+function syncStageMatches(board, query) {
+  board.querySelectorAll('.sb-col').forEach(col => {
+    const cards = [...col.querySelectorAll('[data-search]')], shown = cards.filter(c => !c.hidden).length;
+    board.querySelectorAll(`[data-sb-open="${col.dataset.stage}"] [data-sb-count]`).forEach(n => { n.textContent = query ? shown : cards.length; });
+    col.classList.toggle('no-match', !!query && !shown);
+    board.querySelector(`.sb-pills [data-sb-open="${col.dataset.stage}"]`)?.classList.toggle('no-match', !!query && !shown);
+    col.querySelector('.sb-nomatch')?.toggleAttribute('hidden', !query || shown > 0);
+  });
+}
 /* Ordered products, wherever they appear (orders, jobs, history): the current neutral product render,
    recoloured in the browser with the purchased colour (product-visuals.js, no new renders), and the
    material and colour as bought. Lines from before colour snapshots show their name without a swatch. */
@@ -312,6 +358,7 @@ document.addEventListener('input', e => {
   const query = e.target.value.trim().toLowerCase(); let shown = 0;
   list.querySelectorAll('[data-search]').forEach(row => { row.hidden = !!query && !row.dataset.search.includes(query); shown += !row.hidden; });
   list.querySelector('[data-filter-empty]')?.toggleAttribute('hidden', shown > 0 || !query);
+  list.querySelectorAll('[data-stage-board]').forEach(board => syncStageMatches(board, query));
 });
 
 /* Light/dark switch: applies immediately, then persists to the account when signed in. */

@@ -8,7 +8,7 @@ Buyer orders by fixture key (references are assigned by the server):
   pending-a, pending-b         available (the host may accept them)
   accepted                    accepted by host
   printing                    printing
-  ready                       ready to ship
+  ready                       ready to ship (accepted, then marked ready without a printing report)
   shipped                     shipped, with a tracking link (the buyer must confirm receipt)
   mixed                       three products: shipped, printing and still available (order: printing)
   pair                        two products, both accepted (order: accepted)
@@ -61,9 +61,11 @@ def place(key, lines):
     return buyer.post('/api/checkout', body, expect=201)
 
 STEPS = ['accepted', 'printing', 'ready', 'shipped']
-def advance(job, until):
+def advance(job, until, printing=True):
+    """Accept, then move on; printing=False skips the optional print-start report (accepted -> ready)."""
     host.post(f'/api/host/jobs/{job}/accept')
     for step in STEPS[1:STEPS.index(until) + 1]:
+        if step == 'printing' and not printing: continue
         extra = {'carrier': 'DHL Express', 'tracking_number': f'JD{job:06d}', 'tracking_url': f'https://www.dhl.com/track?id=JD{job:06d}', 'note': 'Packed with foam inserts.'} if step == 'shipped' else {}
         host.post(f'/api/host/jobs/{job}/status', {'status': step, **extra})
 
@@ -86,7 +88,7 @@ buyer.post(f'/api/orders/{orders["completed"]["id"]}/jobs/{jobs["completed"][0]}
 admin.post(f'/api/admin/orders/{orders["cancelled"]["id"]}/cancel')
 for job in jobs['pair']: advance(job, 'accepted')
 advance(jobs['mixed'][0], 'shipped'); advance(jobs['mixed'][1], 'printing')
-advance(jobs['shipped'][0], 'shipped'); advance(jobs['ready'][0], 'ready')
+advance(jobs['shipped'][0], 'shipped'); advance(jobs['ready'][0], 'ready', printing=False)
 advance(jobs['printing'][0], 'printing'); advance(jobs['accepted'][0], 'accepted')
 summary = buyer.get('/api/orders')
 print('WORKFLOW_ORDERS=' + ', '.join(f'{o["reference"]}:{o["status"]}' for o in summary), flush=True)

@@ -10,12 +10,14 @@ returns to the active queue).
 | Workflow | Active (default view) | History |
 |---|---|---|
 | Orders (buyer, admin) | Pending `pending` · In progress `accepted` `printing` `ready` · Shipping `shipped` | Completed `completed` · Cancelled `cancelled` |
-| Printing jobs (host) | Available · Accepted · In progress `printing` · Ready to ship `ready` · Awaiting buyer `shipped` | Completed · Cancelled |
+| Printing jobs (host) | Available · In production `accepted` `printing` · Ready to ship `ready` · Awaiting buyer `shipped` | Completed · Cancelled |
 | Custom requests | Submitted · Under review · Accepted `quoted` | Closed `closed` |
 | Approvals (admin) | The pending review queues | Approval history: each decision from `activity_log` |
 
-Workflow-specific meanings: a shipped job stays active until its buyer confirms receipt (only then is it
-`completed`); a ready job (printed, not shipped) is active; an accepted (`quoted`) custom request still
+Workflow-specific meanings: a job is in production from the moment its host accepts it. Reporting the print
+start (`printing`) is optional: Mark ready to ship is allowed from `accepted` or `printing`, and a job that
+skips the report never gets a `printing` status or `job.printing` event. A shipped job stays active until its
+buyer confirms receipt (only then is it `completed`); a ready job (printed, not shipped) is active; an accepted (`quoted`) custom request still
 needs quotation or production work. Approval history records decisions only: approved hosts, products and
 printers are still managed in their own pages. The application has no disputes or payment states (payment
 and delivery are arranged between buyer and host), so no other status keeps finished work active.

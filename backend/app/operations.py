@@ -401,14 +401,16 @@ def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
 @router.post('/host/jobs/{job_id}/status')
 def update_job(job_id: int, body: schemas.JobTransition, auth=Depends(mutate), db: Session=Depends(get_db)):
     active_host(auth,db)
-    previous={'printing':'accepted','ready':'printing','shipped':'ready'}[body.status]
+    # Ready may follow acceptance directly: reporting the print start is optional, so a job is never
+    # given a printing status (or a job.printing event) the host did not report.
+    previous={'printing':('accepted',),'ready':('accepted','printing'),'shipped':('ready',)}[body.status]
     job=db.get(models.PrintingJob,job_id)
     if not job or job.host_id != auth[0].id: fail(404,'Job not found')
     host_active=exists(select(models.HostApplication.id).join(models.User,models.User.id==models.HostApplication.user_id).where(models.HostApplication.user_id==auth[0].id,models.HostApplication.status=='approved',models.User.active.is_(True),models.User.role=='host'))
     moment=datetime.now(timezone.utc); values={'status':body.status,'updated_at':moment}
     if body.status=='shipped':
         values.update(carrier=body.carrier,tracking_number=body.tracking_number,tracking_url=body.tracking_url,shipping_note=body.note,shipped_at=moment)
-    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.host_id==auth[0].id,models.PrintingJob.status==previous,host_active).values(**values)).rowcount
+    changed=db.execute(update(models.PrintingJob).where(models.PrintingJob.id==job_id,models.PrintingJob.host_id==auth[0].id,models.PrintingJob.status.in_(previous),host_active).values(**values)).rowcount
     if changed != 1: fail(409,'Invalid job transition')
     detail=f'{body.carrier} · {body.tracking_number}' if body.status=='shipped' else ''
     sync_order(db,job.order_id); log(db,auth[0].id,f'job.{body.status}',f'job:{job_id}',detail); db.commit(); db.refresh(job)

@@ -1,4 +1,4 @@
-// Host and admin overviews: stat cards carry no attention highlight.
+// Host and admin overviews: summary cards carry no attention highlight; the host overview is counts only.
 // Requires scripts/equipment_preview.py (http://127.0.0.1:18099, isolated data only).
 async page => {
   const base = 'http://127.0.0.1:18099', check = (ok, message) => { if (!ok) throw Error(message); };
@@ -18,9 +18,11 @@ async page => {
   const card = async label => page.locator('.stat-card', {hasText:label}).first();
   await login('host');
   await page.goto(base + '/?qa=' + Date.now() + '#host');
-  const jobs = await card('Available jobs'); await jobs.waitFor();
-  check(+(await jobs.locator('strong').textContent()) > 0, 'Host has available jobs');
-  check(await page.locator('.stat-card.attention').count() === 0, 'Host overview has no attention card');
+  const jobs = page.locator('.ho-stat[data-stage="available"]'); await jobs.waitFor();
+  check(+(await jobs.locator('.ho-stat-count').textContent()) > 0, 'Host has available jobs');
+  check(await page.locator('.ho-stat').count() === 4 && await page.locator('#app [data-job-card]').count() === 0, 'Host overview: four stage counts, no job cards');
+  check(await page.locator('.stat-card.attention, .ho-stat.attention').count() === 0, 'Host overview has no attention card');
+  await jobs.click(); await page.waitForURL(/#host\/jobs\?group=available$/); await page.locator('.sb-col.is-open[data-stage="available"]').waitFor();
   await login('admin');
   await page.goto(base + '/?qa=' + Date.now() + '#admin');
   await (await card('Pending approvals')).waitFor();
