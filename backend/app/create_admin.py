@@ -29,6 +29,6 @@ def main():
     with SessionLocal() as db:
         email = str(validated.email).lower()
         if db.scalar(select(User).where(User.email == email)): raise SystemExit('This email is already registered. No account was changed.')
-        db.add(User(email=email, username=username, display_name=name, password_hash=hasher.hash(password), role='admin')); db.commit()
+        db.add(User(email=email, username=username, display_name=username, password_hash=hasher.hash(password), role='admin')); db.commit()
     print('Administrator created.')
 if __name__ == '__main__': main()

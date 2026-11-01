@@ -25,6 +25,11 @@ async page => {
   check(cities.includes('Turin') && !cities.includes('Milan') && !cities.includes('Rome'), 'Cities follow the region');
   await combo(contact, 'city').fill('Turin'); await page.keyboard.press('Enter');
   check(await value(contact, 'city') === 'Turin', 'City chosen from the list');
+  // Local names are searchable: "Torino" finds Turin, and the spelling the user typed is kept.
+  await combo(contact, 'city').fill('Torino');
+  check((await contact.locator('[data-location=city] [role=option]:visible').allTextContents()).includes('Turin') && (await contact.locator('[data-location=city] .is-active').textContent()) === 'Turin', 'Local name finds and highlights the city');
+  await page.keyboard.press('Enter');
+  check(await value(contact, 'city') === 'Torino', 'Typed local name kept');
   // Changing country resets region and city and reloads the lists.
   await combo(contact, 'country').fill('France'); await page.keyboard.press('Enter');
   check(await value(contact, 'country') === 'FR' && await value(contact, 'region') === '' && await value(contact, 'city') === '', 'New country clears region and city');

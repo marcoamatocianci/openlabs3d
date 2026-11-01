@@ -1,4 +1,4 @@
-// Admin Products: official/community badge, type switch and toggle. Requires scripts/catalogue_preview.py (18101).
+// Admin Products: official/community badge and the All / Official / Community view switch. Requires scripts/catalogue_preview.py (18101).
 async page => {
   const base = 'http://127.0.0.1:18101', check = (ok, m) => { if (!ok) throw Error(m); };
   await page.context().clearCookies();
@@ -14,12 +14,14 @@ async page => {
   await page.locator('#product-list .chip, nav.chips .chip', {hasText:'Published'}).first().click();
   await page.waitForURL('**admin/products/approved?type=official'); await page.locator('.segmented').waitFor();
   check(await page.locator('.listing-type-community').count() === 0, 'Status chips keep the type filter');
-  // Toggle the first official product to community.
-  const title = (await rows().first().locator('.row-title').evaluate(t => t.firstChild.textContent)).trim();
+  // Viewing only: the listing type is not changed from this page.
   await rows().first().locator('[data-dropdown]').click();
-  const saved = page.waitForResponse(r => r.url().endsWith('/community') && r.ok());
-  await page.getByRole('button', {name:'Mark as community'}).first().click(); await saved;
-  await open('admin/products?type=community');
-  check((await rows().allInnerTexts()).some(t => t.includes(title)), 'Toggled product is community now: ' + title);
+  check(await page.getByRole('button', {name:/Mark as (official|community)/}).count() === 0, 'No type toggle in the row menu');
+  await open('admin/products');
+  await page.locator('.segmented .segment', {hasText:'Community'}).click(); await page.waitForURL('**type=community');
+  await page.locator('.segment[aria-pressed=true]', {hasText:'Community'}).waitFor();
+  check(await page.locator('.listing-type-official').count() === 0, 'Community filter');
+  await page.locator('.segmented .segment', {hasText:'All'}).click(); await page.locator('.segment[aria-pressed=true]', {hasText:'All'}).waitFor();
+  check(await rows().count() === total, 'All shows every product');
   return {passed:true, total};
 }

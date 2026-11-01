@@ -119,8 +119,8 @@ def country_locations(code: str, response: Response):
     if not pycountry.countries.get(alpha_2=code): fail(404,'Unknown country')
     entry=locations_data().get(code,{'regions':{},'cities':[]})
     response.headers['Cache-Control']='public, max-age=86400'
-    return {'regions':[{'code':k,'name':v} for k,v in entry['regions'].items()],'cities':[{'name':n,'region':r} for n,r in entry['cities']],
-            'source':'GeoNames (CC BY 4.0)'}
+    # Cities as compact rows [name, region code, aliases?]: large countries list tens of thousands of towns.
+    return {'regions':[{'code':k,'name':v} for k,v in entry['regions'].items()],'cities':entry['cities'],'source':'GeoNames (CC BY 4.0)'}
 
 @router.get('/auth/username')
 def available(username: str, auth=Depends(current), db: Session=Depends(get_db)):

@@ -40,9 +40,9 @@ async (page) => {
     assert((await hostContext.request.post(base+'/api/host/jobs/'+jobs[0].id+'/accept',{headers})).status()===200,'Compatible host accepts job');
     // My Equipment → Materials & Colors: stock is host-managed and live without a review.
     const editor=await hostContext.newPage();editor.on('pageerror',e=>errors.push(e.message));
-    await editor.goto(base+'/#my-printers/materials');await editor.locator('#eq-stock .eq-acc').first().waitFor();
+    await editor.goto(base+'/#my-printers/materials');await editor.locator('#eq-stock .inv').first().waitFor();
     const settle=()=>editor.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));
-    await editor.getByRole('button',{name:'Show PETG colors'}).click();
+    await editor.locator('[data-open-material="PETG"]').click();
     await editor.getByRole('button',{name:'Remove White from PETG'}).click();await settle();
     await editor.locator('[data-custom-color="PETG"] [name=name]').fill('Lab green');await editor.locator('[data-custom-color="PETG"] [name=hex]').fill('#00ff00');
     await editor.locator('[data-custom-color="PETG"] button').click();await settle();
@@ -50,10 +50,15 @@ async (page) => {
     const black=()=>editor.locator('[data-toggle-color="black"][data-material="PETG"]');
     await black().click();await settle();assert(await black().getAttribute('aria-pressed')==='true','One click adds a standard color');
     await black().click();await settle();assert(await black().getAttribute('aria-pressed')==='false','A second click removes it');
+    // Rename a colour in place (e.g. a "yellow-2" left by the stock merge).
+    await editor.locator('[data-rename-start="lab-green"][data-material="PETG"]').click();
+    await editor.locator('[data-rename="PETG"] input').fill('Bench green');await editor.locator('[data-rename="PETG"] input').press('Enter');await settle();
+    const renamed=(await(await hostContext.request.get(base+'/api/host/materials')).json()).material_colors.PETG;
+    assert(renamed['bench-green']==='#00ff00'&&!renamed['lab-green'],'Colour renamed, shade kept');
     const stock=(await(await hostContext.request.get(base+'/api/host/equipment')).json())[0].material_colors.PETG;
-    assert(stock['lab-green']==='#00ff00'&&!stock.white,'Stock changes are saved directly');
+    assert(stock['bench-green']==='#00ff00'&&!stock.white,'Stock changes are saved directly');
     const offer=(await(await page.request.get(base+'/api/listings/1/availability')).json()).colors_by_material.PETG;
-    assert(offer['lab-green']==='#00ff00'&&!offer.white,'Buyers see the new stock at once');
+    assert(offer['bench-green']==='#00ff00'&&!offer.white,'Buyers see the new stock at once');
     assert(!(await(await page.request.get(base+'/api/cart')).json())[0].available,'A basket line no host can make becomes unavailable');
     // The accepted order keeps the configuration that was bought, and stays with its host.
     const job=(await(await hostContext.request.get(base+'/api/host/jobs')).json()).find(j=>j.id===jobs[0].id);

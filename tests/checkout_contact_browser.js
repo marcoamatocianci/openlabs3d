@@ -87,7 +87,7 @@ async (page) => {
   await combo('region').click(); await page.locator('#new-address [data-location=region] [role=option]',{hasText:'Piedmont'}).waitFor();
   await combo('region').fill('Piedm'); await page.keyboard.press('Enter');
   await combo('city').fill('Tur');
-  check(await page.locator('#new-address [data-location=city] [role=option]:visible',{hasText:'Turin'}).count()===1,'Cities of the region offered');
+  check((await page.locator('#new-address [data-location=city] [role=option]:visible').allTextContents()).includes('Turin'),'Cities of the region offered');
   await combo('city').fill('Torino'); await page.keyboard.press('Tab');
   check(await page.locator('#new-address [data-location=city] input[type=hidden]').inputValue()==='Torino','A city typed by hand is kept');
   check(await page.locator('#new-address [name=postal_code]').getAttribute('required')!==null,'Postal code required');

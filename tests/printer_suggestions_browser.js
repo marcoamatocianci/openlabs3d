@@ -8,7 +8,7 @@ async page => {
   // Layout: tiles first, then two sections collapsed by default; the arrow turns when one opens.
   const tiles = page.locator('.ap-tiles .ap-tile');
   check(await tiles.count() === 2 && (await tiles.first().innerText()).includes('QA'), 'One tile per registered printer type');
-  check((await tiles.first().locator('.ap-tile-count').innerText()).trim() === '1', 'Tile counts units');
+  check((await tiles.first().locator('.ap-tile-count').innerText()).trim().split(/\s+/)[0] === '1', 'Tile counts units');
   await tiles.first().hover();
   check(await tiles.first().locator('.ap-tip').isVisible() && (await tiles.first().locator('.ap-tip').innerText()).includes('Registered hosts'), 'Hover shows utilisation and hosts');
   const order = await page.locator('.ws-main .ap-available, .ws-main .ap-collapse').evaluateAll(e => e.map(x => x.dataset.collapse || 'available'));

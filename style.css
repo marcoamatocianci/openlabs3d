@@ -885,8 +885,8 @@ dialog.review-dialog{width:min(920px,calc(100vw - 32px));max-width:none;max-heig
 .cf-select .cf-input:focus-visible{outline:none}
 .cf-select .cf-input::placeholder{color:var(--subtle);font-weight:400;opacity:1}
 .cf-combo-toggle{display:grid;place-items:center;flex:none;width:34px;height:100%;padding:0;border:0;background:none;color:inherit;cursor:pointer}
-.cf-menu [role=option][hidden],.cf-no-match[hidden]{display:none}
-.cf-no-match{padding:8px 10px;color:var(--subtle);font-size:13.5px}
+.cf-menu [role=option][hidden],.cf-no-match[hidden],.cf-more[hidden]{display:none}
+.cf-no-match,.cf-more{padding:8px 10px;color:var(--subtle);font-size:13.5px}.cf-more{font-size:12px;border-top:1px solid var(--line);margin-top:4px}
 /* Dropdown used as a form field: label and height match the surrounding inputs. */
 .cf-select.cf-select-field{flex:none;gap:8px;min-width:0;margin-bottom:14px}
 .cf-select-field .cf-label{color:var(--ink);font-size:12px!important;font-weight:400;letter-spacing:0;text-transform:none}
@@ -1299,7 +1299,7 @@ dialog.ad-dialog::backdrop{background:rgba(16,29,48,.46);backdrop-filter:blur(2p
 .es-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px 28px}
 .es-list{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
 .es-printer{display:flex;align-items:center;gap:10px}.es-printer>span{display:flex;flex-direction:column;gap:2px;min-width:0}
-.es-printer strong,.es-material strong{font-size:13.5px}.es-printer small{display:flex;gap:8px;align-items:center;color:var(--subtle);font-size:12px}
+.es-printer strong,.es-material strong{font-size:13.5px}.up-card .es-list+.eq-label{margin-top:14px}.es-printer small{display:flex;gap:8px;align-items:center;color:var(--subtle);font-size:12px}
 .es-material{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:1px solid var(--line)}
 @media(max-width:720px){.es-grid{grid-template-columns:1fr}}
 
@@ -1349,3 +1349,87 @@ a.segment{text-decoration:none}
 .approval-actions{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;flex:none}
 .approval-details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}.approval-details>summary{cursor:pointer;color:var(--teal);font-weight:600}
 @media(max-width:720px){.approval-main{flex-wrap:wrap}.approval-actions{width:100%;justify-content:stretch}.approval-actions>*{flex:1;min-height:44px}}
+
+/* My equipment → Materials & colors: one card per owned material, colours always visible. */
+.inv[aria-busy=true]{opacity:.7;pointer-events:none;transition:opacity .15s}
+.inv-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:0 0 12px}
+.inv-head h2{margin:0;font-size:18px}.inv-head p{margin:2px 0 0;color:var(--subtle);font-size:13px}
+.inv-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:14px;align-items:start}
+.inv-card{display:flex;flex-direction:column;gap:12px;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--surface);transition:border-color .15s,box-shadow .15s}
+.inv-card.is-open{grid-column:1/-1;border-color:var(--control-border);box-shadow:var(--shadow-pop)}
+.inv-card.is-unsupported{border-style:dashed}
+.inv-card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+.inv-card-head h3{margin:0;font-size:16px}
+.inv-usable{display:flex;align-items:center;gap:5px;margin:3px 0 0;color:var(--subtle);font-size:12px}
+.inv-usable .icon{width:14px;height:14px;color:var(--success-fg)}
+.inv-usable.is-warning{color:var(--warning-fg);font-weight:600}
+.inv-remove{flex:none;color:var(--subtle)}.inv-remove:hover{color:var(--danger-fg);background:var(--danger-bg)}
+.inv-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0;padding:0;list-style:none}
+.inv-chip{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:2px 2px 2px 10px;border:1px solid var(--line);border-radius:999px;background:var(--paper);font-size:12.5px}
+.inv-chip .eq-dot{width:14px;height:14px}
+.inv-chip-name{padding:2px 2px;border:0;background:none;color:var(--ink);font-weight:600;cursor:text;border-radius:4px}
+.inv-chip-name:hover{text-decoration:underline dotted;text-underline-offset:3px}
+.inv-chip-btn{display:grid;place-items:center;width:26px;height:26px;padding:0;border:0;border-radius:50%;background:none;color:var(--subtle)}
+.inv-chip-btn .icon{width:13px;height:13px}
+.inv-chip-btn:hover{background:var(--danger-bg);color:var(--danger-fg)}
+.inv-chip.is-editing{padding-right:4px;border-color:var(--teal);box-shadow:0 0 0 3px var(--accent-soft)}
+.inv-chip.is-editing form{display:flex;align-items:center;gap:4px}
+.inv-chip.is-editing input{width:140px;padding:3px 6px;border:0;background:transparent;font-size:12.5px;font-weight:600;outline:none}
+.inv-chip.is-editing .inv-chip-btn:first-of-type:hover{background:var(--success-bg);color:var(--success-fg)}
+.inv-empty-colors{margin:0;padding:8px 10px;border-radius:8px;background:var(--warning-bg);color:var(--warning-fg);font-size:12.5px}
+.inv-add-color{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px dashed var(--control-border);border-radius:8px;background:none;color:var(--teal);font-size:12.5px;font-weight:600}
+.inv-add-color:hover{border-style:solid;background:var(--hover)}
+.inv-add-color .icon{width:14px;height:14px}.inv-add-color[aria-expanded=true] .icon{transform:rotate(180deg)}
+.inv-panel{padding-top:10px;border-top:1px solid var(--line)}
+.inv-add{margin-top:20px;padding:16px 18px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+.inv-add h3{margin:0 0 10px;font-size:14px}
+.inv-add-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.inv-add-chip{display:inline-flex;align-items:center;gap:5px;min-height:34px;padding:0 12px;border:1px solid var(--line);border-radius:999px;background:var(--paper);color:var(--ink);font-size:13px;font-weight:600}
+.inv-add-chip .icon{width:14px;height:14px;color:var(--teal)}
+.inv-add-chip:hover:not(:disabled){border-color:var(--teal);background:var(--hover)}
+.inv-add-chip:disabled{opacity:.45;cursor:not-allowed}
+@media(max-width:600px){.inv-grid{grid-template-columns:1fr}.inv-chip-btn{width:32px;height:32px}}
+
+/* Host printing jobs: fixed columns so price, status and actions line up from row to row. */
+.list-row.job-row{display:grid;grid-template-columns:minmax(0,1fr) 110px 150px 270px;align-items:center;gap:6px 18px}
+.job-row .row-value{flex:none}.job-row .row-status{flex-direction:column;align-items:flex-start;gap:3px;min-width:0}
+.job-row .row-actions{margin:0;justify-content:flex-end}
+.job-row .row-details{grid-column:1/-1}
+.job-meta{display:flex;align-items:baseline;gap:6px}.job-meta .ad-swatch{flex:none;align-self:center}
+.job-status-note{font-size:11px;color:var(--subtle)}
+@media(max-width:900px){.list-row.job-row{grid-template-columns:minmax(0,1fr) auto}.job-row .row-main{grid-column:1/-1}.job-row .row-value{text-align:left}.job-row .row-status{align-items:flex-end}.job-row .row-actions{grid-column:1/-1;justify-content:flex-start}}
+
+/* Activity log: grouped by day, one colour per area. */
+.activity-list .activity-day{display:block;padding:14px 0 4px;border-top:0;color:var(--subtle);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.activity-list .activity-day:first-child{padding-top:0}
+.activity-list .activity-item{align-items:flex-start;gap:10px}
+.activity-list .activity-item p{flex:1;min-width:0}
+.activity-dot{flex:none;width:8px;height:8px;margin-top:7px;border-radius:50%;background:var(--neutral-fg)}
+[data-area=orders] .activity-dot{background:var(--success-fg)}[data-area=printing] .activity-dot{background:var(--info-fg)}
+[data-area=equipment] .activity-dot{background:var(--warning-fg)}[data-area=listings] .activity-dot{background:var(--teal)}
+[data-area=requests] .activity-dot{background:var(--orange)}
+.activity-subject{color:var(--teal);font-weight:600}
+.activity-detail{display:block;margin-top:2px;color:var(--subtle);font-size:12px}
+.activity-list.is-collapsed .is-more{display:none}
+.activity-more{margin-top:10px}
+/* Printer type tiles: icon and unit count on top, maker and model below. */
+.ap-tiles{grid-template-columns:repeat(auto-fill,minmax(200px,1fr))}
+.ap-tile{display:grid;grid-template-columns:auto 1fr;grid-template-areas:"art count" "copy copy";align-items:start;gap:10px;padding:14px}
+.ap-tile .eq-art{grid-area:art}.ap-tile-count{grid-area:count;justify-self:end;display:flex;flex-direction:column;align-items:flex-end;min-width:0;padding:0;background:none;color:var(--ink);font-size:24px;line-height:1}
+.ap-tile-count small{font-size:10.5px;font-weight:600;color:var(--subtle);text-transform:uppercase;letter-spacing:.06em;margin-top:3px}
+.ap-tile-copy{grid-area:copy}.ap-maker{color:var(--subtle);font-size:11.5px}
+/* Equipment update review table. */
+.rv-table{width:100%;margin-top:10px;font-size:12.5px}.rv-table td,.rv-table th{vertical-align:top;text-align:left}
+.rv-table td small{display:block;color:var(--subtle);font-size:11px}
+.rv-old{color:var(--subtle);text-decoration:line-through}.rv-new{font-weight:700}
+.rv-removed td:not(:first-child){color:var(--subtle);text-decoration:line-through}
+.rv-other{margin:8px 0 0;font-size:12.5px}
+.approval-details{overflow-x:auto}
+/* My Orders: progress tracker on each card. */
+.bo-progress{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:0;padding:12px 20px 0;list-style:none;font-size:11.5px;font-weight:600;color:var(--subtle)}
+.bo-progress li{display:flex;flex-direction:column;gap:6px;min-width:0}
+.bo-progress span{height:4px;border-radius:2px;background:var(--line)}
+.bo-progress .done{color:var(--ink)}.bo-progress .done span{background:var(--teal);opacity:.5}
+.bo-progress .current{color:var(--ink)}.bo-progress .current span{background:var(--teal)}
+.bo-progress .partly span{background:linear-gradient(90deg,var(--teal) 50%,var(--line) 50%)}
+@media(max-width:560px){.bo-progress{padding:10px 14px 0;font-size:10.5px;gap:4px}}

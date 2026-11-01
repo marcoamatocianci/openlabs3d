@@ -27,6 +27,6 @@ async page => {
   check(await page.locator('.up-filter .segment', {hasText:'Printing log'}).count() === 0 && await page.locator('.ws-main').getByText('Printing specs').count() === 0, 'No host sections for a buyer');
   await page.locator('.up-filter .segment', {hasText:'Marketplace purchases'}).click(); await page.waitForURL(/type=purchases/);
   await page.locator('.segment[aria-pressed=true]', {hasText:'Marketplace purchases'}).waitFor();
-  check((await page.locator('.activity-list li').count()) >= 1 && (await page.locator('.activity-list').innerText()).toLowerCase().includes('order created'), 'Purchases filter');
+  check((await page.locator('.activity-list li').count()) >= 1 && (await page.locator('.activity-list').innerText()).toLowerCase().includes('placed order'), 'Purchases filter');
   return {passed:true};
 }

@@ -11,16 +11,18 @@ const uiEsc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'
 const uiFold = s => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[-_'’.,/]+/g, ' ').replace(/\s+/g, ' ');
 const UI_CHEVRON = '<svg class="cf-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
+// Each option carries its search key: the label and any aliases (e.g. "Torino" for Turin), folded, "|"-separated.
 function uiSelectOptionsMarkup(id, options, value) {
-  return options.map(([v, l], i) => `<li role="option" id="${id}-o-${i}" data-value="${uiEsc(v)}" aria-selected="${String(v) === String(value)}">${uiEsc(l)}</li>`).join('');
+  return options.map(([v, l, aliases], i) => `<li role="option" id="${id}-o-${i}" data-value="${uiEsc(v)}" data-search="${uiEsc([l, ...(aliases || [])].map(uiFold).join('|'))}" aria-selected="${String(v) === String(value)}">${uiEsc(l)}</li>`).join('');
 }
-/* options: [[value, label], ...]. A searchable select may start empty (value not in options); a plain one falls back to the first option. */
+const UI_VISIBLE_MAX = 200;   // long lists (all towns of a country) show the first matches; typing narrows them
+/* options: [[value, label, aliases?], ...]. A searchable select may start empty (value not in options); a plain one falls back to the first option. */
 function uiSelect({name, label = '', ariaLabel = '', options, value = '', id, searchable = false, freeText = false, placeholder = 'Search…', required = false, describedBy = '', className = '', attrs = ''}) {
   id = id || `sel-${name || 'x'}-${++uiSelectSeq}`;
   const current = options.find(([v]) => String(v) === String(value)) || (searchable ? (freeText && value ? [value, value, true] : null) : options[0]);
   const described = describedBy ? ` aria-describedby="${uiEsc(describedBy)}"` : '';
   const labelled = label ? `aria-labelledby="${id}-l"` : `aria-label="${uiEsc(ariaLabel)}"`;
-  const menu = `<ul class="cf-menu" id="${id}-m" role="listbox" tabindex="-1" ${labelled} hidden>${uiSelectOptionsMarkup(id, options, current?.[2] ? null : current?.[0])}${searchable ? `<li class="cf-no-match" role="presentation" hidden>${freeText ? 'Not in the list: what you type is kept' : 'No matches'}</li>` : ''}</ul>`;
+  const menu = `<ul class="cf-menu" id="${id}-m" role="listbox" tabindex="-1" ${labelled} hidden>${uiSelectOptionsMarkup(id, options, current?.[2] ? null : current?.[0])}${searchable ? `<li class="cf-no-match" role="presentation" hidden>${freeText ? 'Not in the list: what you type is kept' : 'No matches'}</li><li class="cf-more" role="presentation" hidden>Keep typing to see more</li>` : ''}</ul>`;
   const hidden = `<input type="hidden"${name ? ` name="${uiEsc(name)}"` : ''} value="${uiEsc(current?.[0] ?? '')}">`;
   if (searchable) {
     return `<div class="cf-select is-searchable ${className}" data-select="${uiEsc(name || id)}" data-searchable${freeText ? ' data-free-text' : ''} ${attrs}>${label ? `<label class="cf-label" id="${id}-l" for="${id}-i">${uiEsc(label)}</label>` : ''}<div class="cf-combo"><input id="${id}-i" class="cf-input" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${id}-m" ${label ? '' : `aria-label="${uiEsc(ariaLabel)}"`} placeholder="${uiEsc(placeholder)}" value="${uiEsc(current?.[1] ?? '')}" autocomplete="off" spellcheck="false"${described}${required ? ' required' : ''}><button type="button" class="cf-combo-toggle" tabindex="-1" aria-label="Show options" aria-controls="${id}-m">${UI_CHEVRON}</button></div>${menu}${hidden}</div>`;
@@ -51,9 +53,10 @@ function uiSelectSet(target, value, {silent = false} = {}) {
 /* Replace the options, e.g. for a list that depends on another field. Keeps the value when it is still offered. */
 function uiSelectSetOptions(target, options, value = uiSelectValue(target)) {
   const root = uiSelectRoot(target); if (!root) return;
-  const menu = root.querySelector('.cf-menu'), id = menu.id.replace(/-m$/, ''), empty = menu.querySelector('.cf-no-match');
-  menu.innerHTML = uiSelectOptionsMarkup(id, options, value); if (empty) menu.append(empty);
+  const menu = root.querySelector('.cf-menu'), id = menu.id.replace(/-m$/, ''), extra = menu.querySelectorAll('.cf-no-match, .cf-more');
+  menu.innerHTML = uiSelectOptionsMarkup(id, options, value); menu.append(...extra);
   uiSelectSet(root, value, {silent:String(value) === uiSelectValue(root)});
+  uiSelectFilter(root, root.classList.contains('is-open') && root.dataset.dirty ? root.querySelector('.cf-input').value : '');
 }
 
 function uiSelectClose(root, focus = false, {discard = false} = {}) {
@@ -90,17 +93,28 @@ function uiSelectActivate(root, option) {
   option.classList.add('is-active'); owner.setAttribute('aria-activedescendant', option.id); option.scrollIntoView({block:'nearest'});
 }
 function uiSelectChoose(root, option) {
-  uiSelectSet(root, option.dataset.value); uiSelectClose(root, true);
+  // A free-text field keeps a local name typed in full ("Torino") rather than the listed one ("Turin").
+  const typed = root.dataset.dirty && root.querySelector('.cf-input')?.value.trim(), parts = (option.dataset.search || '').split('|');
+  if (typed && root.hasAttribute('data-free-text') && parts.indexOf(uiFold(typed)) > 0) uiSelectSet(root, typed);
+  else uiSelectSet(root, option.dataset.value);
+  uiSelectClose(root, true);
   root.querySelector('.cf-input')?.select(); // typing again starts a new search instead of appending to the label
 }
 // Live filter for the searchable mode; accents and case are ignored.
 function uiSelectFilter(root, query) {
-  const q = uiFold(query.trim()), options = [...root.querySelectorAll('.cf-menu [role=option]')];
-  options.forEach(o => { o.hidden = !!q && !uiFold(o.textContent).includes(q); });
-  const visible = uiSelectOptions(root), empty = root.querySelector('.cf-no-match');
+  const q = uiFold(query.trim()), options = [...root.querySelectorAll('.cf-menu [role=option]')], key = o => o.dataset.search || uiFold(o.textContent);
+  let shown = 0, more = false;
+  for (const o of options) {
+    const match = !q || key(o).includes(q);
+    o.hidden = (!match || shown >= UI_VISIBLE_MAX) && !(!q && o.getAttribute('aria-selected') === 'true');
+    if (match) { if (shown >= UI_VISIBLE_MAX) more = true; else shown++; }
+  }
+  const visible = uiSelectOptions(root), empty = root.querySelector('.cf-no-match'), note = root.querySelector('.cf-more');
   if (empty) empty.hidden = visible.length > 0;
-  // Highlight the best match: exact, then starting with the text, then any match.
-  const best = q && (visible.find(o => uiFold(o.textContent) === q) || visible.find(o => uiFold(o.textContent).startsWith(q)) || visible[0]);
+  if (note) note.hidden = !more;
+  // Highlight the best match: exact name or alias, then one starting with the text, then any match.
+  const parts = o => key(o).split('|');
+  const best = q && (visible.find(o => parts(o).includes(q)) || visible.find(o => parts(o).some(p => p.startsWith(q))) || visible[0]);
   if (root.classList.contains('is-open')) uiSelectActivate(root, q ? best : (visible.find(o => o.getAttribute('aria-selected') === 'true') || visible[0]));
 }
 function uiSelectMove(root, key) {

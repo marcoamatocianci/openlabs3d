@@ -128,9 +128,10 @@ def test_country_locations():
     data=italy.json()
     regions={r['name']:r['code'] for r in data['regions']}
     assert 'Piedmont' in regions and len(regions)==20
-    turin=next(c for c in data['cities'] if c['name']=='Turin')
-    assert turin['region']==regions['Piedmont']
-    assert all(c['region'] in regions.values() or c['region']=='' for c in data['cities'])
+    turin=next(c for c in data['cities'] if c[0]=='Turin')
+    assert turin[1]==regions['Piedmont'] and 'Torino' in turin[2]  # The local name is a search alias.
+    assert any(c[0]=='Pinerolo' for c in data['cities'])  # Towns, not only large cities.
+    assert all(c[1] in regions.values() or c[1]=='' for c in data['cities'])
     assert data['source'].startswith('GeoNames')
     assert client.get('/api/countries/ZZ/locations').status_code==404
 
@@ -235,12 +236,7 @@ def test_cad_and_product_lifecycle(monkeypatch):
     assert host.post(f'/api/listings/{pid}/cad',files={'file':('bad.3mf',archive.getvalue())}).status_code==422
     r=admin.post('/api/listings',json={**fields,'listing_type':'official'});assert r.status_code==201,r.text
     oid=r.json()['id'];assert admin.post(f'/api/listings/{oid}/publish').json()['status']=='approved'
-    # Admins switch the listing type; others cannot; status is untouched.
-    assert admin.post(f'/api/admin/products/{oid}/community').json()['listing_type']=='community'
-    assert buyer.get(f'/api/listings/{oid}').json()['listing_type']=='community'
-    assert buyer.post(f'/api/admin/products/{oid}/official').status_code==403
-    assert admin.post(f'/api/admin/products/{oid}/official').status_code==200 and buyer.get(f'/api/listings/{oid}').json()['listing_type']=='official'
-    assert admin.post(f'/api/admin/products/{oid}/bogus').status_code==404
+    assert admin.post(f'/api/admin/products/{oid}/official').status_code==404  # The listing type is not edited here.
     assert admin.post(f'/api/admin/products/{oid}/unpublish').status_code==200
     assert buyer.get(f'/api/listings/{oid}').status_code==404
     assert admin.post(f'/api/listings/{oid}/publish').status_code==200

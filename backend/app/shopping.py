@@ -93,15 +93,20 @@ def add_cart(body:CartInput,auth=Depends(mutate),db:Session=Depends(get_db)):
     buying(auth);p=get_listing(db,body.listing_id)
     if p.status!='approved':fail(409,'Product is unavailable')
     q=quote(p,body.material,body.color,body.quantity);body=body.model_copy(update={'material':q['material']})
-    existing=db.scalar(select(models.CartItem.quantity).where(models.CartItem.user_id==auth[0].id,models.CartItem.listing_id==p.id,models.CartItem.material==body.material,models.CartItem.color==body.color)) or 0
     shown=body.expected_unit_price_cents
     # The page quoted the added quantity; when that was accurate, the merged line's own quote is
     # what the buyer will see next, so it needs no review.
     if shown is not None and shown==q['unit_price_cents']:shown=None
-    try:
-        save_line(db,auth[0].id,p,body,existing+body.quantity,shown);db.commit()
-    except HTTPException:db.rollback();raise
-    except IntegrityError:db.rollback();fail(422,'Maximum quantity exceeded')
+    # Two simultaneous adds (a double click) may both try to create the line: the second one retries
+    # once and merges into the line the first just created.
+    for attempt in range(2):
+        existing=db.scalar(select(models.CartItem.quantity).where(models.CartItem.user_id==auth[0].id,models.CartItem.listing_id==p.id,models.CartItem.material==body.material,models.CartItem.color==body.color)) or 0
+        try:
+            save_line(db,auth[0].id,p,body,existing+body.quantity,shown);db.commit();break
+        except HTTPException:db.rollback();raise
+        except IntegrityError:
+            db.rollback()
+            if attempt:fail(422,'Maximum quantity exceeded')
     return cart_data(db,auth[0].id)
 
 @router.post('/cart/{item_id}/accept-price')

@@ -48,7 +48,12 @@ function bindLocationFields(countryRoot) {
   const region = scope.querySelector('[data-location=region]'), city = scope.querySelector('[data-location=city]');
   let data = {regions:[], cities:[]}, seq = 0;
   const regionCode = () => data.regions.find(r => r.name === uiSelectValue(region))?.code;
-  const fillCities = () => { if (!city) return; const code = regionCode(); uiSelectSetOptions(city, [...new Set(data.cities.filter(c => !code || c.region === code).map(c => c.name))].map(n => [n, n])); };
+  // Cities are rows [name, region code, aliases?]; the region narrows them, aliases ("Torino") only help searching.
+  const fillCities = () => {
+    if (!city) return;
+    const code = regionCode(), seen = new Set();
+    uiSelectSetOptions(city, data.cities.filter(c => (!code || c[1] === code) && !seen.has(c[0]) && seen.add(c[0])).map(([n, , aliases]) => [n, n, aliases]));
+  };
   const load = async (reset) => {
     const n = ++seq, code = uiSelectValue(countryRoot);
     if (reset) { if (region) uiSelectSet(region, ''); if (city) uiSelectSet(city, ''); }
@@ -60,8 +65,8 @@ function bindLocationFields(countryRoot) {
   countryRoot.querySelector('input[type=hidden]').addEventListener('change', () => load(true));
   region?.querySelector('input[type=hidden]').addEventListener('change', () => {
     // A city that belongs to another region is cleared; one typed by hand is kept.
-    const code = regionCode(), known = data.cities.find(c => c.name === uiSelectValue(city));
-    if (city && code && known && !data.cities.some(c => c.name === known.name && c.region === code)) uiSelectSet(city, '');
+    const code = regionCode(), known = data.cities.find(c => c[0] === uiSelectValue(city));
+    if (city && code && known && !data.cities.some(c => c[0] === known[0] && c[1] === code)) uiSelectSet(city, '');
     fillCities();
   });
   load(false);

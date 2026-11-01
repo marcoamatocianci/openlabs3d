@@ -138,7 +138,8 @@ def test_admin_creation_uses_registration_validation(monkeypatch):
     monkeypatch.setattr('builtins.input',lambda _:next(responses))
     main()
     with SessionLocal() as db:
-        assert db.scalar(select(User).where(User.email=='new-admin@example.org')).role=='admin'
+        created=db.scalar(select(User).where(User.email=='new-admin@example.org'))
+        assert created.role=='admin' and created.display_name=='NewAdmin'  # One public name: the username.
 
 def test_admin_creation_rejects_invalid_utf8_input(monkeypatch):
     import pytest

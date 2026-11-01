@@ -131,6 +131,7 @@ def application(body:ApplicationInput,auth=Depends(mutate),db:Session=Depends(ge
         equipment.append(models.HostPrinter(user_id=user.id,**data))
     if approved:
         proposal={'company':body.company,'weekly_hours':body.weekly_hours,'printers':[equipment_payload(p) for p in equipment]}
+        if body.submit and proposal==approved_payload(db,user.id):fail(422,'Nothing has changed compared with your approved equipment')
         if not revision:
             revision=models.EquipmentRevision(user_id=user.id,before=json.dumps(approved_payload(db,user.id)),proposal='{}')
             db.add(revision)
@@ -374,19 +375,26 @@ def update_materials(body:InventoryInput,auth=Depends(mutate),db:Session=Depends
 
 @router.get('/admin/printer-stats')
 def printer_stats(auth=Depends(admin),db:Session=Depends(get_db)):
-    """Registered printers of approved hosts grouped by type (manufacturer and model): units, hosts and a
-    utilisation rate relative to the other types — the share of active jobs held by hosts owning that type."""
+    """Registered printers of approved hosts grouped by type (manufacturer and model): units, hosts, and a
+    utilisation rate — each type's share of active printing jobs. A job goes to the host's printer types that
+    can actually make it (approved for its material and large enough): all of it when only one type can,
+    shared by units when several can, and shared over all the host's types if none matches any more."""
     rows=db.execute(select(models.HostPrinter).join(models.HostApplication,models.HostApplication.user_id==models.HostPrinter.user_id).where(models.HostApplication.status=='approved')).scalars().all()
-    active={h:n for h,n in db.execute(select(models.PrintingJob.host_id,__import__('sqlalchemy').func.count()).where(models.PrintingJob.status.in_(['accepted','printing','ready'])).group_by(models.PrintingJob.host_id))}
-    types={}
+    types,by_host={},{}
     for p in rows:
-        t=types.setdefault((p.manufacturer,p.model),{'manufacturer':p.manufacturer,'model':p.model,'technology':p.technology,'units':0,'hosts':set(),'verified':False})
-        t['units']+=p.quantity;t['hosts'].add(p.user_id)
-        if p.model_id:t['verified']=bool(db.get(models.PrinterModel,p.model_id).verified)
-    total=sum(active.values())
-    result=[]
-    for t in types.values():
-        # A host's active jobs are shared across its printer types in proportion to units.
-        jobs=sum(active.get(h,0)*sum(q.quantity for q in rows if q.user_id==h and (q.manufacturer,q.model)==(t['manufacturer'],t['model']))/max(1,sum(q.quantity for q in rows if q.user_id==h)) for h in t['hosts'])
-        result.append({**t,'hosts':len(t['hosts']),'active_jobs':round(jobs,2),'utilisation':round(jobs/total,4) if total else 0})
+        key=(p.manufacturer,p.model)
+        t=types.setdefault(key,{'manufacturer':p.manufacturer,'model':p.model,'technology':p.technology,'units':0,'hosts':set(),'verified':False,'active_jobs':0.0})
+        t['units']+=p.quantity;t['hosts'].add(p.user_id);by_host.setdefault(p.user_id,[]).append(p)
+        if p.model_id:t['verified']=t['verified'] or bool(db.get(models.PrinterModel,p.model_id).verified)
+    def fits(p,dims):return len(dims)==3 and all(a<=b for a,b in zip(sorted(dims),sorted([p.x,p.y,p.z])))
+    jobs=db.scalars(select(models.PrintingJob).where(models.PrintingJob.status.in_(['accepted','printing','ready']),models.PrintingJob.host_id.in_(list(by_host)))).all()
+    for job in jobs:
+        printers=by_host[job.host_id]
+        try:dims=[float(v) for v in json.loads(job.item.manufacturing_dimensions or '[]')]
+        except (ValueError,TypeError):dims=[]
+        able=[p for p in printers if job.item.material in json.loads(p.capabilities or '[]') and (not dims or fits(p,dims))] or printers
+        units=sum(p.quantity for p in able)
+        for p in able:types[(p.manufacturer,p.model)]['active_jobs']+=p.quantity/units
+    total=len(jobs)
+    result=[{**t,'hosts':len(t['hosts']),'active_jobs':round(t['active_jobs'],2),'utilisation':round(t['active_jobs']/total,4) if total else 0} for t in types.values()]
     return sorted(result,key=lambda t:(-t['units'],t['manufacturer'],t['model']))

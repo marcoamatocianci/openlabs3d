@@ -60,12 +60,21 @@ function buyerOrderAddress(order) {
   const reason = order.status === 'cancelled' ? 'Cancelled orders cannot be changed.' : 'The address is fixed once a product has shipped.';
   return `<div class="bo-fact"><div class="bo-fact-head"><h3>Delivery address</h3><button type="button" class="bo-address-edit" data-change-address="${order.id}" aria-label="Change delivery address"${locked ? ` disabled aria-describedby="${hint}"` : ''} title="${locked ? esc(reason) : 'Change delivery address'}">${icon('edit')}</button></div><address>${lines.map(esc).join('<br>') || 'Not provided'}</address>${locked ? `<p class="bo-meta" id="${hint}">${esc(reason)}</p>` : ''}</div>`;
 }
+// Progress: requested → accepted → in production → shipped → received; cancelled orders show no tracker.
+const BUYER_STEPS = [['pending', 'Requested'], ['accepted', 'Accepted'], ['printing', 'In production'], ['shipped', 'Shipped'], ['completed', 'Received']];
+function buyerOrderProgress(order) {
+  if (order.status === 'cancelled') return '';
+  const reached = BUYER_STEPS.findIndex(([s]) => s === (order.status === 'ready' ? 'printing' : order.status)), partly = order.status !== 'shipped' && order.status !== 'completed' && order.jobs.some(j => ['shipped', 'completed'].includes(j.status));
+  return `<ol class="bo-progress" aria-label="Order progress">${BUYER_STEPS.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'current' : ''}${partly && s === 'shipped' ? ' partly' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${partly && s === 'shipped' ? ' (partly)' : ''}</li>`).join('')}</ol>`;
+}
+const buyerOrderHeadBadge = order => order.status !== 'shipped' && order.status !== 'completed' && order.status !== 'cancelled' && order.jobs.some(j => j.status === 'shipped') ? `<span class="status status-info">Partly shipped</span>` : buyerOrderBadge(order.status);
 function buyerOrderCard(order) {
   const count=order.items.reduce((sum,i)=>sum+i.quantity,0),preview=order.items.slice(0,2);
   const shipped=order.jobs.filter(j=>j.status==='shipped');
   const jobs=order.jobs.map(j=>`<li class="bo-job"><div><strong>${esc(j.item.title)}</strong>${buyerOrderConfig(j.item)}<span class="bo-meta">Quantity: ${j.item.quantity}</span><span class="bo-meta">${j.host_id?'Assigned printing host #'+j.host_id:j.status==='cancelled'?'No active assignment':'Waiting for a printing host'}</span>${j.shipment?`<span class="bo-meta">${esc(j.shipment.carrier)} · ${esc(j.shipment.tracking_number)}</span>`:''}</div><div>${buyerOrderBadge(j.status)}<span class="bo-meta">Updated ${esc(safeDate(j.updated_at))}</span></div></li>`).join('');
   return `<article class="section-card bo-card" data-order-id="${order.id}" data-address="${esc(order.address)}" aria-labelledby="bo-title-${order.id}">
-    <header class="bo-card-head"><div><h2 id="bo-title-${order.id}">${esc(order.reference)}</h2><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div>${buyerOrderBadge(order.status)}</header>
+    <header class="bo-card-head"><div><h2 id="bo-title-${order.id}">${esc(order.reference)}</h2><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div>${buyerOrderHeadBadge(order)}</header>
+    ${buyerOrderProgress(order)}
     <ul class="bo-products">${preview.map(i=>buyerOrderLine(i,order.currency)).join('')}</ul>
     ${order.items.length>2?`<p class="bo-more">+ ${order.items.length-2} more ${order.items.length===3?'product':'products'} in order details</p>`:''}
     ${shipped.length?`<section class="bo-shipments" aria-label="Shipped products"><h3>On its way</h3><p class="bo-meta">Confirm each product once it arrives; the order completes when everything is received.</p><ul>${shipped.map(j=>buyerOrderShipment(order,j)).join('')}</ul></section>`:''}

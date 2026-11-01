@@ -72,8 +72,8 @@ async (page) => {
   // Administrator rejects, host resubmits, administrator approves.
   await a.goto(base+'/#admin/pending?type=equipment');await a.locator('.approval-card').first().waitFor();
   assert((await a.locator('.approval-card').first().innerText()).includes('Waiting'),'Approval card shows how long it has waited');
-  await a.locator('.approval-details > summary').first().click();await a.getByRole('heading',{name:'Before / Currently approved'}).waitFor();
-  assert(await a.getByRole('heading',{name:'After / Proposed equipment'}).count()===1,'Before/After visible');
+  await a.locator('.approval-details > summary').first().click();await a.locator('.rv-table').waitFor();
+  assert((await a.locator('.rv-table').innerText()).includes('Modified')&&await a.locator('.rv-table .rv-new').count()>0,'Before/after comparison highlights the change');
   a.on('dialog',d=>d.accept(d.type()==='prompt'?'Verify printer calibration':undefined));
   const rejected=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/reject'));
   await a.getByRole('button',{name:'Reject equipment update'}).click();assert((await rejected).ok(),'Rejected');
@@ -90,8 +90,8 @@ async (page) => {
   assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');
 
   // Materials & Colors: one inventory for all printers, live without approval, offered where a printer is approved.
-  await h.goto(base+'/#my-printers/materials');await h.locator('#eq-stock .eq-acc').waitFor();
-  assert(await h.locator('#eq-stock [data-toggle-material="PLA+"]').isDisabled(),'A material no printer supports cannot be selected');
+  await h.goto(base+'/#my-printers/materials');await h.locator('#eq-stock .inv').waitFor();
+  assert(await h.locator('#eq-stock [data-add-material="PLA+"]').isDisabled(),'A material no printer supports cannot be added');
   await h.locator('[data-open-material="PLA"]').click();
   await h.locator('[data-toggle-color="orange"][data-material="PLA"]').click();   // a single click adds it
   await h.waitForFunction(()=>!document.querySelector('#eq-stock [aria-busy=true]'));

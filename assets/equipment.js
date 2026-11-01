@@ -5,7 +5,7 @@ const equipmentRender = render;
 let printerCatalogue = [], materialCatalogue = [], approvedEquipment = [], equipmentRevision = null, hostInventory = {material_colors:{}, printers_by_material:{}, technologies:[]};
 let hostDraft = null, hostStep = 0, equipmentBusy = false, editorDirty = false, editorSource = '';
 // Materials & Colors tab: host-managed stock, saved immediately (no approval).
-const stockUi = {material:null, busy:false};
+const stockUi = {material:null, renaming:null, focus:null, busy:false};
 const EDITOR_STEPS = ['Personal information', 'Printer equipment', 'Supported materials', 'Production capabilities', 'Review and submit'];
 const STANDARD_COLORS = [['black', '#1b1b1b'], ['white', '#f5f5f2'], ['grey', '#8a8d91'], ['silver', '#c0c4c8'], ['natural', '#efe6d2'], ['cream', '#eeeecc'], ['beige', '#d9c7a7'], ['brown', '#6f4a2f'], ['red', '#d32f2f'], ['signal-red', '#c1121f'], ['orange', '#f57c00'], ['yellow', '#f6c700'], ['lime', '#9ccc3d'], ['green', '#2e7d32'], ['teal', '#00897b'], ['aqua-blue', '#4fb3c8'], ['sky-blue', '#64b5f6'], ['blue', '#1e5bc6'], ['navy', '#1d3557'], ['purple', '#6a3fb5'], ['pink', '#f06292'], ['magenta', '#c2185b'], ['gold', '#c9a227'], ['transparent', '#dfe9ee']];
 
@@ -135,63 +135,86 @@ async function equipmentOverview(route='my-printers') {
   return {title:'My equipment', body:`<div class="eq">${body}</div>`, bind};
 }
 
-/* Materials & Colors: the host's inventory. Every change is saved to the API at once; on failure the
-   last saved state is shown again. Standard colours toggle with a single click. */
+/* Materials & Colors: the host's inventory, once for all printers. Owned materials are cards with their colours
+   always visible; a colour's name can be edited in place; the palette adds or removes a standard colour in one
+   click. Every change is saved at once; on failure the last saved state is shown again. */
 const ownedColors = m => hostInventory.material_colors[m] || {};
+const colorSlug = name => name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 function usableOn(m) { return (hostInventory.printers_by_material[m] || []).map(id => approvedEquipment.find(p => p.id === id)).filter(Boolean); }
-function stockMaterialRow(m) {
-  const printers = usableOn(m), on = m in hostInventory.material_colors, open = on && stockUi.material === m, colors = Object.entries(ownedColors(m));
-  const where = printers.length ? `<span class="eq-mat-count">Usable on ${esc(printers.map(printerName).join(', '))}</span>` : '<span class="eq-mat-count is-warning">No approved printer supports it</span>';
-  const summary = on ? (colors.length ? `<span class="eq-dots">${colors.slice(0, 6).map(([c, h]) => colorDot(h, c)).join('')}</span><span class="eq-mat-count">${colors.length} color${colors.length === 1 ? '' : 's'}</span>` : '<span class="eq-mat-count is-warning">Add a color</span>') : '';
-  const standard = STANDARD_COLORS.map(([name, hex]) => { const owned = ownedColors(m)[name] === hex; const taken = !owned && (name in ownedColors(m) || Object.values(ownedColors(m)).includes(hex)); return `<button type="button" class="eq-color-option" data-toggle-color="${name}" data-material="${esc(m)}" data-k="color-${esc(m)}-${name}" aria-pressed="${owned}" ${taken ? 'disabled title="Already listed under another name"' : ''}>${colorDot(hex, name)}<span>${esc(colorTitle(name))}</span>${owned ? '<small>✓</small>' : ''}</button>`; }).join('');
-  const custom = colors.filter(([c, h]) => !STANDARD_COLORS.some(([n, x]) => n === c && x === h));
-  const panel = open ? `<div class="eq-mat-colors"><p class="eq-label">${esc(m)} — colors you own</p><div class="eq-color-options eq-palette" role="group" aria-label="${esc(m)} standard colors">${standard}</div>${custom.length ? `<div class="eq-swatches">${custom.map(([c, h]) => `<span class="eq-swatch-chip">${colorDot(h, c)}${esc(colorTitle(c))}<button type="button" data-remove-color="${esc(c)}" data-material="${esc(m)}" aria-label="Remove ${esc(colorTitle(c))} from ${esc(m)}">×</button></span>`).join('')}</div>` : ''}<form class="eq-custom-color" data-custom-color="${esc(m)}"><label class="eq-field eq-field-compact">Custom color<input name="name" maxlength="40" placeholder="e.g. Ocean teal" autocomplete="off" data-k="custom-${esc(m)}"></label><label class="eq-field eq-field-compact eq-field-swatch"><span class="sr-only">Swatch</span><input type="color" name="hex" value="#457b9d"></label><button class="btn-ghost btn-sm">${icon('plus')}Add</button><p class="eq-pop-error" role="alert"></p></form>${colors.length ? '' : '<p class="eq-muted">Buyers can only order this material in colors you list here.</p>'}</div>` : '';
-  return `<li class="eq-mat ${on ? 'is-on' : ''} ${open ? 'is-open' : ''} ${printers.length ? '' : 'is-unsupported'}"><div class="eq-mat-row"><label class="eq-check"><input type="checkbox" data-toggle-material="${esc(m)}" data-k="mat-${esc(m)}" ${on ? 'checked' : ''} ${printers.length || on ? '' : 'disabled'}><span>${esc(m)}</span></label>${summary}${where}${on ? `<button type="button" class="eq-mat-toggle" data-open-material="${esc(m)}" data-k="open-${esc(m)}" aria-expanded="${open}" aria-label="${open ? 'Hide' : 'Show'} ${esc(m)} colors">${icon('chevron')}</button>` : ''}</div>${panel}</li>`;
+function inventoryCard(m) {
+  const printers = usableOn(m), colors = Object.entries(ownedColors(m)), open = stockUi.material === m;
+  const where = printers.length ? `<p class="inv-usable">${icon('check')}Offered on ${esc(printers.map(printerName).join(', '))}</p>` : '<p class="inv-usable is-warning">No approved printer is rated for it: buyers do not see it</p>';
+  const chips = colors.map(([c, h]) => stockUi.renaming === m + '|' + c
+    ? `<li class="inv-chip is-editing"><form data-rename="${esc(m)}" data-color="${esc(c)}">${colorDot(h, c)}<input name="name" value="${esc(colorTitle(c))}" maxlength="40" aria-label="New name for ${esc(colorTitle(c))}" data-k="rename-${esc(m)}-${esc(c)}"><button class="inv-chip-btn" aria-label="Save name">${icon('check')}</button><button type="button" class="inv-chip-btn" data-rename-cancel aria-label="Cancel">${icon('close')}</button></form></li>`
+    : `<li class="inv-chip">${colorDot(h, c)}<button type="button" class="inv-chip-name" data-rename-start="${esc(c)}" data-material="${esc(m)}" title="Rename" data-k="name-${esc(m)}-${esc(c)}">${esc(colorTitle(c))}</button><button type="button" class="inv-chip-btn" data-remove-color="${esc(c)}" data-material="${esc(m)}" aria-label="Remove ${esc(colorTitle(c))} from ${esc(m)}">${icon('close')}</button></li>`).join('');
+  const palette = STANDARD_COLORS.map(([name, hex]) => { const owned = ownedColors(m)[name] === hex, taken = !owned && (name in ownedColors(m) || Object.values(ownedColors(m)).includes(hex)); return `<button type="button" class="eq-color-option" data-toggle-color="${name}" data-material="${esc(m)}" data-k="color-${esc(m)}-${name}" aria-pressed="${owned}" ${taken ? 'disabled title="Already in your list under another name"' : ''}>${colorDot(hex, name)}<span>${esc(colorTitle(name))}</span>${owned ? `<small>${icon('check')}</small>` : ''}</button>`; }).join('');
+  const panel = open ? `<div class="inv-panel" id="inv-panel-${esc(colorSlug(m))}"><p class="eq-label">Standard colors · one click adds or removes</p><div class="eq-color-options eq-palette" role="group" aria-label="${esc(m)} standard colors">${palette}</div><form class="eq-custom-color" data-custom-color="${esc(m)}"><label class="eq-field eq-field-compact">Custom color name<input name="name" maxlength="40" placeholder="e.g. Ocean teal" autocomplete="off" data-k="custom-${esc(m)}"></label><label class="eq-field eq-field-compact eq-field-swatch">Shade<input type="color" name="hex" value="#457b9d"></label><button class="btn-ghost btn-sm">${icon('plus')}Add custom</button><p class="eq-pop-error" role="alert"></p></form></div>` : '';
+  return `<article class="inv-card ${printers.length ? '' : 'is-unsupported'} ${open ? 'is-open' : ''}"><header class="inv-card-head"><div><h3>${esc(m)}</h3>${where}</div><button type="button" class="icon-btn inv-remove" data-remove-material="${esc(m)}" aria-label="Remove ${esc(m)} from your materials" title="Remove material">${icon('close')}</button></header>${colors.length ? `<ul class="inv-chips">${chips}</ul>` : '<p class="inv-empty-colors">Add at least one color: buyers can only order the colors listed here.</p>'}<button type="button" class="inv-add-color" data-open-material="${esc(m)}" data-k="open-${esc(m)}" aria-expanded="${open}" aria-controls="inv-panel-${esc(colorSlug(m))}">${icon(open ? 'chevron' : 'plus')}${open ? 'Close colors' : 'Add colors'}</button>${panel}</article>`;
 }
 function renderStock() {
   const root = document.getElementById('eq-stock'); if (!root) return;
   const focusKey = document.activeElement?.dataset?.k;
   if (!approvedEquipment.length) { root.innerHTML = `<div class="eq-empty">${emptyState('No approved printers', 'Materials and colors can be stocked once a printer is approved.', '<a class="btn btn-sm" href="#my-printers">Go to Printers</a>')}</div>`; return; }
-  // Materials of your printers' technologies: the ones a printer is approved for first.
-  const all = materialCatalogue.filter(m => hostInventory.technologies.includes(m.technology) || m.name in hostInventory.material_colors).map(m => m.name);
-  const ordered = [...all.filter(m => usableOn(m).length), ...all.filter(m => !usableOn(m).length)];
-  const owned = Object.keys(hostInventory.material_colors).length, colors = Object.values(hostInventory.material_colors).reduce((n, c) => n + Object.keys(c).length, 0);
-  root.innerHTML = `<div class="eq-acc eq-inventory" aria-busy="${stockUi.busy}"><div class="eq-acc-item is-open"><div class="eq-acc-head eq-inventory-head"><span class="eq-acc-title"><strong>Materials &amp; colors</strong><small>${owned} material${owned === 1 ? '' : 's'} · ${colors} color${colors === 1 ? '' : 's'} · shared by ${approvedEquipment.length} printer${approvedEquipment.length === 1 ? '' : 's'}</small></span></div><div class="eq-acc-panel"><ul class="eq-mats">${ordered.map(stockMaterialRow).join('')}</ul></div></div></div><p class="eq-muted eq-stock-note" role="status" id="eq-stock-status">${stockUi.busy ? 'Saving…' : 'Changes save automatically and apply to new orders. Accepted printing jobs keep their original specifications.'}</p>`;
+  const owned = materialCatalogue.map(m => m.name).filter(m => m in hostInventory.material_colors);
+  Object.keys(hostInventory.material_colors).forEach(m => { if (!owned.includes(m)) owned.push(m); });
+  const addable = materialCatalogue.filter(m => !(m.name in hostInventory.material_colors) && hostInventory.technologies.includes(m.technology)).map(m => m.name);
+  const colors = owned.reduce((n, m) => n + Object.keys(ownedColors(m)).length, 0);
+  root.innerHTML = `<div class="inv" aria-busy="${stockUi.busy}"><header class="inv-head"><div><h2>Your materials</h2><p>${owned.length} material${owned.length === 1 ? '' : 's'} · ${colors} color${colors === 1 ? '' : 's'} · shared by your ${approvedEquipment.length} printer${approvedEquipment.length === 1 ? '' : 's'} · click a color's name to rename it</p></div></header>${owned.length ? `<div class="inv-grid">${owned.map(inventoryCard).join('')}</div>` : `<div class="eq-empty">${emptyState('No materials yet', 'Add the materials you own below, then the colors you have of each.')}</div>`}${addable.length ? `<section class="inv-add" aria-labelledby="inv-add-title"><h3 id="inv-add-title">Add a material</h3><div class="inv-add-list">${addable.map(m => { const ok = usableOn(m).length; return `<button type="button" class="inv-add-chip" data-add-material="${esc(m)}" data-k="add-${esc(m)}" ${ok ? '' : 'disabled title="None of your approved printers is rated for this material"'}>${icon('plus')}${esc(m)}</button>`; }).join('')}</div><p class="eq-muted">Greyed out: none of your approved printers is rated for that material.</p></section>` : ''}</div><p class="eq-muted eq-stock-note" role="status" id="eq-stock-status">${stockUi.busy ? 'Saving…' : 'Changes save automatically and apply to new orders. Accepted printing jobs keep their original specifications.'}</p>`;
   bindStock();
-  if (focusKey) document.querySelector(`[data-k="${CSS.escape(focusKey)}"]`)?.focus({preventScroll:true});
+  const focus = stockUi.focus || focusKey; stockUi.focus = null;
+  if (focus) { const el = document.querySelector(`[data-k="${CSS.escape(focus)}"]`); el?.focus({preventScroll:true}); if (el?.select) el.select(); }
 }
 async function saveStock(change, message) {
-  if (stockUi.busy) return;
+  if (stockUi.busy) return false;
   const next = structuredClone(hostInventory.material_colors); change(next);
   stockUi.busy = true; renderStock();
-  try { hostInventory = await api('/host/materials', {method:'PUT', body:JSON.stringify({material_colors:next})}); if (message) toast(message); }
+  let ok = false;
+  try { hostInventory = await api('/host/materials', {method:'PUT', body:JSON.stringify({material_colors:next})}); ok = true; if (message) toast(message); }
   catch (e) { toast(e.message); }
   finally { stockUi.busy = false; renderStock(); }
+  return ok;
 }
 function bindStock() {
   const all = s => document.querySelectorAll('#eq-stock ' + s);
-  all('[data-toggle-material]').forEach(el => el.onchange = () => {
-    const m = el.dataset.toggleMaterial;
-    stockUi.material = el.checked ? m : stockUi.material === m ? null : stockUi.material;
-    saveStock(s => { if (el.checked) s[m] ||= {}; else delete s[m]; }, el.checked ? `${m} added to your materials` : `${m} removed from your materials`);
+  all('[data-add-material]').forEach(b => b.onclick = () => { const m = b.dataset.addMaterial; stockUi.material = m; stockUi.focus = 'open-' + m; saveStock(s => { s[m] = {}; }, `${m} added — now pick its colors`); });
+  all('[data-remove-material]').forEach(b => b.onclick = () => {
+    const m = b.dataset.removeMaterial, n = Object.keys(ownedColors(m)).length;
+    if (n && !confirm(`Remove ${m} and its ${n} color${n === 1 ? '' : 's'} from your materials?`)) return;
+    if (stockUi.material === m) stockUi.material = null;
+    saveStock(s => { delete s[m]; }, `${m} removed from your materials`);
   });
-  all('[data-open-material]').forEach(b => b.onclick = () => { const m = b.dataset.openMaterial; stockUi.material = stockUi.material === m ? null : m; renderStock(); });
-  // One click adds or removes a standard color.
+  all('[data-open-material]').forEach(b => b.onclick = () => { const m = b.dataset.openMaterial; stockUi.material = stockUi.material === m ? null : m; stockUi.focus = 'open-' + m; renderStock(); });
   all('[data-toggle-color]').forEach(b => b.onclick = () => {
     const m = b.dataset.material, name = b.dataset.toggleColor, hex = STANDARD_COLORS.find(([c]) => c === name)[1], on = b.getAttribute('aria-pressed') === 'true';
-    saveStock(s => { s[m] = {...s[m]}; if (on) delete s[m][name]; else s[m][name] = hex; }, on ? `${colorTitle(name)} removed from ${m}` : `${colorTitle(name)} added to ${m} · live for buyers`);
+    saveStock(s => { s[m] = {...s[m]}; if (on) delete s[m][name]; else s[m][name] = hex; }, on ? `${colorTitle(name)} removed from ${m}` : `${colorTitle(name)} added to ${m}`);
   });
   all('[data-remove-color]').forEach(b => b.onclick = () => { const m = b.dataset.material, c = b.dataset.removeColor; saveStock(s => { delete s[m][c]; }, `${colorTitle(c)} removed from ${m}`); });
+  all('[data-rename-start]').forEach(b => b.onclick = () => { stockUi.renaming = b.dataset.material + '|' + b.dataset.renameStart; stockUi.focus = `rename-${b.dataset.material}-${b.dataset.renameStart}`; renderStock(); });
+  all('[data-rename-cancel]').forEach(b => b.onclick = () => { stockUi.renaming = null; renderStock(); });
+  all('[data-rename]').forEach(form => {
+    form.onkeydown = e => { if (e.key === 'Escape') { e.preventDefault(); stockUi.renaming = null; renderStock(); } };
+    form.onsubmit = async e => {
+      e.preventDefault();
+      const m = form.dataset.rename, old = form.dataset.color, slug = colorSlug(form.elements.name.value), current = ownedColors(m);
+      if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug)) { toast('Use letters and numbers for the color name.'); return; }
+      if (slug !== old && slug in current) { toast(`${colorTitle(slug)} is already listed for ${m}.`); return; }
+      stockUi.renaming = null;
+      if (slug === old) { renderStock(); return; }
+      // Keep the colour's position in the list while renaming it.
+      await saveStock(s => { s[m] = Object.fromEntries(Object.entries(s[m]).map(([c, h]) => [c === old ? slug : c, h])); }, `Renamed to ${colorTitle(slug)}`);
+    };
+  });
   all('[data-custom-color]').forEach(form => form.onsubmit = e => {
     e.preventDefault();
     const m = form.dataset.customColor, current = ownedColors(m), error = form.querySelector('.eq-pop-error');
-    const slug = form.elements.name.value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40), value = form.elements.hex.value.toLowerCase();
+    const slug = colorSlug(form.elements.name.value), value = form.elements.hex.value.toLowerCase();
     if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(slug)) { error.textContent = 'Enter a color name using letters and numbers.'; form.elements.name.focus(); return; }
     const sameHex = Object.entries(current).find(([, h]) => h.toLowerCase() === value);
     if (slug in current) { error.textContent = `${colorTitle(slug)} is already listed for ${m}.`; return; }
     if (sameHex) { error.textContent = `This shade is already listed as ${colorTitle(sameHex[0])}.`; return; }
     if (Object.keys(current).length >= 40) { error.textContent = 'A material can list at most 40 colors.'; return; }
-    saveStock(s => { s[m] = {...s[m], [slug]:value}; }, `${colorTitle(slug)} added to ${m} · live for buyers`);
+    stockUi.focus = 'custom-' + m;
+    saveStock(s => { s[m] = {...s[m], [slug]:value}; }, `${colorTitle(slug)} added to ${m}`);
   });
 }
 function deleteDraftDialog() {

@@ -298,9 +298,26 @@ def test_printer_stats_group_registered_printers(workflow):
     stats=a.get('/api/admin/printer-stats').json()
     assert stats==[{'manufacturer':'Custom','model':'Printer','technology':'FDM','units':2,'hosts':2,'verified':False,'active_jobs':0,'utilisation':0}]
     with sessions() as db:
-        db.add(models.HostPrinter(user_id=ids['host'],manufacturer='Bambu Lab',model='A1',technology='FDM',x=256,y=256,z=256,quantity=1,capabilities='["PLA"]'));db.commit()
+        db.add(models.HostPrinter(user_id=ids['host'],manufacturer='Bambu Lab',model='A1',technology='FDM',x=256,y=256,z=256,quantity=1,capabilities='["PLA"]'))
+        db.add(models.HostPrinter(user_id=ids['host'],manufacturer='Tiny',model='Mini',technology='FDM',x=50,y=50,z=50,quantity=3,capabilities='["PLA","PETG"]'));db.commit()
+    # PLA job, 100 mm part: the 200 mm Printer and the A1 can make it (not the Mini, too small) -> split by units.
     assert b.post('/api/checkout',json=checkout_body(pid,'red')).status_code==201
     job=h.get('/api/host/jobs').json()[0];assert h.post(f"/api/host/jobs/{job['id']}/accept").status_code==200
     stats={s['model']:s for s in a.get('/api/admin/printer-stats').json()}
-    # The host's one active job is shared over its two printer types by units.
-    assert stats['A1']['hosts']==1 and stats['A1']['utilisation']==0.5 and stats['Printer']['utilisation']==0.5 and stats['Printer']['hosts']==2
+    assert stats['A1']['hosts']==1 and stats['A1']['utilisation']==0.5 and stats['Printer']['utilisation']==0.5 and stats['Mini']['utilisation']==0
+    # A PETG job only the Printer can make (A1 not approved for PETG, Mini too small): all of it goes there.
+    assert b.post('/api/checkout',json=checkout_body(pid,'black','PETG')).status_code==201
+    petg=next(j for j in h.get('/api/host/jobs').json() if j['status']=='available');assert h.post(f"/api/host/jobs/{petg['id']}/accept").status_code==200
+    stats={s['model']:s for s in a.get('/api/admin/printer-stats').json()}
+    assert stats['Printer']['active_jobs']==1.5 and stats['Printer']['utilisation']==0.75 and stats['A1']['utilisation']==0.25 and stats['Printer']['hosts']==2
+
+
+def test_unchanged_equipment_cannot_be_submitted(workflow):
+    clients,ids,pid,sessions=workflow;h,a=clients['host'],clients['admin']
+    host=h.get('/api/host/application').json()
+    weekly=int(__import__('re').search(r'weekly availability: (\d+)',host['capabilities'] or '')[1]) if __import__('re').search(r'weekly availability: (\d+)',host['capabilities'] or '') else None
+    same={**proposed(h),'company':host['additional'] or '','weekly_hours':weekly}
+    r=h.put('/api/host/equipment-application',json={**same,'submit':True})
+    assert r.status_code==422 and 'Nothing has changed' in r.text
+    assert a.get('/api/admin/equipment-revisions').json()==[]
+    assert h.put('/api/host/equipment-application',json=same).status_code==200  # A private draft may still be saved.
