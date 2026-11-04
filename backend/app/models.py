@@ -1,16 +1,20 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, Integer, DateTime, ForeignKey, CheckConstraint, Text, Float, Index, Boolean, UniqueConstraint, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.dialects.postgresql import CITEXT
 from .database import Base
 
 def now(): return datetime.now(timezone.utc)
+# Usernames keep the case they were typed in but are unique and matched case-insensitively:
+# SQLite's NOCASE collation, PostgreSQL's citext (length is enforced by the request schemas).
+USERNAME = String(32, collation='NOCASE').with_variant(CITEXT(), 'postgresql')
 class User(Base):
     __tablename__ = 'users'
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(100))
-    username: Mapped[str] = mapped_column(String(32, collation='NOCASE'), unique=True, default=lambda: 'user_' + __import__('uuid').uuid4().hex[:20])
+    username: Mapped[str] = mapped_column(USERNAME, unique=True, default=lambda: 'user_' + __import__('uuid').uuid4().hex[:20])
     theme: Mapped[str] = mapped_column(String(10), default='system', server_default='system')
     # The sole active selection: initials, an uploaded file, or an SVG design.
     profile_picture: Mapped[str] = mapped_column(Text, default='{"kind":"initials"}', server_default='{"kind":"initials"}')
@@ -75,6 +79,9 @@ class Listing(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     owner: Mapped[User] = relationship()
     images: Mapped[list['ProductImage']] = relationship(order_by='ProductImage.sort_order', cascade='all, delete-orphan')
+    # The stored file behind cad_path, and through it the content's analysis and previews. Read-only: CAD
+    # processing never writes listings, so it never moves their version.
+    cad_file: Mapped['CadFile | None'] = relationship(primaryjoin='foreign(Listing.cad_path) == CadFile.name', viewonly=True, lazy='selectin')
     __table_args__ = (CheckConstraint('price_cents >= 0'), CheckConstraint("listing_type IN ('official','community')"), CheckConstraint("status IN ('draft','pending','approved','rejected','archived')"), Index('ix_listings_public', 'status', 'published_at'))
 class ProductImage(Base):
     __tablename__ = 'product_images'
@@ -114,8 +121,9 @@ class Order(Base):
     reference: Mapped[str] = mapped_column(String(40), unique=True, index=True)
     buyer_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='RESTRICT'), index=True)
     idempotency_key: Mapped[str] = mapped_column(String(80))
-    contact: Mapped[str] = mapped_column(String(200))
-    address: Mapped[str] = mapped_column(String(1000))
+    # JSON snapshots validated by schemas.OrderInput (up to 1000 and 3000 characters).
+    contact: Mapped[str] = mapped_column(Text)
+    address: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default='pending', index=True)
     total_cents: Mapped[int] = mapped_column(Integer)
     currency: Mapped[str] = mapped_column(String(3), default='EUR')
@@ -251,7 +259,7 @@ class UserAddress(Base):
     street: Mapped[str] = mapped_column(String(200))
     additional: Mapped[str] = mapped_column(String(200), default='')
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
-    __table_args__ = (Index('uq_default_address', 'user_id', unique=True, sqlite_where=text('is_default = 1')),)
+    __table_args__ = (Index('uq_default_address', 'user_id', unique=True, sqlite_where=text('is_default = 1'), postgresql_where=text('is_default')),)
 
 class CartItem(Base):
     __tablename__='cart_items'
@@ -327,7 +335,7 @@ class EquipmentRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     __table_args__ = (CheckConstraint("status IN ('draft','pending','approved','rejected')"),
-        Index('uq_equipment_open_revision', 'user_id', unique=True, sqlite_where=text("status IN ('draft','pending')")))
+        Index('uq_equipment_open_revision', 'user_id', unique=True, sqlite_where=text("status IN ('draft','pending')"), postgresql_where=text("status IN ('draft','pending')")))
 
 
 class CustomRequest(Base):
@@ -364,3 +372,48 @@ class CustomRequestFile(Base):
     size: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     __table_args__ = (CheckConstraint("kind IN ('model','image','document')"),)
+
+
+class CadAsset(Base):
+    """One unique CAD content (SHA-256 of the file bytes), however many files, listings or orders use it.
+    Geometry analysis is stored here once; previews are cad_jobs results."""
+    __tablename__ = 'cad_assets'
+    sha256: Mapped[str] = mapped_column(String(64), primary_key=True)
+    format: Mapped[str] = mapped_column(String(4))
+    size_bytes: Mapped[int] = mapped_column(Integer)
+    analysis: Mapped[str | None] = mapped_column(Text, nullable=True)            # JSON from mesh.analyze
+    analysis_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    jobs: Mapped[list['CadJob']] = relationship(order_by='CadJob.id', viewonly=True, lazy='joined')
+    __table_args__ = (CheckConstraint("format IN ('stl','3mf')"), CheckConstraint('size_bytes >= 0'))
+
+class CadFile(Base):
+    """A file under uploads/cad. Names are immutable; older uploads have random names, so several files can
+    hold the same content."""
+    __tablename__ = 'cad_files'
+    name: Mapped[str] = mapped_column(String(80), primary_key=True)
+    sha256: Mapped[str] = mapped_column(ForeignKey('cad_assets.sha256', ondelete='RESTRICT'), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    asset: Mapped[CadAsset] = relationship(lazy='joined', innerjoin=True)
+
+class CadJob(Base):
+    """A processing stage for one content and one stage version (cache_key): the durable work queue and the
+    cache index at once. A ready row is reused by every file, listing and page with that content."""
+    __tablename__ = 'cad_jobs'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sha256: Mapped[str] = mapped_column(ForeignKey('cad_assets.sha256', ondelete='RESTRICT'))
+    kind: Mapped[str] = mapped_column(String(12))
+    cache_key: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(12), default='queued', server_default='queued')
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    output_dir: Mapped[str] = mapped_column(String(64), default='', server_default='')   # under uploads/renders
+    result: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    last_error: Mapped[str] = mapped_column(String(500), default='', server_default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint('sha256', 'kind', 'cache_key', name='uq_cad_job_stage'),
+        CheckConstraint("kind IN ('analyze','render')"), CheckConstraint("status IN ('queued','processing','ready','failed')"),
+        Index('ix_cad_jobs_due', 'status', 'next_attempt_at'))

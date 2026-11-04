@@ -6,21 +6,28 @@ is Standard: pixel values remain linear-decodable for that recolor. ALBEDO and t
 exposure below are the calibration that recolor depends on; change them together.
 """
 import bpy,bmesh,json,sys,math,_cycles
+import numpy as np
 from mathutils import Vector
 from bpy_extras.object_utils import world_to_camera_view
 from pathlib import Path
 ALBEDO=.55  # linear grey of the neutral plastic; mirrored as RENDER_ALBEDO in product-visuals.js
 payload=json.loads(Path(sys.argv[sys.argv.index('--')+1]).read_text());out=Path(payload['output'])
 bpy.ops.object.select_all(action='SELECT');bpy.ops.object.delete(use_global=False)
-vertices=[v for t in payload['triangles'] for v in t];faces=[(i,i+1,i+2) for i in range(0,len(vertices),3)]
-mesh=bpy.data.meshes.new('CAD millimeters');mesh.from_pydata(vertices,[],faces)
+# Triangle soup as an (n, 3, 3) millimetre array (render_product writes it); bulk-filled, no Python loops.
+triangles=np.load(payload['triangles'],allow_pickle=False).reshape(-1,3,3).astype(np.float64)
+flat=triangles.reshape(-1,3);low=Vector(flat.min(0));high=Vector(flat.max(0))
+center=(low+high)/2
+# Centre on the bed: x/y about the middle, z from the lowest point.
+flat=(flat-np.array((center.x,center.y,low.z))).astype(np.float32)
+count=len(triangles);mesh=bpy.data.meshes.new('CAD millimeters')
+mesh.vertices.add(count*3);mesh.vertices.foreach_set('co',flat.ravel())
+mesh.loops.add(count*3);mesh.loops.foreach_set('vertex_index',np.arange(count*3,dtype=np.int32))
+mesh.polygons.add(count);mesh.polygons.foreach_set('loop_start',np.arange(0,count*3,3,dtype=np.int32))
+mesh.update(calc_edges=True)  # as from_pydata: edges derived from the faces, nothing removed
 # STL triangle soup: weld it so curved walls shade smoothly while CAD edges stay crisp.
 bm=bmesh.new();bm.from_mesh(mesh);bmesh.ops.remove_doubles(bm,verts=bm.verts,dist=1e-4);bm.to_mesh(mesh);bm.free()
 mesh.shade_smooth();mesh.set_sharp_from_angle(angle=math.radians(35));mesh.update()
 obj=bpy.data.objects.new('Product',mesh);bpy.context.collection.objects.link(obj);bpy.context.view_layer.objects.active=obj;obj.select_set(True)
-low=Vector(tuple(min(v[i] for v in vertices) for i in range(3)));high=Vector(tuple(max(v[i] for v in vertices) for i in range(3)))
-center=(low+high)/2
-for v in mesh.vertices:v.co-=Vector((center.x,center.y,low.z))
 size=high-low;span=max(size);target=Vector((0,0,size.z/2))
 
 # Engineering FDM plastic: matte-satin dielectric, softened edges, faint 0.2 mm layer lines and

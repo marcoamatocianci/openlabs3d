@@ -3,7 +3,7 @@ import io,json,math,re,secrets,struct,zipfile
 from pathlib import PurePosixPath
 from xml.etree import ElementTree as ET
 import hashlib
-from fastapi import APIRouter,Depends,UploadFile,File,BackgroundTasks,Response
+from fastapi import APIRouter,Depends,UploadFile,File,Response
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,46 +13,82 @@ from .main import require,mutate,admin_mutate,fail,get_listing,owned,changed,lis
 router=APIRouter(prefix='/api')
 MAX_CAD=20*1024*1024
 
-from .mesh import inspect_mesh
-from .manufacturing import cad_file,MANUFACTURING_STATES
+from . import cad_assets
+from .cad_assets import has_preview
+from .mesh import ANALYSIS_VERSION,inspect_mesh,load_mesh,printer_fit  # noqa: F401 (inspect_mesh: public helper)
+from .manufacturing import CAD_NAME,cad_file,MANUFACTURING_STATES
+from .visuals import visual_revision
+
+PREVIEW_TYPES={'.glb':'model/gltf-binary','.webp':'image/webp','.png':'image/png'}
+PARSE_ERRORS=(ValueError,UnicodeError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,struct.error)
+INVALID='Invalid or unsupported STL/3MF mesh. Export a flattened, non-degenerate model.'
+def units_warnings(mesh):
+    """Unit hints that need no full analysis (STL stores no unit; OpenLabs3D reads millimetres)."""
+    dims=mesh.dimensions;warnings=[]
+    if mesh.format=='stl':
+        if max(dims)<2:warnings.append('The model is under 2 mm. It may have been exported in metres or inches; re-export it in millimetres.')
+        if max(dims)>1000:warnings.append('The model is over 1 m. It may have been exported in micrometres or a smaller unit; re-export it in millimetres.')
+    return warnings
+def parse_upload(data,filename):
+    ext=PurePosixPath(filename or '').suffix.lower()
+    if ext not in ('.stl','.3mf'):fail(422,'Upload an STL or 3MF file')
+    try:return load_mesh(data,ext)
+    except PARSE_ERRORS:fail(422,INVALID)
+def processing_data(db,digest):
+    asset=db.get(models.CadAsset,digest)
+    jobs={j.kind:j.status for j in db.scalars(select(models.CadJob).where(models.CadJob.sha256==digest).order_by(models.CadJob.id))}
+    return {'analysis':'ready' if asset and asset.analysis_version==ANALYSIS_VERSION else jobs.get('analyze','pending'),
+            'preview':'ready' if has_preview(db,digest) else jobs.get('render','pending')}
 
 @router.post('/listings/{listing_id}/cad')
-async def upload_cad(listing_id:int,background_tasks:BackgroundTasks,file:UploadFile=File(...),auth=Depends(mutate),db:Session=Depends(get_db)):
+async def upload_cad(listing_id:int,file:UploadFile=File(...),auth=Depends(mutate),db:Session=Depends(get_db)):
+    """Validate, store once by content and queue analysis and previews for the CAD worker. Content uploaded
+    before (by anyone) reuses its analysis and previews: nothing is processed twice."""
     p=get_listing(db,listing_id);owned(p,auth)
     if p.status=='archived':fail(409,'Archived product cannot be edited')
     data=await file.read(MAX_CAD+1)
     if len(data)>MAX_CAD:fail(413,'Model must be no larger than 20 MB')
-    ext=PurePosixPath(file.filename or '').suffix.lower()
-    try:dimensions=inspect_mesh(data,ext)
-    except (ValueError,UnicodeError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,struct.error):fail(422,'Invalid or unsupported STL/3MF mesh. Export a flattened, non-degenerate model.')
-    directory=config.UPLOAD_DIR.parent/'cad';directory.mkdir(parents=True,exist_ok=True)
-    # A new random name per upload: files referenced by earlier orders are never overwritten.
-    name=secrets.token_hex(24)+ext;path=directory/name
-    with path.open('xb') as stream:stream.write(data)
-    p.cad_path=name;p.cad_dimensions=json.dumps(dimensions);changed(p,auth)
-    try:db.commit()
-    except Exception:db.rollback();path.unlink(missing_ok=True);raise
-    from .render_product import render_asset
-    background_tasks.add_task(render_asset,path)
+    mesh=parse_upload(data,file.filename);dimensions=mesh.dimensions
+    name,digest,created=cad_assets.store(data,mesh.format)
+    try:
+        cad_assets.register(db,name,digest,mesh.format,len(data));cad_assets.schedule(db,digest)
+        p.cad_path=name;p.cad_dimensions=json.dumps(dimensions);changed(p,auth)
+        db.commit()
+    except Exception:
+        db.rollback()
+        if created and db.get(models.CadFile,name) is None:(cad_assets.cad_dir()/name).unlink(missing_ok=True)
+        raise
+    db.refresh(p)
     printers=db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==p.owner_id)).all()
     fits=any(all(a<=b for a,b in zip(sorted(dimensions),sorted([q.x,q.y,q.z]))) for q in printers)
-    return {'listing':listing_data(p),'dimensions_mm':dimensions,'warning':'Mesh parsed; printability is not verified.'+(' Dimensions exceed all registered printer volumes.' if printers and not fits else '')}
+    return {'listing':listing_data(p),'dimensions_mm':dimensions,'format':mesh.format.upper(),'processing':processing_data(db,digest),
+            'warnings':units_warnings(mesh),
+            'warning':'Mesh parsed; printability is not verified.'+(' Dimensions exceed all registered printer volumes.' if printers and not fits else '')}
 @router.post('/cad/inspect')
 async def inspect_cad(file:UploadFile=File(...),auth=Depends(mutate)):
     """Measure a model without storing it, so the editor can show dimensions before saving."""
     if auth[0].role not in ('host','admin') or not auth[0].email_verified:fail(403,'Verified approved host access required')
     data=await file.read(MAX_CAD+1)
     if len(data)>MAX_CAD:fail(413,'Model must be no larger than 20 MB')
-    ext=PurePosixPath(file.filename or '').suffix.lower()
-    if ext not in ('.stl','.3mf'):fail(422,'Upload an STL or 3MF file')
-    try:dimensions=inspect_mesh(data,ext)
-    except (ValueError,UnicodeError,zipfile.BadZipFile,ET.ParseError,KeyError,IndexError,struct.error):fail(422,'Invalid or unsupported STL/3MF mesh. Export a flattened, non-degenerate model.')
-    warnings=[]
-    if ext=='.stl':
-        # STL stores no units; OpenLabs3D always reads coordinates as millimetres.
-        if max(dimensions)<2:warnings.append('The model is under 2 mm. It may have been exported in metres or inches; re-export it in millimetres.')
-        if max(dimensions)>1000:warnings.append('The model is over 1 m. It may have been exported in micrometres or a smaller unit; re-export it in millimetres.')
-    return {'format':ext[1:].upper(),'dimensions_mm':dimensions,'units':'millimetres (STL has no unit; assumed)' if ext=='.stl' else 'millimetres (from 3MF unit)','warnings':warnings}
+    mesh=parse_upload(data,file.filename)
+    return {'format':mesh.format.upper(),'dimensions_mm':mesh.dimensions,'units':'millimetres (STL has no unit; assumed)' if mesh.format=='stl' else 'millimetres (from 3MF unit)',
+            'warnings':units_warnings(mesh),'parts':len(mesh.parts) or 1}
+
+@router.get('/listings/{listing_id}/cad/analysis')
+def cad_analysis(listing_id:int,auth=Depends(require),db:Session=Depends(get_db)):
+    """Geometry findings for the listing's current model, for its owner and administrators. Heuristic checks
+    are labelled as such; nothing here guarantees a successful print."""
+    p=db.get(models.Listing,listing_id)
+    if not p or not p.cad_path:fail(404,'Model not found')
+    if p.owner_id!=auth[0].id and auth[0].role!='admin':fail(403,'Model analysis is restricted to its owner and administrators')
+    asset=p.cad_file.asset if p.cad_file else None
+    if asset is None:return {'status':'pending'}
+    result={'status':'ready' if asset.analysis_version==ANALYSIS_VERSION else processing_data(db,asset.sha256)['analysis'],'processing':processing_data(db,asset.sha256)}
+    if asset.analysis:
+        analysis=json.loads(asset.analysis);result['analysis']=analysis
+        printers=db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==p.owner_id)).all()
+        result['printers']=[{'id':q.id,'name':f'{q.manufacturer} {q.model}','volume_mm':[q.x,q.y,q.z],**f} for q,f in zip(printers,printer_fit(analysis['dimensions_mm'],[{'id':q.id,'x':q.x,'y':q.y,'z':q.z} for q in printers]))]
+    return result
 
 @router.get('/listings/{listing_id}/cad')
 def download_cad(listing_id:int,auth=Depends(require),db:Session=Depends(get_db)):
@@ -83,6 +119,8 @@ def job_cad(job_id:int,auth=Depends(require),db:Session=Depends(get_db)):
     path=cad_file(item.cad_path)
     if path is None or item.cad_status not in ('pinned','unverified'):fail(404,'No manufacturing file was recorded for this order line')
     if not path.is_file():fail(404,'The manufacturing file for this order line is missing; contact an administrator')
+    # The bytes sent are the bytes checked, on every download (rare: about once per job), so a file changed on
+    # disk is refused even if its size and timestamps were kept.
     data=path.read_bytes();digest=hashlib.sha256(data).hexdigest()
     if item.cad_sha256 and digest!=item.cad_sha256:fail(409,'The manufacturing file failed its integrity check; contact an administrator')
     return Response(data,media_type='application/octet-stream',headers={'Content-Disposition':f'attachment; filename="{order.reference}-line-{item.id}{path.suffix}"','X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store',
@@ -99,16 +137,30 @@ def product_action(listing_id:int,action:str,auth=Depends(admin_mutate),db:Sessi
 @router.get('/listings/{listing_id}/visuals/{revision}/{asset}')
 def visual_asset(listing_id:int,revision:str,asset:str,auth=Depends(current),db:Session=Depends(get_db)):
     p=get_listing(db,listing_id)
-    if not can_view(p,auth) or asset not in ('render.png','thumb.webp','model.glb') or revision!=PurePosixPath(p.cad_path).stem:
+    if p.cad_file is not None:
+        current=visual_revision(p);allowed=(current[0],{current[1],'thumb.webp','model.glb'}) if current else None
+    else:   # not registered by the worker yet: the legacy folder named after the file
+        allowed=(PurePosixPath(p.cad_path).stem,{'render.png','thumb.webp','model.glb'}) if CAD_NAME.fullmatch(p.cad_path or '') else None
+    if not can_view(p,auth) or allowed is None or revision!=allowed[0] or asset not in allowed[1]:
         fail(404,'Preview unavailable')
     path=config.UPLOAD_DIR.parent/'renders'/revision/asset
     if not path.is_file():fail(404,'Preview unavailable')
-    return FileResponse(path,headers={'Cache-Control':'private, no-cache','X-Content-Type-Options':'nosniff'})
+    # A preview directory never changes once referenced, so its files can be cached for good. Private: the
+    # listing may be a draft only its owner sees. A new model or preset gives the listing a new URL.
+    cache='private, max-age=31536000, immutable' if p.cad_file is not None else 'private, no-cache'
+    # Explicit types: slim images have no /etc/mime.types, and Caddy compresses model/gltf-binary (about 4x).
+    return FileResponse(path,media_type=PREVIEW_TYPES[path.suffix],headers={'Cache-Control':cache,'X-Content-Type-Options':'nosniff'})
 
 @router.post('/listings/{listing_id}/render')
-def regenerate_render(listing_id:int,background_tasks:BackgroundTasks,auth=Depends(mutate),db:Session=Depends(get_db)):
+def regenerate_render(listing_id:int,auth=Depends(mutate),db:Session=Depends(get_db)):
+    """Try a failed preview again. A ready or queued preview is never redone: the same content always
+    gives the same images."""
     p=get_listing(db,listing_id);owned(p,auth)
     if not re.fullmatch(r'[a-f0-9]{48}\.(stl|3mf)',p.cad_path):fail(404,'CAD file unavailable')
-    from .render_product import render_asset
-    background_tasks.add_task(render_asset,config.UPLOAD_DIR.parent/'cad'/p.cad_path)
-    return {'status':'queued'}
+    if p.cad_file is None:
+        cad_assets.reconcile(db)   # an older file: register it (and adopt its previews) now
+        db.refresh(p)
+    if p.cad_file is None:fail(404,'CAD file unavailable')
+    digest=p.cad_file.sha256;requeued=cad_assets.requeue_failed(db,digest);cad_assets.schedule(db,digest);db.commit()
+    state=processing_data(db,digest)['preview']
+    return {'status':'ready' if state=='ready' else 'queued','requeued':requeued}

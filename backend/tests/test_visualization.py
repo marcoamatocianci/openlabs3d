@@ -17,7 +17,7 @@ def test_3mf_components_transform_and_units():
     with zipfile.ZipFile(data,'w') as z:z.writestr('3D/model.model',xml)
     dimensions,triangles=inspect_mesh(data.getvalue(),'.3mf',True)
     assert dimensions==[20,40,60]
-    assert triangles[0][0]==(100,0,0)
+    assert tuple(triangles[0][0])==(100,0,0)
 
 def test_render_pipeline_outputs_and_preserves_source(tmp_path,monkeypatch):
     from app import render_product
