@@ -1,0 +1,10 @@
+[Unit]
+Description=Restore the newest OpenLabs3D backup into a throwaway database and check it
+After=docker.service
+
+[Service]
+Type=oneshot
+User=deploy
+WorkingDirectory=/srv/openlabs3d
+ExecStart=/bin/sh -c 'deploy/verify-backup.sh "$(ls -1d /var/backups/openlabs3d/2*/ | sort | tail -1)"'
+Nice=10

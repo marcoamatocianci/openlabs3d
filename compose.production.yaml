@@ -1,15 +1,82 @@
+# Production overlay: docker compose -f compose.yaml -f compose.production.yaml ...   (deploy/README.md)
+#
+# Networks: only Caddy publishes ports (80/443). PostgreSQL and the CAD worker sit on an internal network with
+# no route to the internet; the backend joins both (it sends mail and talks to Google sign-in).
+# Limits are sized for 4-8 vCPU / 8-16 GB (docs/deployment/PRODUCTION.md, "Sizing"); adjust with measurements.
+# Secrets are files under ./secrets (never committed): db_password.
+x-hardening: &hardening
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
 services:
+  db:
+    profiles: !reset []
+    environment:
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets: [db_password]
+    networks: [internal]
+    shm_size: 256m
+    # Tuned for a 2 GB share of the machine on NVMe. Slow statements (>500 ms) are logged for review.
+    command: >
+      postgres
+      -c shared_buffers=512MB -c effective_cache_size=1536MB -c work_mem=8MB -c maintenance_work_mem=128MB
+      -c max_connections=60 -c random_page_cost=1.1 -c effective_io_concurrency=200
+      -c wal_compression=on -c checkpoint_completion_target=0.9 -c max_wal_size=2GB
+      -c log_min_duration_statement=500 -c log_lock_waits=on -c log_temp_files=0
+      -c idle_in_transaction_session_timeout=120000
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 2g}
+    security_opt: ["no-new-privileges:true"]
+
   backend:
+    <<: *hardening
+    # Tagged per release (deploy/deploy.sh exports OPENLABS3D_RELEASE), so deploy/rollback.sh can reuse images.
+    image: openlabs3d-web:${OPENLABS3D_RELEASE:-current}
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
       APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://openlabs3d@db:5432/openlabs3d
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-smtp}
       # New accounts cannot be activated without email, so a deployment without it does not start.
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-${PUBLIC_BASE_URL:?Set APP_PUBLIC_URL to the public https address of the site}}
       SMTP_HOST: ${SMTP_HOST:?Set SMTP_HOST to your mail provider. See docs/email/EMAIL_VERIFICATION.md}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:?Set SMTP_FROM_EMAIL to a sender verified with your mail provider}
+    secrets: [db_password]
+    networks: [edge, internal]
+    read_only: true
+    tmpfs: ["/tmp:size=256m"]
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 1g}
+
+  worker:
+    <<: *hardening
+    image: openlabs3d-worker:${OPENLABS3D_RELEASE:-current}
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://openlabs3d@db:5432/openlabs3d
+      DATABASE_PASSWORD_FILE: /run/secrets/db_password
+      # Blender peaks near 2 GB on 400k-triangle models at 1200 px; one render at a time.
+      CAD_RENDER_MEMORY_MB: "0"
+    secrets: [db_password]
+    networks: [internal]
+    tmpfs: ["/tmp:size=1g"]
+    deploy:
+      resources:
+        limits: {cpus: "2", memory: 3g}
+
   caddy:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:?Set SITE_DOMAIN to your public domain}
+    networks: [edge]
     ports: !override
       - "80:80"
       - "443:443"
@@ -30,3 +97,15 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    deploy:
+      resources:
+        limits: {cpus: "1", memory: 256m}
+
+networks:
+  edge: {}
+  internal:
+    internal: true
+
+secrets:
+  db_password:
+    file: ./secrets/db_password

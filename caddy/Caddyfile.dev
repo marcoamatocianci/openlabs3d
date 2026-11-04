@@ -1,5 +1,21 @@
 :80 {
-    encode zstd gzip
+    # Caddy's default types plus glTF models: GLB previews shrink about 4x with gzip, and need no decoder.
+    encode {
+        zstd
+        gzip 5
+        minimum_length 1024
+        match {
+            header Content-Type text/*
+            header Content-Type application/json*
+            header Content-Type application/javascript*
+            header Content-Type application/xhtml+xml*
+            header Content-Type application/xml*
+            header Content-Type application/wasm*
+            header Content-Type image/svg+xml*
+            header Content-Type model/gltf-binary*
+            header Content-Type model/gltf+json*
+        }
+    }
     header {
         X-Content-Type-Options nosniff
         X-Frame-Options DENY
@@ -8,6 +24,8 @@
     }
     @frontend path / /index.html *.css *.js
     header @frontend Cache-Control "no-cache"
+    @static_models path /assets/models/*.glb /assets/products/* /assets/hero/* /assets/brand/*
+    header @static_models Cache-Control "public, max-age=86400"
     handle /api/* {
         request_body {
             max_size 30MB

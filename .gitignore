@@ -10,3 +10,9 @@ data/
 backups/
 .playwright-mcp/console-*.log
 .playwright-mcp/page-*.yml
+
+# Production server state (deploy/README.md): never committed.
+secrets/
+deploy/backup.env
+deploy/.previous-release
+deploy/.current-release

@@ -1,12 +1,24 @@
+# Shared by development and production.
+#   Development:  docker compose up -d --build          (this file + compose.override.yaml; SQLite, Mailpit)
+#   Development with PostgreSQL: see docs/deployment/POSTGRESQL_MIGRATION.md ("Local PostgreSQL")
+#   Production:   docker compose -f compose.yaml -f compose.production.yaml up -d --build   (see deploy/README.md)
+x-logging: &logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
+x-app-environment: &app-environment
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: ${DATABASE_URL:-sqlite:////app/data/openlabs3d.db}
+  UPLOAD_DIR: /app/data/uploads
+
 services:
   backend:
-    build: ./backend
+    build: {context: ./backend, target: web}
     restart: unless-stopped
+    logging: *logging
     environment:
+      <<: *app-environment
       SEED_OFFICIAL_COLLECTION: "true"
-      APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: sqlite:////app/data/openlabs3d.db
-      UPLOAD_DIR: /app/data/uploads
       MAIL_TRANSPORT: ${MAIL_TRANSPORT:-file}
       APP_PUBLIC_URL: ${APP_PUBLIC_URL:-${PUBLIC_BASE_URL:-http://localhost:8080}}
       EMAIL_VERIFICATION_EXPIRY_HOURS: ${EMAIL_VERIFICATION_EXPIRY_HOURS:-24}
@@ -39,9 +51,49 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+
+  # CAD analysis and previews (Blender), outside the web process. Starts once the backend has migrated.
+  worker:
+    build: {context: ./backend, target: worker}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      <<: *app-environment
+      DB_APPLICATION_NAME: openlabs3d-worker
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "1"
+      CAD_RENDER_THREADS: ${CAD_RENDER_THREADS:-2}
+      CAD_RENDER_TIMEOUT_SECONDS: ${CAD_RENDER_TIMEOUT_SECONDS:-300}
+    volumes:
+      - app_data:/app/data
+
+  # PostgreSQL for development is opt-in (profile "postgres"); production always runs it.
+  db:
+    image: postgres:18.6-alpine
+    profiles: ["postgres"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_DB: openlabs3d
+      POSTGRES_USER: openlabs3d
+      POSTGRES_PASSWORD: ${DEV_POSTGRES_PASSWORD:-development-only}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - pg_data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U openlabs3d -d openlabs3d"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
+    logging: *logging
     depends_on:
       backend:
         condition: service_healthy
@@ -65,5 +117,6 @@ services:
       retries: 3
 volumes:
   app_data:
+  pg_data:
   caddy_data:
   caddy_config:
