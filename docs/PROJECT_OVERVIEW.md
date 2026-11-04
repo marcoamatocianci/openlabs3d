@@ -34,14 +34,16 @@ Roles: `guest`, `buyer`, `host` (approved printing host), `admin`. Hosts are als
 Browser ──► Caddy (:8080 dev / :80,:443 prod)
               ├── /api/*  → FastAPI backend (uvicorn :8000, Docker service "backend")
               └── static  → index.html, *.js, style.css, assets/ (bind-mounted into /srv)
-Backend ──► SQLite  /app/data/openlabs3d.db  (Docker volume app_data)
+Backend ──► SQLite /app/data/openlabs3d.db (development) · PostgreSQL 18 (production, service "db")
         ──► uploads /app/data/uploads/{products,cad,renders}
-        ──► Blender (installed in the backend image) for product preview renders
+Worker  ──► CAD analysis + Blender previews (service "worker"; queue = cad_jobs table)
 ```
+Production architecture, CAD pipeline and measurements: `docs/deployment/PRODUCTION.md`,
+`docs/architecture/CAD_PIPELINE.md`, `docs/architecture/PRODUCTION_REPORT.md`.
 
 - **Frontend:** plain HTML/CSS/JavaScript, no build step, no framework. Three.js (vendored in
   `assets/vendor/three`) for the 3D viewer.
-- **Backend:** FastAPI + SQLAlchemy 2 + Alembic + Pydantic 2, Python 3.12. SQLite with WAL.
+- **Backend:** FastAPI + SQLAlchemy 2 + Alembic + Pydantic 2, Python 3.12. SQLite with WAL in development, PostgreSQL in production (same code; `OPENLABS3D_TEST_POSTGRES_URL` runs the tests on PostgreSQL).
 - **Containers:** `compose.yaml` (dev, Caddy on 8080) and `compose.production.yaml` (HTTPS
   via Caddy, `APP_ENV=production` → secure cookies). The backend container runs
   `alembic upgrade head` on every start.

@@ -52,7 +52,7 @@ docker compose -f compose.yaml -f compose.production.yaml up -d --build
 docker compose -f compose.yaml -f compose.production.yaml ps
 ```
 
-Caddy ottiene e rinnova automaticamente i certificati, reindirizza HTTP a HTTPS e conserva certificati e configurazione nei volumi `caddy_data` e `caddy_config`. La configurazione di produzione forza cookie Secure. L'istanza FastAPI non pubblica porte sull'host. Il volume `app_data` contiene SQLite e immagini; non esporlo tramite il web server. Le normali ricostruzioni non eliminano i volumi; non usare `docker compose down -v` se si vogliono conservare i dati.
+Caddy ottiene e rinnova automaticamente i certificati, reindirizza HTTP a HTTPS e conserva certificati e configurazione nei volumi `caddy_data` e `caddy_config`. La configurazione di produzione forza cookie Secure. In produzione il database è PostgreSQL (volume `pg_data`, password in `secrets/db_password`) e un servizio `worker` separato elabora i modelli CAD; né il database né il worker sono raggiungibili da Internet. Il volume `app_data` contiene file CAD, anteprime e immagini; non esporlo tramite il web server. Per la prima installazione, il passaggio da SQLite a PostgreSQL, gli aggiornamenti e il rollback seguire [deploy/README.md](deploy/README.md). Le normali ricostruzioni non eliminano i volumi; non usare `docker compose down -v` se si vogliono conservare i dati.
 
 ## Sviluppo e migrazioni
 
@@ -95,32 +95,23 @@ Per sviluppo assistito da MCP, GitHub può essere usato in sola lettura per cons
 
 ## Backup e ripristino
 
-Effettuare backup periodici e conservare una copia fuori dal server. Per ottenere un insieme coerente di database e immagini, interrompere l'applicazione durante il backup. Il comando usa l'API SQLite backup, non una copia a caldo del file SQLite. Dalla directory del progetto (per produzione aggiungere `-f compose.yaml -f compose.production.yaml` a ogni comando `docker compose`):
+In produzione i backup sono automatici e non richiedono di fermare il sito: `deploy/backup.sh` (eseguito ogni giorno da un timer systemd) salva PostgreSQL con `pg_dump`, i file caricati e la configurazione, e ne invia una copia cifrata fuori dal server con restic. `deploy/verify-backup.sh` ripristina un backup in un database usa e getta per verificarlo; `deploy/restore.sh` ricostruisce un server pulito e rifiuta di sovrascrivere dati esistenti. Comandi: [deploy/README.md](deploy/README.md); dettagli: [docs/deployment/PRODUCTION.md](docs/deployment/PRODUCTION.md).
+
+In sviluppo (SQLite) resta disponibile il backup manuale con l'applicazione ferma:
 
 ```bash
 mkdir -p backups
-docker compose stop caddy backend
+docker compose stop caddy backend worker
 docker compose run --rm --no-deps --user root -v "$PWD/backups:/backup" --entrypoint python backend backup.py /backup/openlabs3d-$(date +%Y%m%d-%H%M%S).tar.gz
 docker compose up -d
 ```
-
-Il file potrebbe appartenere a root. Copiarlo in un luogo sicuro: contiene dati personali e immagini. La cartella `backups` non fa parte del volume dell'applicazione. Verificare regolarmente il ripristino su un'installazione isolata.
-
-Per ripristinare, fermare l'applicazione, salvare prima un backup dei dati correnti e sostituire `ARCHIVIO.tar.gz` con il nome effettivo di un archivio attendibile. Il ripristino **sostituisce** database e immagini esistenti:
-
-```bash
-docker compose stop caddy backend
-docker compose run --rm --no-deps --user root -v "$PWD/backups:/backup:ro" --entrypoint sh backend -c 'rm -rf /app/data/uploads /app/data/openlabs3d.db /app/data/openlabs3d.db-wal /app/data/openlabs3d.db-shm && tar -xzf /backup/ARCHIVIO.tar.gz -C /app/data && chown -R 10001:10001 /app/data'
-docker compose up -d
-```
-
-Per trasferire l'applicazione su un altro server Linux, copiare repository, `.env` e archivio con un canale sicuro, installare Docker e Compose sul nuovo server, eseguire prima la build e poi la procedura di ripristino. Aggiornare DNS e `SITE_DOMAIN` se necessario. Caddy emetterà un nuovo certificato; i suoi volumi non sono necessari per ripristinare account e inserzioni.
 
 ## Risoluzione dei problemi
 
 - `docker compose logs backend` e `docker compose logs caddy` mostrano errori di avvio, migrazione e certificato.
 - Per HTTPS verificare DNS pubblico, accessibilità delle porte 80/443 e correttezza di `SITE_DOMAIN`.
-- Una risposta 503 dal database indica contesa di scrittura; riprovare. SQLite usa WAL, foreign key e timeout di attesa.
+- Una risposta 503 dal database indica contesa di scrittura; riprovare. In sviluppo SQLite usa WAL, foreign key e timeout di attesa; in produzione PostgreSQL usa un lock di scrittura equivalente (docs/deployment/POSTGRESQL_MIGRATION.md).
+- Anteprime CAD in attesa: `docker compose logs worker` e `docker compose exec worker python -m app.cad_worker --status`.
 - Se il login non funziona, controllare email e password; i tentativi sono limitati temporaneamente. Il limite è in memoria e si applica per istanza backend.
 - Se la porta 8080 è occupata, cambiare la mappatura di sviluppo in `compose.yaml`.
 - Il reset password via email, pagamenti, spedizioni integrate e notifiche non sono implementati. Proteggere l'accesso al server e ai backup; il sistema non include un servizio email.
