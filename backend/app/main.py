@@ -25,7 +25,17 @@ from . import config, email_service, models, schemas
 from .avatars import picture_data
 from .database import get_db
 
-app = FastAPI(title='OpenLabs3D API', docs_url='/api/docs', openapi_url='/api/openapi.json', redoc_url=None)
+import logging
+class _RedactQuery(logging.Filter):
+    """Access log lines keep the path but not the query: OAuth callbacks carry single-use codes there."""
+    def filter(self, record):
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str) and '?' in record.args[2]:
+            record.args = (*record.args[:2], record.args[2].split('?', 1)[0] + '?…', *record.args[3:])
+        return True
+logging.getLogger('uvicorn.access').addFilter(_RedactQuery())
+# The interactive API documentation is a development aid; production does not publish its schema.
+_docs = config.APP_ENV != 'production'
+app = FastAPI(title='OpenLabs3D API', docs_url='/api/docs' if _docs else None, openapi_url='/api/openapi.json' if _docs else None, redoc_url=None)
 hasher = PasswordHasher()
 # Checked when there is no account to check, so a request takes as long whether or not the address is registered.
 NO_ACCOUNT_HASH = hasher.hash(secrets.token_urlsafe(32))

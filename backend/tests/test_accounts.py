@@ -347,8 +347,8 @@ def test_login_failures_and_expiration(monkeypatch):
     assert login('RateAlice',ip='203.0.113.2').headers['retry-after']=='1'
     clock[0] += .9
     assert login('RateAlice',ip='203.0.113.2').status_code == 200
-    # Password spraying across accounts is stopped by the separate IP bucket.
-    for i in range(10): assert login('unknown'+str(i),'wrong',ip='203.0.113.3').status_code == 401
+    # Password spraying across accounts is stopped by the separate IP bucket (50 failures: labs share addresses).
+    for i in range(50): assert login('unknown'+str(i),'wrong',ip='203.0.113.3').status_code == 401
     assert login('RateBob',ip='203.0.113.3').status_code == 429
     assert login('RateBob',ip='203.0.113.4').status_code == 200
     clock[0] += 900

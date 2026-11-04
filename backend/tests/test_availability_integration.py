@@ -110,7 +110,8 @@ def test_checkout_serializes_concurrent_suspension(workflow,monkeypatch):
     monkeypatch.setattr(shopping,'quote',pause)
     def suspend():
         with sessions() as db:
-            db.execute(text('BEGIN IMMEDIATE'))
+            from app.database import write_lock
+            write_lock(db)   # as any other writer (BEGIN IMMEDIATE on SQLite, the advisory lock on PostgreSQL)
             db.scalar(select(models.HostApplication).where(models.HostApplication.user_id==ids['host'])).status='suspended'
             db.commit();changed.set()
     with ThreadPoolExecutor(2) as pool:

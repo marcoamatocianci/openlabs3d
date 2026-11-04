@@ -241,7 +241,7 @@ def deliver(message):
     send_smtp(message, smtp_settings())
 
 def begin(db):
-    if db.get_bind().dialect.name == 'sqlite': db.execute(text('BEGIN IMMEDIATE'))
+    database.write_lock(db)
 
 def prepare_next(factory):
     """Claims the next due message and builds it, in one short transaction: nothing stays locked while sending.

@@ -101,7 +101,8 @@ def test_compose_configuration():
     project=Path(__file__).resolve().parents[2]
     # Without a verified sender and a public address new accounts could never be activated, so production refuses to start.
     production=['-f','compose.yaml','-f','compose.production.yaml']
-    config=lambda args,env,*more:subprocess.run(['docker','compose',*args,'config',*more],cwd=project,env=env,capture_output=True,text=True)
+    # --env-file /dev/null: the developer's own .env must not satisfy (or break) these checks.
+    config=lambda args,env,*more:subprocess.run(['docker','compose','--env-file',os.devnull,*args,'config',*more],cwd=project,env=env,capture_output=True,text=True)
     bare={k:v for k,v in os.environ.items() if k not in ('APP_PUBLIC_URL','PUBLIC_BASE_URL','SMTP_HOST','SMTP_FROM_EMAIL')}
     env={**bare,'SITE_DOMAIN':'example.com'}
     assert config([],env,'--quiet').returncode==0

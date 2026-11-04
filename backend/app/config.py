@@ -3,6 +3,13 @@ from pathlib import Path
 
 APP_ENV = os.getenv('APP_ENV', 'development')
 DATABASE_URL = os.getenv('DATABASE_URL', 'sqlite:////app/data/openlabs3d.db')
+# Production keeps the PostgreSQL password in a Docker secret, not in the URL or the environment (where
+# `docker inspect` and crash reports would show it): DATABASE_URL has no password, this file holds it.
+if os.getenv('DATABASE_PASSWORD_FILE') and DATABASE_URL.startswith('postgresql'):
+    from sqlalchemy.engine import make_url
+    _password = Path(os.environ['DATABASE_PASSWORD_FILE']).read_text().strip()
+    DATABASE_URL = make_url(DATABASE_URL).set(password=_password).render_as_string(hide_password=False)
+    del _password
 UPLOAD_DIR = Path(os.getenv('UPLOAD_DIR', '/app/data/uploads')) / 'products'
 MAX_UPLOAD = max(1, min(5, int(os.getenv('MAX_UPLOAD_SIZE_MB', '5')))) * 1024 * 1024
 MAX_IMAGES = max(1, min(5, int(os.getenv('MAX_IMAGES_PER_LISTING', '5'))))

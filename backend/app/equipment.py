@@ -6,7 +6,7 @@ from datetime import datetime,timezone
 from fastapi import APIRouter,Depends
 from pydantic import BaseModel,Field,ConfigDict
 from sqlalchemy import select,delete
-from sqlalchemy.dialects.sqlite import insert
+from sqlalchemy.dialects import postgresql, sqlite
 from sqlalchemy.orm import Session
 from . import models
 from .database import get_db
@@ -44,6 +44,7 @@ CATALOGUE=[
  ('Elegoo','Saturn 4 Ultra 12K','RESIN',218.88,122.88,220,'https://us.elegoo.com/products/saturn-4-ultra-12k-10inch-monochrome-lcd-resin-3d-printer',[],'MSLA, 405 nm. This is the 12K variant; resin families not individually verified.'),
  ('Formlabs','Form 4','RESIN',200,125,210,'https://formlabs.com/support/What-is-the-largest-part-I-can-print-on-a-Formlabs-printer/',[],'Use manufacturer-approved material profiles; do not assume generic resin support.')]
 def seed_equipment(db):
+    insert=postgresql.insert if db.get_bind().dialect.name=='postgresql' else sqlite.insert
     for technology,names in [('FDM',['PLA','PLA+','PETG','ABS','ASA','TPU','PA / Nylon','PC']),('RESIN',['Standard Resin','Tough Resin','Flexible Resin','High-Temperature Resin'])]:
         for name in names:db.execute(insert(models.Material).values(name=name,technology=technology).on_conflict_do_nothing())
     for manufacturer,model,technology,x,y,z,source,materials,limitations in CATALOGUE:
