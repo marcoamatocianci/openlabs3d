@@ -5,6 +5,7 @@ from xml.etree import ElementTree as ET
 import hashlib
 from fastapi import APIRouter,Depends,UploadFile,File,Response
 from fastapi.responses import FileResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 from . import models,config
@@ -48,8 +49,9 @@ async def upload_cad(listing_id:int,file:UploadFile=File(...),auth=Depends(mutat
     if p.status=='archived':fail(409,'Archived product cannot be edited')
     data=await file.read(MAX_CAD+1)
     if len(data)>MAX_CAD:fail(413,'Model must be no larger than 20 MB')
-    mesh=parse_upload(data,file.filename);dimensions=mesh.dimensions
-    name,digest,created=cad_assets.store(data,mesh.format)
+    # Parsing, hashing and writing are CPU and disk work: off the event loop, so other requests keep flowing.
+    mesh=await run_in_threadpool(parse_upload,data,file.filename);dimensions=mesh.dimensions
+    name,digest,created=await run_in_threadpool(cad_assets.store,data,mesh.format)
     try:
         cad_assets.register(db,name,digest,mesh.format,len(data));cad_assets.schedule(db,digest)
         p.cad_path=name;p.cad_dimensions=json.dumps(dimensions);changed(p,auth)
@@ -70,7 +72,7 @@ async def inspect_cad(file:UploadFile=File(...),auth=Depends(mutate)):
     if auth[0].role not in ('host','admin') or not auth[0].email_verified:fail(403,'Verified approved host access required')
     data=await file.read(MAX_CAD+1)
     if len(data)>MAX_CAD:fail(413,'Model must be no larger than 20 MB')
-    mesh=parse_upload(data,file.filename)
+    mesh=await run_in_threadpool(parse_upload,data,file.filename)
     return {'format':mesh.format.upper(),'dimensions_mm':mesh.dimensions,'units':'millimetres (STL has no unit; assumed)' if mesh.format=='stl' else 'millimetres (from 3MF unit)',
             'warnings':units_warnings(mesh),'parts':len(mesh.parts) or 1}
 

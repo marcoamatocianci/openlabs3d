@@ -130,9 +130,43 @@ def status(factory=SessionLocal):
     return {'assets': assets, 'jobs': {f'{k}:{s}': n for k, s, n in rows}}
 
 def clean_work_dirs():
-    """Unfinished render directories from a worker that was stopped mid-render."""
+    """Leftovers of interrupted work only: unfinished render directories and partial CAD writes (> 1 hour old)."""
     for path in renders_dir().glob('.work-*'):
         if time.time() - path.stat().st_mtime > 3600: shutil.rmtree(path, ignore_errors=True)
+    for path in cad_dir().glob('.*.part'):
+        if time.time() - path.stat().st_mtime > 3600: path.unlink(missing_ok=True)
+
+def _size(path):
+    return path.stat().st_size if path.is_file() else sum(p.stat().st_size for p in path.rglob('*') if p.is_file())
+
+def storage_report(factory=SessionLocal, prune_orphan_previews=False):
+    """What uploads/cad and uploads/renders hold and what references it. Original CAD files are never deleted
+    here (orders and history may need them; see docs/architecture/CAD_PIPELINE.md, "Retention"). With
+    prune_orphan_previews, preview directories that no listing, order or cad_jobs row references are removed:
+    they can always be rendered again from their CAD file."""
+    from pathlib import PurePosixPath
+    with factory() as db:
+        referenced = set(db.scalars(select(models.Listing.cad_path).where(models.Listing.cad_path != ''))) | \
+                     set(db.scalars(select(models.OrderItem.cad_path).where(models.OrderItem.cad_path != '')))
+        registered = set(db.scalars(select(models.CadFile.name)))
+        preview_dirs = set(db.scalars(select(models.CadJob.output_dir).where(models.CadJob.output_dir != '')))
+    legacy = {PurePosixPath(name).stem for name in referenced}
+    cad = [p for p in cad_dir().iterdir() if p.is_file() and not p.name.startswith('.')] if cad_dir().exists() else []
+    renders = [p for p in renders_dir().iterdir() if p.is_dir() and not p.name.startswith('.')] if renders_dir().exists() else []
+    unreferenced_cad = [p for p in cad if p.name not in referenced]
+    orphans = [p for p in renders if p.name not in preview_dirs and p.name not in legacy]
+    report = {
+        'cad_files': len(cad), 'cad_bytes': sum(_size(p) for p in cad),
+        'cad_unreferenced': len(unreferenced_cad), 'cad_unreferenced_bytes': sum(_size(p) for p in unreferenced_cad),
+        'cad_unregistered': len([p for p in cad if p.name not in registered]),
+        'preview_dirs': len(renders), 'preview_bytes': sum(_size(p) for p in renders),
+        'preview_orphans': len(orphans), 'preview_orphan_bytes': sum(_size(p) for p in orphans),
+        'unreferenced_cad_names': sorted(p.name for p in unreferenced_cad)[:50],
+    }
+    if prune_orphan_previews:
+        for path in orphans: shutil.rmtree(path, ignore_errors=True)
+        report['preview_orphans_removed'] = len(orphans)
+    return report
 
 def serve(factory=SessionLocal):
     def stop(*_):
@@ -160,8 +194,11 @@ def main(argv=None):
     parser.add_argument('--once', action='store_true', help='register files, process everything due, then exit')
     parser.add_argument('--rerender', action='store_true', help='queue the current preset for all older previews')
     parser.add_argument('--status', action='store_true', help='print queue counts as JSON')
+    parser.add_argument('--storage-report', action='store_true', help='print what uploads/cad and uploads/renders hold and reference')
+    parser.add_argument('--prune-orphan-previews', action='store_true', help='with --storage-report: remove previews nothing references')
     args = parser.parse_args(argv)
     if args.status: print(json.dumps(status())); return
+    if args.storage_report: print(json.dumps(storage_report(prune_orphan_previews=args.prune_orphan_previews), indent=2)); return
     if args.rerender: print(f'queued {rerender()} renders'); return
     if args.once:
         with SessionLocal() as db: reconcile(db)
