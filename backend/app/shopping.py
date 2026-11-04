@@ -49,8 +49,10 @@ def prices_changed(changes):
 
 def cart_data(db,user_id):
     result=[]
-    for row in db.scalars(select(models.CartItem).where(models.CartItem.user_id==user_id).order_by(models.CartItem.id)):
-        p=db.get(models.Listing,row.listing_id)
+    rows=db.scalars(select(models.CartItem).where(models.CartItem.user_id==user_id).order_by(models.CartItem.id)).all()
+    products={p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_({row.listing_id for row in rows})))}
+    for row in rows:
+        p=products[row.listing_id]
         data={k:getattr(row,k) for k in ('id','listing_id','material','color','quantity','confirmed_unit_price_cents')}
         data.update(title=p.title,available=p.status=='approved' and not p.removed,price_changed=False)
         try:

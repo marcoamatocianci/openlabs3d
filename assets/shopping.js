@@ -4,7 +4,8 @@ let shoppingRequest=0;
 function pendingPurchase(){try{return JSON.parse(sessionStorage.getItem('ol3d-direct')||'null')}catch(e){return null}}
 async function refreshCart(){if(!account||account.role==='admin'){opsCart=[];saveOpsCart();return []}const owner=account.id,items=await api('/cart');if(account?.id!==owner)return [];opsCart=items.map(i=>({...i,cart_id:i.id,id:i.listing_id,price_cents:i.unit_price_cents||0}));saveOpsCart();return items;}
 const shoppingAccountUpdate=updateAccount;
-updateAccount=function(){shoppingAccountUpdate();opsCart=[];saveOpsCart();refreshCart().catch(showError);if(account&&pendingPurchase()?.owner===null){const draft=pendingPurchase();draft.owner=account.id;sessionStorage.setItem('ol3d-direct',JSON.stringify(draft));sessionStorage.setItem('ol3d-after-login','checkout');}};
+let startupCart=null,startupCartAt=0,startupCartWrites=0;
+updateAccount=function(){shoppingAccountUpdate();opsCart=[];saveOpsCart();startupCart=refreshCart();startupCartAt=performance.now();startupCartWrites=apiWrites;startupCart.catch(showError);if(account&&pendingPurchase()?.owner===null){const draft=pendingPurchase();draft.owner=account.id;sessionStorage.setItem('ol3d-direct',JSON.stringify(draft));sessionStorage.setItem('ol3d-after-login','checkout');}};
 const shoppingLogout=logout;
 logout=async function(){sessionStorage.removeItem('ol3d-direct');await shoppingLogout();opsCart=[];saveOpsCart()};
 bindConfigurator=function(){
@@ -57,7 +58,7 @@ function basketPage(){
 }
 const addressFieldKeys=['street','additional','postal_code','city','region','country'];
 async function shoppingPage(route){const request=++shoppingRequest,notice=checkoutNotice;checkoutNotice='';if(!account){$('#app').innerHTML=panelMessage('Sign in to continue','Baskets are saved privately in your account.');return}if(account.role==='admin'){$('#app').innerHTML=panelMessage('Administrator workspace','Use marketplace order management.','#admin/orders','Manage orders');return}
- try{await refreshCart();if(request!==shoppingRequest)return;
+ try{const fresh=startupCart&&apiWrites===startupCartWrites&&performance.now()-startupCartAt<3000?startupCart:null;startupCart=null;await(fresh||refreshCart());if(request!==shoppingRequest)return;
  // An empty basket has nothing to check out; show the basket's empty state instead of a €0 form.
  if(route==='basket'||route==='checkout-cart'&&(!opsCart.length||opsCart.some(i=>!i.available))){$('#app').innerHTML=basketPage();fillLineThumbs();return}
  const direct=route==='checkout'?pendingPurchase():null;if(direct&&direct.owner!==account.id)throw Error('This checkout belongs to another session. Select the product again.');if(route==='checkout'&&!direct)throw Error('Choose Buy Now on a product first.');

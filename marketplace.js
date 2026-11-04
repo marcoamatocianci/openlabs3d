@@ -1,11 +1,20 @@
 /* Persistent marketplace. The original host, cart and order simulations remain local demos. */
 let account = null, csrf = '', marketplacePage = 1, editListing = null, catalogueRequest = 0, authChecked = false;
 const originalRender = render, originalCard = card, originalProduct = product, originalFilter = filter;
+/* Identical reads already on their way share one response. A write ends the sharing, both when it starts and when
+   it finishes: a refresh after an action must never be answered by a read that began before the action. */
+const pendingReads=new Map();let apiWrites=0;
+function apiFetch(path,options){
+  if((options.method||'GET').toUpperCase()!=='GET'){apiWrites++;pendingReads.clear();return fetch('/api'+path,options).finally(()=>pendingReads.clear())}
+  let pending=pendingReads.get(path);
+  if(!pending){pending=fetch('/api'+path,options);pendingReads.set(path,pending);const done=()=>{if(pendingReads.get(path)===pending)pendingReads.delete(path)};pending.then(done,done)}
+  return pending.then(response=>response.clone());
+}
 async function api(path, options={}) {
   const headers = {...options.headers};
   if (options.body && !(options.body instanceof FormData)) headers['Content-Type']='application/json';
   if (csrf) headers['X-CSRF-Token']=csrf;
-  const res=await fetch('/api'+path,{credentials:'same-origin',...options,headers});
+  const res=await apiFetch(path,{credentials:'same-origin',...options,headers});
   if (!res.ok) {
     const data=await res.json().catch(()=>({}));
     // Structured conflicts (e.g. price changes) carry a message plus details for the page.
@@ -116,9 +125,32 @@ async function renderMarketplace(route){
   if(route.startsWith('edit-listing/')){try{let p=await api('/listings/'+route.split('/')[1]);if(location.hash!=='#'+route)return; editListing=p;$('#app').innerHTML=listingEditor(p);bindMarketplace();}catch(e){showError(e)}return;}
 }
 function bindMarketplace(){
-  for(const id of ['real-login','real-register']) {let form=$('#'+id);if(form) form.onsubmit=async e=>{e.preventDefault();try{let data=await api('/auth/'+(id==='real-login'?'login':'register'),{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(form)))});account=data.user;csrf=data.csrf_token;updateAccount();const destination=sessionStorage.getItem('ol3d-after-login'),back=sessionStorage.getItem('ol3d-return-to');sessionStorage.removeItem('ol3d-after-login');sessionStorage.removeItem('ol3d-return-to');location.hash=destination||back||(account.role==='admin'?'admin':account.role==='host'?'host':'catalogue');render();if(data.verification_delivery)toast(data.verification_delivery);}catch(err){showError(err)}};}
+  for(const id of ['real-login','real-register']) {let form=$('#'+id);if(form) form.onsubmit=async e=>{e.preventDefault();try{let data=await api('/auth/'+(id==='real-login'?'login':'register'),{method:'POST',body:JSON.stringify(Object.fromEntries(new FormData(form)))});if(data.verification_required){showCheckInbox(data);return}account=data.user;csrf=data.csrf_token;updateAccount();const destination=sessionStorage.getItem('ol3d-after-login'),back=sessionStorage.getItem('ol3d-return-to');sessionStorage.removeItem('ol3d-after-login');sessionStorage.removeItem('ol3d-return-to');location.hash=destination||back||(account.role==='admin'?'admin':account.role==='host'?'host':'catalogue');render();}catch(err){if(err.detail?.code==='email_unverified')showLoginVerification(form,err.detail);else showError(err)}};}
   const files=$('#listing-files'); if(files)files.onchange=()=>{const div=$('#previews');div.innerHTML='';Array.from(files.files).forEach(file=>{let img=document.createElement('img');let url=URL.createObjectURL(file);img.src=url;img.alt='New photograph preview';img.onload=()=>URL.revokeObjectURL(url);div.appendChild(img)});};
   let form=$('#listing-form');if(form)form.onsubmit=async e=>{e.preventDefault(); const error=$('#listing-error');try{const d=Object.fromEntries(new FormData(form));if(e.submitter.value==='submit'&&account?.role==='admin'&&d.listing_type==='official'&&!await confirmOfficial())return;const price=Number(d.price||0);if(!Number.isFinite(price)||price<0)throw Error('Enter a valid price.');let payload={title:d.title,description:d.description,category:d.category,price_cents:Math.round(price*100),material:d.material,dimensions:d.dimensions,compatibility:d.compatibility};if(d.listing_type)payload.listing_type=d.listing_type;if(account?.role==='admin')payload.featured=!!d.featured;let id=form.dataset.id;let p=await api(id?'/listings/'+id:'/listings',{method:id?'PATCH':'POST',body:JSON.stringify(payload)});form.dataset.id=p.id;const chosenMaterials=[...form.querySelectorAll('[data-listing-material]:checked')].map(el=>el.value);if(chosenMaterials.length){p=await api(`/listings/${p.id}/pricing`,{method:'PUT',body:JSON.stringify({materials:Object.fromEntries(chosenMaterials.map(m=>[m,p.configurator?.pricing_materials?.[m]||p.configurator?.materials?.[m]||10000])),discounts:p.configurator?.discounts||{},max_quantity:p.configurator?.max_quantity||50})});}const chosen=Array.from(files.files);if(chosen.length){let data=new FormData();chosen.forEach(f=>data.append('files',f));await api(`/listings/${p.id}/images`,{method:'POST',body:data});files.value='';}const cadFile=document.querySelector('#listing-cad')?.files[0];if(cadFile){const cadData=new FormData();cadData.append('file',cadFile);const inspection=await api(`/listings/${p.id}/cad`,{method:'POST',body:cadData});toast(inspection.warning);}if(e.submitter.value==='submit'&&(account?.role==='admin'&&d.listing_type==='official'||['draft','rejected'].includes(p.status)))p=await api(`/listings/${p.id}/${account?.role==='admin'&&d.listing_type==='official'?'publish':'submit'}`,{method:'POST'});await refreshPublic();toast(p.status==='approved'?'Product published successfully':'Listing saved');location.hash=account?.role==='admin'?'admin/products':'my-listings';render();}catch(err){error.textContent=err.message;}}
 }
 render = function(){const route=(location.hash||'#home').slice(1).split('?')[0];if(['account','my-listings','moderation','create-listing'].includes(route)||route.startsWith('edit-listing/')){renderMarketplace(route);return;}if(route==='admin')return;/* The admin workspace (workspaces.js) owns this route; if sign-in finishes before it loads, the final render() draws it. */if(route==='design'){location.hash=account?'create-listing':'account';return;}originalRender();if(route==='catalogue') {initCatalogueFilters();$('#results').insertAdjacentHTML('afterend','<div id="marketplace-pages" class="pagination"></div>');filter();}if(route.startsWith('product/api-')&&!state.products.some(p=>p.id===route.split('/')[1])){let id=route.split('/')[1].slice(4);api('/listings/'+id).then(p=>{state.products.push(asProduct(p));if(location.hash==='#'+route)render()}).catch(()=>{});} };
-(async()=>{try{const data=await api('/auth/me');account=data.user;csrf=data.csrf_token}catch(e){}authChecked=true;updateAccount();await refreshPublic();render()})();
+/* Startup, once and in order. Scripts load one after another and each one replaces render(), so drawing before the
+   last has loaded runs a partial chain (and its requests) for nothing. The session is requested straight away; the
+   page is drawn once, when every script has loaded and the session is known. Pages that show catalogue data wait for
+   it; workspace pages do not need it, so they draw at once and it arrives behind them. */
+const scriptsLoaded=document.readyState==='loading'?new Promise(done=>addEventListener('DOMContentLoaded',done,{once:true})):Promise.resolve();
+const CATALOGUE_FREE=/^#?(admin|host|orders|my-|account|onboarding|verify|check-inbox|reset|forgot-password)/;
+let catalogueLoad=null;
+// What the current page needs before it can draw: the published catalogue, fetched the first time a page shows it.
+// Returns a promise only while that is on its way, so every other navigation stays synchronous.
+function routeData(){
+  if(CATALOGUE_FREE.test(location.hash)||catalogueLoad==='done')return null;
+  catalogueLoad=catalogueLoad||refreshPublic().then(()=>{catalogueLoad='done'});
+  return catalogueLoad;
+}
+(async()=>{
+  const session=api('/auth/me').then(data=>{account=data.user;csrf=data.csrf_token}).catch(()=>{});
+  await scriptsLoaded;
+  renderNavbar();
+  await session;
+  authChecked=true;updateAccount();
+  const categoriesLoaded=refreshCategories(),waiting=routeData();
+  if(waiting)await Promise.all([waiting,categoriesLoaded]);
+  appStarted=true;render();
+})();

@@ -1,12 +1,7 @@
 """Account settings and single-use, hashed inbox verification/reset tokens."""
-import os
 import re
 import secrets
-import smtplib
-import ssl
-from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Literal
 import pycountry
 from fastapi import APIRouter, Depends, Request, Response
@@ -15,7 +10,7 @@ from sqlalchemy import select, delete, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
-from . import models, schemas, config
+from . import email_service, models, schemas, config
 from .database import get_db
 from .main import require, mutate, current, fail, digest, hasher, user_data, session_limit
 
@@ -61,45 +56,24 @@ class ResetPassword(TokenInput):
 class EmailInput(BaseModel):
     email: EmailStr
 
-# SMTP acceptance is not an assertion of final inbox delivery.
-def issue_token(db, user, purpose):
-    latest=db.scalar(select(models.AccountToken).where(models.AccountToken.user_id==user.id,models.AccountToken.purpose==purpose).order_by(models.AccountToken.created_at.desc()))
-    if latest and latest.created_at.replace(tzinfo=timezone.utc)>datetime.now(timezone.utc)-timedelta(seconds=60):
-        return 'Please wait 60 seconds before requesting another message.'
-    token=secrets.token_urlsafe(32)
-    db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==user.id,models.AccountToken.purpose==purpose))
-    db.add(models.AccountToken(token_hash=digest(token),user_id=user.id,purpose=purpose,expires_at=datetime.now(timezone.utc)+timedelta(minutes=60)))
-    db.commit()
-    base=os.getenv('PUBLIC_BASE_URL','http://localhost:8080').rstrip('/')
-    message=EmailMessage();message['To']=user.email;message['From']=os.getenv('SMTP_FROM','OpenLabs3D <noreply@localhost>')
-    message['Subject']='Verify your OpenLabs3D email' if purpose=='verify' else 'Reset your OpenLabs3D password'
-    message.set_content(f"Open this link within 60 minutes:\n{base}/#{purpose}?token={token}\nIgnore this message if you did not request it.")
-    transport=os.getenv('MAIL_TRANSPORT','file' if config.APP_ENV=='development' else 'smtp')
-    try:
-        if transport=='file' and config.APP_ENV=='development':
-            directory=Path(os.getenv('MAIL_OUTBOX',str(config.UPLOAD_DIR.parent/'mail')))
-            directory.mkdir(parents=True,exist_ok=True,mode=0o700)
-            path=directory/(secrets.token_hex(16)+'.eml')
-            with open(path,'x',opener=lambda path,flags:os.open(path,flags,0o600)) as stream: stream.write(message.as_string())
-            return 'Saved to the local development mailbox. No real email was sent.'
-        if transport!='smtp': raise ValueError('Invalid email transport')
-        host=os.environ['SMTP_HOST']; port=int(os.getenv('SMTP_PORT','587'))
-        with smtplib.SMTP(host,port,timeout=10) as smtp:
-            smtp.ehlo()
-            if os.getenv('SMTP_STARTTLS','true')=='true': smtp.starttls(context=ssl.create_default_context());smtp.ehlo()
-            if os.getenv('SMTP_USERNAME'): smtp.login(os.environ['SMTP_USERNAME'],os.environ['SMTP_PASSWORD'])
-            smtp.send_message(message)
-        return 'Accepted by the SMTP server; check your inbox.'
-    except (OSError, smtplib.SMTPException, KeyError, ValueError):
-        db.execute(delete(models.AccountToken).where(models.AccountToken.token_hash==digest(token)));db.commit()
-        return 'Email could not be sent. Please retry or contact the administrator.'
+LINK_MESSAGES = {'invalid':'This link is not valid. It may have been replaced by a newer one.', 'expired':'This link has expired.', 'used':'This link has already been used.'}
+def link_refused(code): fail(400, {'code':code, 'message':LINK_MESSAGES[code]})
 
-def consume(db, token, purpose):
-    # DELETE RETURNING makes concurrent redemption single-use.
-    uid=db.execute(delete(models.AccountToken).where(models.AccountToken.token_hash==digest(token),models.AccountToken.purpose==purpose,models.AccountToken.expires_at>datetime.now(timezone.utc)).returning(models.AccountToken.user_id)).scalar_one_or_none()
-    user=db.get(models.User,uid) if uid else None
-    if not user or not user.active: db.rollback();fail(400,'Invalid or expired link')
-    return user
+def redeem(db, token, purposes):
+    """Single use. The conditional update lets exactly one of several simultaneous attempts through."""
+    hashed, now = digest(token), datetime.now(timezone.utc)
+    row = db.execute(update(models.AccountToken).where(models.AccountToken.token_hash == hashed, models.AccountToken.purpose.in_(purposes), models.AccountToken.used_at.is_(None), models.AccountToken.expires_at > now)
+                     .values(used_at=now).returning(models.AccountToken.user_id, models.AccountToken.purpose, models.AccountToken.new_email)).first()
+    if row:
+        user = db.get(models.User, row.user_id)
+        if not user or not user.active: db.rollback(); link_refused('invalid')
+        return user, row.purpose, row.new_email
+    found = db.get(models.AccountToken, hashed)
+    if found is None or found.purpose not in purposes: link_refused('invalid')
+    link_refused('used' if found.used_at else 'expired')
+
+def mark_verified(user):
+    user.email_verified, user.email_verified_at, user.legacy_email_access = True, datetime.now(timezone.utc), False
 
 @router.get('/countries')
 def countries(): return sorted([{'code':c.alpha_2,'name':c.name} for c in pycountry.countries],key=lambda c:c['name'])
@@ -128,39 +102,76 @@ def available(username: str, auth=Depends(current), db: Session=Depends(get_db))
     owner=db.scalar(select(models.User.id).where(models.User.username==username))
     return {'available':owner is None or bool(auth and owner==auth[0].id)}
 
+RESEND_MESSAGE = 'If an account requiring verification exists for this address, a new verification email will be sent.'
+class ResendInput(BaseModel):
+    email: EmailStr | None = None
 @router.post('/auth/resend-verification')
-def resend(request: Request, auth=Depends(mutate), db: Session=Depends(get_db)):
+def resend(body: ResendInput, request: Request, auth=Depends(current), db: Session=Depends(get_db)):
     session_limit(request,'resend-verification')
-    return {'message':'Email already verified.' if auth[0].email_verified else issue_token(db,auth[0],'verify')}
+    # Without an address, someone signed in means their own: that is all a page opened before this field existed sends.
+    email=str(body.email).lower() if body.email else auth[0].email if auth else None
+    if not email: fail(422,'Enter your email address')
+    user=db.scalar(select(models.User).where(models.User.email==email,models.User.active.is_(True)))
+    queued=False
+    if user and not user.email_verified:
+        queued=email_service.enqueue_limited(db,'verify_email',user.email,user.id);db.commit();email_service.wake()
+    message=RESEND_MESSAGE    # The same answer whatever happened: unknown, verified, in its cooldown or sent.
+    if auth and auth[0].email==email:    # Only the account's own owner can be told what actually happened.
+        message='Your email is already verified.' if auth[0].email_verified else f'A new verification email is on its way to {email}.' if queued else 'We sent you one a moment ago. Check your inbox, or try again in a minute.'
+    return {'message':message,'resend_after':config.EMAIL_RESEND_COOLDOWN_SECONDS,**email_service.capture_info()}
 
 @router.post('/auth/verify')
-def verify(body: TokenInput, request: Request, db: Session=Depends(get_db)):
+def verify(body: TokenInput, request: Request, auth=Depends(current), db: Session=Depends(get_db)):
     session_limit(request,'verify')
-    user=consume(db,body.token,'verify');user.email_verified=True;db.commit()
-    return {'message':'Email verified. You can now use marketplace services.'}
+    user,purpose,new_email=redeem(db,body.token,('verify','email_change'))
+    signed_in=bool(auth and auth[0].id==user.id)
+    if purpose=='email_change':
+        old=user.email
+        taken=db.scalar(select(models.User.id).where(models.User.email==new_email,models.User.id!=user.id))
+        if taken or user.pending_email!=new_email:
+            if user.pending_email==new_email: user.pending_email=None
+            db.commit();fail(409,{'code':'conflict','message':'This address cannot be used for your account. Your current address has not changed.'})
+        user.email,user.pending_email=new_email,None;mark_verified(user)
+        # Links sent to the old address stop working, and so do other sessions.
+        db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==user.id,models.AccountToken.token_hash!=digest(body.token)))
+        email_service.cancel_pending(db,user.id,('verify_email','email_change','password_reset','finish_registration'))
+        db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==user.id,models.LoginSession.token_hash!=(auth[1].token_hash if signed_in else '')))
+        db.add(models.Activity(actor_id=user.id,action='user.email_changed',subject=f'user:{user.id}'))
+        email_service.enqueue(db,'email_changed_notice',old,user.id,{'new_address':email_service.mask_address(new_email)})
+        try: db.commit()
+        except IntegrityError: db.rollback();fail(409,{'code':'conflict','message':'This address cannot be used for your account. Your current address has not changed.'})
+        email_service.wake()
+        return {'status':'email_changed','email':new_email,'signed_in':signed_in,'message':'Your email address has been changed.'}
+    if user.email_verified: db.commit();return {'status':'verified','signed_in':signed_in,'message':'Your email is verified.'}
+    mark_verified(user);db.add(models.Activity(actor_id=user.id,action='user.email_verified',subject=f'user:{user.id}'));db.commit()
+    return {'status':'verified','signed_in':signed_in,'message':'Your email is verified. You can now sign in.'}
 
 @router.post('/auth/forgot-password')
 def forgot(body: EmailInput, request: Request, db: Session=Depends(get_db)):
     session_limit(request,'forgot-password')
     user=db.scalar(select(models.User).where(models.User.email==str(body.email).lower(),models.User.active.is_(True)))
-    if user: issue_token(db,user,'reset')
+    if user: email_service.enqueue_limited(db,'password_reset',user.email,user.id);db.commit();email_service.wake()
     return {'message':'If this account exists, a reset message has been requested.'}
 
 @router.post('/auth/reset-password')
 def reset(body: ResetPassword, request: Request, db: Session=Depends(get_db)):
     session_limit(request,'reset-password')
-    user=consume(db,body.token,'reset');user.password_hash=hasher.hash(body.password)
-    db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==user.id));db.commit()
+    user,_,_=redeem(db,body.token,('reset',));user.password_hash=hasher.hash(body.password)
+    # The link reached this inbox, which confirms the address.
+    if not user.email_verified: mark_verified(user)
+    db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==user.id))
+    email_service.enqueue(db,'password_changed',user.email,user.id);db.commit();email_service.wake()
     return {'message':'Password reset. Sign in with your new password.'}
 
 @router.post('/auth/change-password')
 def change_password(body: PasswordChange, request: Request, auth=Depends(mutate), db: Session=Depends(get_db)):
-    session_limit(request,'change-password')
+    session_limit(request,'change-password',auth[0].id)
     try: hasher.verify(auth[0].password_hash,body.current_password)
     except (VerifyMismatchError,InvalidHashError): fail(401,'Incorrect current password')
     auth[0].password_hash=hasher.hash(body.password)
     db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==auth[0].id,models.AccountToken.purpose=='reset'))
-    db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==auth[0].id,models.LoginSession.token_hash!=auth[1].token_hash));db.commit()
+    db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==auth[0].id,models.LoginSession.token_hash!=auth[1].token_hash))
+    email_service.enqueue(db,'password_changed',auth[0].email,auth[0].id);db.commit();email_service.wake()
     return {'message':'Password changed. Other sessions have been signed out.'}
 
 @router.patch('/profile')
@@ -209,19 +220,38 @@ def remove_address(address_id: int, auth=Depends(mutate), db: Session=Depends(ge
 
 class ChangeEmail(EmailInput):
     current_password: str = Field(max_length=128)
+CHANGE_MESSAGE='If this address can be used, a confirmation link is on its way to it. Your current address stays active until then.'
 @router.post('/auth/change-email')
 def change_email(body: ChangeEmail, request: Request, auth=Depends(mutate), db: Session=Depends(get_db)):
-    session_limit(request,'change-email')
-    try: hasher.verify(auth[0].password_hash,body.current_password)
+    session_limit(request,'change-email',auth[0].id)
+    user=auth[0]
+    if user.password_hash.startswith('!'): fail(409,'Set a password first, then you can change your email.')
+    try: hasher.verify(user.password_hash,body.current_password)
     except (VerifyMismatchError,InvalidHashError): fail(401,'Incorrect current password')
     email=str(body.email).lower()
-    if email==auth[0].email:return {'message':'Email unchanged.'}
-    auth[0].email=email;auth[0].email_verified=False
-    db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==auth[0].id))
-    db.execute(delete(models.LoginSession).where(models.LoginSession.user_id==auth[0].id,models.LoginSession.token_hash!=auth[1].token_hash))
-    try: db.commit()
-    except IntegrityError:db.rollback();fail(409,'Email is already in use')
-    return {'message':issue_token(db,auth[0],'verify')}
+    if email==user.email:
+        if user.email_verified:return {'message':'This is already your email address.','pending_email':user.pending_email}
+        # Someone retyping their own unverified address wants it confirmed.
+        queued=email_service.enqueue_limited(db,'verify_email',email,user.id);db.commit();email_service.wake()
+        return {'message':f'This is already your address, and it is not verified yet. A verification email is on its way to {email}.' if queued else 'We sent you a verification email a moment ago. Check your inbox, or try again in a minute.','pending_email':user.pending_email,**email_service.capture_info()}
+    # Asking again within the cooldown keeps the link already sent. Otherwise earlier links stop working.
+    if user.pending_email!=email or not email_service.recently_queued(db,'email_change',email):
+        db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==user.id,models.AccountToken.purpose=='email_change'))
+        email_service.cancel_pending(db,user.id,('email_change',))
+        user.pending_email=email
+        owner=db.scalar(select(models.User.id).where(models.User.email==email))
+        # A taken address looks the same from here: its owner is told, and no link exists to confirm it.
+        if owner: email_service.enqueue_limited(db,'account_exists',email,owner)
+        else: email_service.enqueue_limited(db,'email_change',email,user.id)
+        db.commit();email_service.wake()
+    return {'message':CHANGE_MESSAGE,'pending_email':email,**email_service.capture_info()}
+
+@router.delete('/auth/change-email')
+def cancel_email_change(auth=Depends(mutate), db: Session=Depends(get_db)):
+    auth[0].pending_email=None
+    db.execute(delete(models.AccountToken).where(models.AccountToken.user_id==auth[0].id,models.AccountToken.purpose=='email_change'))
+    email_service.cancel_pending(db,auth[0].id,('email_change',))
+    db.commit();return {'message':'Email change cancelled.','pending_email':None}
 
 class Preferences(BaseModel):
     theme: Literal['light','dark','system']

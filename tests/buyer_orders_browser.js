@@ -20,6 +20,8 @@ async page => {
   const goto=async hash=>{await page.goto(base+'/#'+hash);await settled();};
   const refs=(scope='')=>page.locator(scope+' .bo-card .bo-ref').allTextContents();
   const column=key=>page.locator(`#bo-board [data-stage="${key}"]`);
+  // One stage is open at a time: a card has to be in the open stage to be used.
+  const openStage=async key=>{if(await page.locator('#bo-board').getAttribute('data-open')!==key){await page.locator(`#bo-board [data-sb-open="${key}"]:visible`).first().click();await page.waitForTimeout(360);}};
   const navigate=async action=>{
     const done=page.waitForResponse(r=>r.url().includes('/api/orders?')&&r.status()===200);
     await action();await done;await settled();
@@ -29,12 +31,13 @@ async page => {
   check((await page.locator('.scope-nav .segment[aria-current]').innerText()).startsWith('Current orders'),'Current orders is the default view');
   const nav=(await page.locator('.scope-nav').innerText()).replace(/\s+/g,' ');
   check(nav.includes('Current orders 11')&&nav.includes('Previous orders 4'),'Active and history counts are separate');
-  check(JSON.stringify(await page.locator('#bo-board .wf-column').evaluateAll(cs=>cs.map(c=>[c.dataset.stage,c.querySelectorAll('.bo-card').length])))==='[["pending",2],["in-progress",7],["shipping",2]]','Orders grouped by stage');
-  check(JSON.stringify(await page.locator('#bo-board .wf-column-head .segment-count').evaluateAll(es=>es.map(e=>parseInt(e.textContent))))==='[2,7,2]','Column counts');
+  check(JSON.stringify(await page.locator('#bo-board .sb-col').evaluateAll(cs=>cs.sort((a,b)=>a.dataset.index-b.dataset.index).map(c=>[c.dataset.stage,c.querySelectorAll('.bo-card').length])))==='[["pending",2],["in-progress",7],["shipping",2]]','Orders grouped by stage');
+  check(JSON.stringify(await page.locator('#bo-board .sb-col').evaluateAll(cs=>cs.sort((a,b)=>a.dataset.index-b.dataset.index).map(c=>parseInt(c.querySelector('.sb-head [data-sb-count]').textContent))))==='[2,7,2]','Column counts');
   check((await refs()).length===11&&!(await page.locator('#bo-board .bo-card-stage .status').allTextContents()).some(s=>['Completed','Cancelled'].includes(s)),'Every current order, nothing finished');
   check((await refs('#bo-board [data-stage="in-progress"]'))[0]==='OL3D-QA-1015','Newest first within a stage');
   await page.waitForFunction(()=>document.querySelector('.bo-thumb img')?.naturalWidth>0);
   // A three-product order with products at different stages: in progress, every stage counted.
+  await openStage('in-progress');
   const mixed=page.locator('.bo-card',{hasText:'OL3D-QA-1015'});
   check(await mixed.locator('.bo-line').count()===2&&(await mixed.innerText()).includes('+ 1 more product'),'Compact product preview');
   check((await mixed.locator('.bo-mix').innerText())==='1 received · 1 in production · 1 awaiting a host','Every product stage on the card: '+await mixed.locator('.bo-mix').innerText());
@@ -52,27 +55,34 @@ async page => {
   check(await page.evaluate(()=>document.activeElement?.closest('.bo-card')?.textContent.includes('OL3D-QA-1015')),'Closing the details returns focus to the card');
   await page.screenshot({animations:'disabled',fullPage:true,path:'.playwright-mcp/orders-desktop-bright.png'});
   // Shipping: tracking and the receipt confirmation on the card; nothing to confirm elsewhere.
+  await openStage('shipping');
   for(const card of await column('shipping').locator('.bo-card').all()){
     check(await card.locator('a[href^="https://www.dhl.com/track"]').count()===1&&(await card.innerText()).includes('DHL Express'),'Shipped orders show tracking');
     check(await card.getByRole('button',{name:/Mark as received/}).count()===1,'Shipped orders offer Mark as received');
   }
   check(await column('pending').locator('.bo-shipments').count()===0,'Pending orders show no receipt action');
-  // Previous orders: completed and cancelled, by status, searchable.
+  // Previous orders: a board with Completed and Cancelled side by side, searchable on the server.
   await navigate(()=>page.getByRole('navigation',{name:'My orders'}).getByRole('link',{name:/Previous orders/}).click());
-  let statuses=await page.locator('.bo-row .row-status .status').allTextContents();
-  check(statuses.length===4&&statuses.every(s=>['Completed','Cancelled'].includes(s)),'Previous orders holds completed and cancelled orders');
-  for(const [label,count] of [['Completed',2],['Cancelled',2]]){
-    await navigate(()=>page.getByRole('navigation',{name:'Previous orders by status'}).getByRole('link',{name:new RegExp('^'+label)}).click());
-    statuses=await page.locator('.bo-row .row-status .status').allTextContents();
-    check(statuses.length===count&&statuses.every(s=>s===label),'Incorrect '+label+' grouping');
+  const stage=key=>page.locator(`#bo-history-board [data-stage="${key}"]`);
+  for(const [key,label,count] of [['completed','Completed',2],['cancelled','Cancelled',2]]){
+    check(+(await stage(key).locator('.sb-head [data-sb-count]').innerText())===count,label+' stage count');
+    const badges=await stage(key).locator('.bo-card .bo-card-stage > .status').allTextContents();
+    check(badges.length===count&&badges.every(s=>s===label),'Incorrect '+label+' grouping');
+    check((await stage(key).locator('.bo-ended').allTextContents()).every(t=>t.startsWith(label+' ')),label+' orders say when they ended');
   }
-  await navigate(()=>page.getByRole('navigation',{name:'Previous orders by status'}).getByRole('link',{name:/^All/}).click());
+  // Switching stage is local (no request) and kept in the address.
+  let requests=0;const counted=r=>{if(r.url().includes('/api/orders'))requests++};page.on('request',counted);
+  await stage('cancelled').locator('.sb-head').click();
+  await page.waitForFunction(()=>location.hash.includes('group=cancelled'));
+  page.off('request',counted);
+  check(requests===0&&await stage('cancelled').evaluate(c=>c.classList.contains('is-open')),'Switching stage makes no request');
   await page.locator('#bo-q').fill('1012');
   await navigate(()=>page.locator('#bo-q').press('Enter'));
   check(JSON.stringify(await refs())==='["OL3D-QA-1012"]'&&page.url().includes('q=1012'),'Search by order number');
+  check(await stage('completed').locator('.sb-head [data-sb-count]').innerText()==='1'&&await stage('cancelled').locator('.sb-head [data-sb-count]').innerText()==='0','Each stage counts its matches');
   await page.locator('#bo-q').fill('no such product');
   await navigate(()=>page.locator('#bo-q').press('Enter'));
-  check((await page.locator('.bo-page').innerText()).includes('No orders match your search'),'Search empty state');
+  check((await page.locator('.bo-page').innerText()).includes('match “no such product”'),'Search empty state');
   // Sorting applies within each stage and is remembered for the session.
   await navigate(()=>page.getByRole('navigation',{name:'My orders'}).getByRole('link',{name:/Current orders/}).click());
   await navigate(async()=>{await page.click('[data-select=bo-sort] .cf-trigger');await page.click('[data-select=bo-sort] [role=option][data-value=oldest]')});
@@ -83,7 +93,7 @@ async page => {
   check((await refs('#bo-board [data-stage="in-progress"]'))[0]==='OL3D-QA-1001','My orders reopens on Current orders, in the remembered order');
   await goto('orders?group=pending&sort=oldest');
   await page.reload();await settled();
-  check((await refs('#bo-board [data-stage="pending"]'))[0]==='OL3D-QA-1007'&&await page.locator('#bo-board [data-stage="pending"].is-focus').count()===1,'Reload keeps the view in the address');
+  check((await refs('#bo-board [data-stage="pending"]'))[0]==='OL3D-QA-1007'&&await page.locator('#bo-board [data-stage="pending"].is-open').count()===1,'Reload keeps the view in the address');
   await goto('orders?sort=newest');
   await page.evaluate(()=>document.documentElement.dataset.theme='dark');
   await page.waitForFunction(()=>document.querySelector('.bo-thumb img')?.naturalWidth>0);
@@ -99,7 +109,7 @@ async page => {
   }
   await page.setViewportSize({width:390,height:844});
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Mobile overflow');
-  check(await page.locator('.wf-stages').isVisible(),'Mobile: stage strip');
+  check(await page.locator('#bo-board .sb-pills').isVisible(),'Mobile: stage pills');
   await page.locator('.bo-card [data-order-details]').first().click();await page.locator('#modal[open]').waitFor();
   check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Detail overflow');
   await page.screenshot({animations:'disabled',path:'.playwright-mcp/orders-mobile-dark.png'});
@@ -128,10 +138,10 @@ async page => {
   await page.unroute(pattern);
   // A shipped order's address is locked; a pending order's address changes from its details.
   await goto('orders');
-  await column('shipping').locator('[data-order-details]').first().click();await page.locator('#modal[open]').waitFor();
+  await openStage('shipping');await column('shipping').locator('[data-order-details]').first().click();await page.locator('#modal[open]').waitFor();
   check(await page.locator('#modal [data-change-address]').isDisabled(),'Shipped orders cannot change address');
   await page.keyboard.press('Escape');
-  await column('pending').locator('[data-order-details]').first().click();await page.locator('#modal[open]').waitFor();
+  await openStage('pending');await column('pending').locator('[data-order-details]').first().click();await page.locator('#modal[open]').waitFor();
   await page.locator('#modal [data-change-address]').click();
   await page.locator('#action-dialog[open] #order-address-form').waitFor();
   check(await page.locator('#action-dialog [name=street]').inputValue()==='Via Laboratory 12','Current address prefilled');
@@ -146,7 +156,7 @@ async page => {
   await page.keyboard.press('Escape');
   // Mark as received: confirmed in the site dialog; the order completes and moves to Previous orders.
   const shippedRef=(await refs('#bo-board [data-stage="shipping"]'))[0];
-  await column('shipping').locator('.bo-card').first().getByRole('button',{name:/Mark as received/}).click();
+  await openStage('shipping');await column('shipping').locator('.bo-card').first().getByRole('button',{name:/Mark as received/}).click();
   await page.locator('#action-dialog[open]').waitFor();
   check(await page.locator('#action-dialog').getByRole('heading',{name:'Mark as received?'}).isVisible(),'Receipt confirmation dialog');
   await page.locator('#action-dialog').getByRole('button',{name:'Cancel'}).click();
@@ -159,7 +169,7 @@ async page => {
   check((await page.locator('#toast').innerText()).includes('Previous orders'),'Completion says where the order went');
   await goto('orders?scope=history&group=completed');
   check((await refs()).includes(shippedRef),'Received order is completed');
-  check((await page.locator('#bo-toolbar .chip',{hasText:'Completed'}).innerText()).replace(/\s+/g,' ').trim()==='Completed 3','Completed count updated');
+  check(await page.locator('#bo-history-board [data-stage="completed"] .sb-head [data-sb-count]').innerText()==='3','Completed count updated');
   // Owner scoping is verified on real API responses with separate authenticated sessions.
   await page.evaluate(()=>logout());await page.goto(base+'/#account');await login('other');await goto('orders');
   check((await refs()).join(',')==='OL3D-QA-1000','Buyer isolation');

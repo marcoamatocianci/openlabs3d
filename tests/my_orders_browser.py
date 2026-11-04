@@ -30,12 +30,22 @@ def session(browser, w=1366, h=760, theme='light'):
 def ready(page):
     # The list shown matches the filters in the URL and is no longer loading.
     page.wait_for_function("(() => { const f = buyerOrderFilters(), s = buyerOrdersShown; return !!s && s.scope === f.scope && s.group === f.group && s.q === f.q && s.sort === f.sort && s.page === f.page && !document.querySelector('#bo-results[aria-busy]'); })()")
-    page.wait_for_selector('.bo-card')
+    page.wait_for_selector('.bo-card >> visible=true')   # cards of a closed stage are hidden
     # Thumbnails on screen are recoloured and revealed; lazy ones off screen or in closed details wait.
     page.wait_for_function("[...document.querySelectorAll('.bo-thumb img[data-color]')].filter(i => i.checkVisibility() && i.getBoundingClientRect().top < innerHeight && i.getBoundingClientRect().bottom > 0 && i.getBoundingClientRect().left < innerWidth && i.getBoundingClientRect().right > 0).every(i => i.classList.contains('is-ready'))")
 
+def open_stage(page, key, board='#bo-board'):
+    # One stage is open at a time: a card has to be in the open stage to be used.
+    if page.locator(board).get_attribute('data-open') != key:
+        page.locator(f'{board} [data-sb-open="{key}"] >> visible=true').first.click(); page.wait_for_timeout(380)
+
 def click_chip(page, label, kind='.chip'):
-    box = page.locator('#bo-toolbar ' + kind, has_text=label).first.bounding_box()
+    # The toolbar is redrawn when a response lands, so during rapid clicks the chip can vanish for a moment.
+    box = None
+    for _ in range(40):
+        box = page.locator('#bo-toolbar ' + kind, has_text=label).first.bounding_box()
+        if box: break
+        page.wait_for_timeout(25)
     page.mouse.click(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2)
 
 with sync_playwright() as pw:
@@ -46,6 +56,7 @@ with sync_playwright() as pw:
     ok(not any('/api/listings/' in r and '/visuals/' not in r for r in p.requests), 'no per-product listing requests for previews')
 
     # Configuration: the newest order (OL3D-QA-1015) has three lines with different colours.
+    open_stage(p, 'in-progress')
     card = p.locator('.bo-card', has_text='OL3D-QA-1015')
     p.locator('#bo-toolbar').scroll_into_view_if_needed()
     swatches = card.locator('.bo-lines .line-swatch')
@@ -70,6 +81,7 @@ with sync_playwright() as pw:
 
     # Legacy orders (before snapshots): neutral preview + recorded name, never a guessed colour.
     p.goto(BASE + '/#orders?sort=oldest'); ready(p)
+    open_stage(p, 'in-progress')
     legacy = p.locator('.bo-card', has_text='OL3D-QA-1001')
     ok(legacy.locator('.line-swatch').count() == 0 and 'PLA · Orange' in legacy.inner_text(), 'legacy order shows the colour name without a swatch')
     ok(legacy.locator('img').first.evaluate("i => !i.dataset.color && !i.src.startsWith('data:')"), 'legacy order keeps the neutral product render')
@@ -79,44 +91,49 @@ with sync_playwright() as pw:
     p.evaluate("window.__page = document.querySelector('.bo-page'); const t = document.querySelector('#bo-toolbar'); scrollTo(0, t.getBoundingClientRect().top + scrollY - 90)")
     # Slow the order API down so the in-between state can be observed.
     p.evaluate("(() => { const f = window.fetch; window.fetch = (u, o) => String(u).includes('/api/orders?') ? new Promise(r => setTimeout(r, 500)).then(() => f(u, o)) : f(u, o); })()")
-    # Level 1 to Previous orders, its status chips, then back to the Current orders board.
+    # Level 1 to Previous orders (a board: Completed and Cancelled), then back to the Current orders board.
     current = {'Awaiting a host', 'Accepted', 'In production', 'Ready to ship', 'Shipped', 'Partly shipped'}
-    for label, scope, group, statuses in (('Previous orders', 'history', 'all', {'Completed', 'Cancelled'}),
-                                          ('Completed', 'history', 'completed', {'Completed'}), ('Cancelled', 'history', 'cancelled', {'Cancelled'}),
-                                          ('Current orders', 'active', 'all', current)):
+    for label, scope, group, statuses in (('Previous orders', 'history', 'all', {'Completed', 'Cancelled'}), ('Current orders', 'active', 'all', current)):
         y = p.evaluate('scrollY'); p.requests.clear()
-        primary = label in ('Previous orders', 'Current orders')
-        click_chip(p, label, '.segment' if primary else '.chip')
-        p.wait_for_function(f"document.querySelector('#bo-toolbar {'.segment' if primary else '.chip'}[aria-current]').textContent.startsWith('{label}')", timeout=400)
+        click_chip(p, label, '.segment')
+        p.wait_for_function(f"document.querySelector('#bo-toolbar .segment[aria-current]').textContent.startsWith('{label}')", timeout=400)
         p.wait_for_timeout(250)
         busy = p.evaluate("[!!document.querySelector('#bo-results[aria-busy=true]'), document.querySelectorAll('.bo-card').length, getComputedStyle(document.querySelector('#bo-results')).opacity]")
         ok(busy[0] and busy[1] > 0 and float(busy[2]) < .9, f'{label}: highlighted at once; previous orders stay, dimmed, while loading {busy}')
         ready(p)
         api = [r for r in p.requests if '/api/' in r]
-        shown = set(p.locator('.bo-card .status').all_inner_texts())
-        expected = f'/api/orders?scope={scope}&group={group}&q=&sort=newest&page=1&paginated=true&per_page=10' if scope == 'history' else '/api/orders?scope=active&sort=newest&paginated=true&per_page=50&page=1'
+        shown = set(p.locator('.bo-card .bo-card-stage > .status').all_text_contents())
+        expected = '/api/orders?paginated=true&scope=history&columns=true&q=&sort=newest&per_page=12' if scope == 'history' else '/api/orders?scope=active&sort=newest&paginated=true&per_page=50&page=1'
         ok(api == [expected], f'{label}: exactly one API request {api}')
         ok(p.evaluate('window.__page === document.querySelector(".bo-page")'), f'{label}: page kept, not rebuilt')
         # Kept, unless the shorter list makes the page too short to stay there (the browser then clamps it).
         kept = min(y, p.evaluate('document.documentElement.scrollHeight - innerHeight'))
         ok(abs(p.evaluate('scrollY') - kept) < 2, f'{label}: scroll position kept ({y} -> {p.evaluate("scrollY")}, expected {kept})')
         ok(shown and shown <= statuses, f'{label}: only {scope}/{group} orders shown {shown}')
-    ok(len(set(p.locator('.bo-card').evaluate_all('cs => cs.map(c => Math.round(c.getBoundingClientRect().width))'))) == 1, 'order cards keep one width')
+    ok(len(set(p.locator('.bo-card').evaluate_all('cs => cs.filter(c => c.checkVisibility()).map(c => Math.round(c.getBoundingClientRect().width))'))) == 1, 'order cards keep one width')
 
-    # History: back and forward restore filters without reloading the page.
+    # Previous orders: switching stage is local (no request) and kept in the address, so a reload reopens it.
+    click_chip(p, 'Previous orders', '.segment'); ready(p); p.wait_for_selector('#bo-history-board')
+    p.requests.clear()
+    p.locator('#bo-history-board .sb-head[data-sb-open="cancelled"]').click()
+    p.wait_for_function("location.hash.includes('group=cancelled')")
+    ok(not [r for r in p.requests if '/api/' in r] and p.locator('#bo-history-board .sb-col.is-open').get_attribute('data-stage') == 'cancelled', 'switching stage: no request, open stage in the address')
+    ok(set(p.locator('#bo-history-board .sb-col.is-open .bo-card .bo-card-stage > .status').all_text_contents()) == {'Cancelled'}, 'the Cancelled stage holds cancelled orders')
+    p.reload(); ready(p); p.wait_for_selector('#bo-history-board')
+    ok(p.locator('#bo-history-board .sb-col.is-open').get_attribute('data-stage') == 'cancelled', 'reload reopens the same stage')
+    p.evaluate("window.__page = document.querySelector('.bo-page')")
+    # History: stage switches add no entries, so Back leaves Previous orders; Forward returns to the same stage.
     p.go_back(); ready(p)
-    ok('group=cancelled' in p.url and p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('Cancelled'), 'Back returns to Previous orders, Cancelled')
-    p.go_back(); ready(p)
-    ok('group=completed' in p.url and p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('Completed'), 'Back restores the previous filter')
-    p.go_forward(); ready(p)
-    ok('group=cancelled' in p.url and p.locator('#bo-toolbar .chip[aria-current]').inner_text().startswith('Cancelled'), 'Forward restores the next filter')
+    ok('scope=history' not in p.url and p.locator('#bo-board').count() == 1, 'Back returns to Current orders')
+    p.go_forward(); ready(p); p.wait_for_selector('#bo-history-board')
+    ok('group=cancelled' in p.url and p.locator('#bo-history-board .sb-col.is-open').get_attribute('data-stage') == 'cancelled', 'Forward restores Previous orders on its stage')
     ok(p.evaluate('window.__page === document.querySelector(".bo-page")'), 'history navigation keeps the page')
 
     # Rapid switching: the last choice wins, earlier responses are discarded.
-    for label in ('All', 'Completed', 'Cancelled'):
-        click_chip(p, label)
+    for label in ('Current orders', 'Previous orders', 'Current orders', 'Previous orders'):
+        click_chip(p, label, '.segment')
     ready(p); p.wait_for_timeout(400)
-    ok('group=cancelled' in p.url and set(p.locator('.bo-card .status').all_inner_texts()) == {'Cancelled'}, 'rapid clicks settle on the last filter')
+    ok('scope=history' in p.url and p.locator('#bo-history-board').count() == 1 and p.locator('#bo-board').count() == 0, 'rapid clicks settle on the last choice')
 
     # Sort, back in Current orders: every current order is on the board, so there are no pages.
     click_chip(p, 'Current orders', '.segment'); ready(p)
@@ -145,7 +162,7 @@ with sync_playwright() as pw:
     for width, theme in ((820, 'light'), (390, 'light'), (390, 'dark'), (820, 'dark')):
         ctx, p = session(browser, width, 900, theme)
         p.goto(BASE + '/#orders?sort=newest'); ready(p); p.evaluate(f"applyTheme('{theme}')")
-        p.locator('.bo-card', has_text='OL3D-QA-1015').locator('[data-order-details]').click(); p.wait_for_selector('#modal[open]'); p.wait_for_timeout(200)
+        open_stage(p, 'in-progress'); p.locator('.bo-card', has_text='OL3D-QA-1015').locator('[data-order-details]').click(); p.wait_for_selector('#modal[open]'); p.wait_for_timeout(200)
         overflow = p.evaluate('document.documentElement.scrollWidth - innerWidth')
         ok(overflow <= 0, f'{width} {theme}: no horizontal overflow ({overflow})')
         top = p.evaluate("(() => { const t = document.querySelector('#topbar'), l = [...t.querySelectorAll('.brand-logo')].find(i => getComputedStyle(i).display !== 'none'), r = l.getBoundingClientRect(); return [Math.round(r.height), r.right <= t.querySelector('.topbar-actions').getBoundingClientRect().left + 1] })()")

@@ -120,6 +120,13 @@ class OrderInput(BaseModel):
     def validate_address(cls,value):return validate_delivery_snapshot(value)
 
 
+class OrderCancellation(BaseModel):
+    # An administrator's cancellation: always with a reason. Products that already shipped or were received
+    # are never cancelled; an order holding any is cancelled only with shipped_acknowledged.
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    reason: str = Field(min_length=3, max_length=500)
+    shipped_acknowledged: bool = False
+
 class JobTransition(BaseModel):
     # Hosts move a job up to shipped; only the buyer completes it, by confirming receipt.
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)

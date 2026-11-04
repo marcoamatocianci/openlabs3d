@@ -53,7 +53,7 @@ def listing_thumbnails(db, listing_ids):
         thumbnails[p.id] = visual.get('thumbnail', '') if visual.get('status') == 'ready' else ''
     return thumbnails
 
-def orders_data(orders, db):
+def orders_data(orders, db, notes=False):
     """Serialize orders with a fixed number of queries (jobs, history, listings), whatever the page size."""
     if not orders: return []
     ids = [o.id for o in orders]
@@ -73,7 +73,7 @@ def orders_data(orders, db):
         events = sorted([e for s in [f'order:{order.id}', *[f'job:{j.id}' for j in order_jobs]] for e in history.get(s, [])], key=lambda e: (e.created_at, e.id))
         result.append({'id':order.id, 'reference':order.reference, 'buyer_id':order.buyer_id, 'status':order.status, 'total_cents':order.total_cents, 'currency':order.currency, 'created_at':order.created_at,
             'contact':order.contact, 'address':order.address, 'items':[item_data(i) for i in order.items],
-            'jobs':[job_data(j, thumbnails.get(j.item.listing_id, '')) for j in order_jobs], 'history':[{'action':e.action,'created_at':e.created_at} for e in events]})
+            'jobs':[job_data(j, thumbnails.get(j.item.listing_id, '')) for j in order_jobs], 'history':[{'action':e.action,'created_at':e.created_at,**({'detail':e.detail} if notes else {})} for e in events]})
     return result
 
 def order_data(order, db): return orders_data([order], db)[0]
@@ -109,6 +109,8 @@ def delete_account(user, actor, db):
     db.execute(update(models.HostApplication).where(models.HostApplication.reviewed_by == user_id).values(reviewed_by=None))
     db.execute(delete(models.HostApplication).where(models.HostApplication.user_id == user_id))
     db.execute(delete(models.LoginSession).where(models.LoginSession.user_id == user_id))
+    db.execute(delete(models.UserIdentity).where(models.UserIdentity.user_id == user_id))
+    db.execute(delete(models.OAuthFlow).where(models.OAuthFlow.user_id == user_id))
     db.delete(user)
     if actor.id != user_id:
         log(db, actor.id, 'user.deleted', f'user:{user_id}')
@@ -119,7 +121,8 @@ def delete_account(user, actor, db):
         fail(409, 'This account is linked to other records and cannot be deleted.')
 
 def verify_deletion_password(body, request, actor):
-    session_limit(request, 'delete-account')
+    session_limit(request, 'delete-account', actor.id)
+    if actor.password_hash.startswith('!'): fail(409, 'Set a password first, then you can confirm with it.')
     try:
         hasher.verify(actor.password_hash, body.password)
     except (VerifyMismatchError, InvalidHashError):
@@ -175,12 +178,14 @@ def hosts(status: str='', auth=Depends(admin), db: Session=Depends(get_db)):
     query = select(models.HostApplication).options(selectinload(models.HostApplication.user)).order_by(models.HostApplication.updated_at.desc())
     if status: query = query.where(models.HostApplication.status == status)
     totals = {(host_id, job_status):count for host_id, job_status, count in db.execute(select(models.PrintingJob.host_id, models.PrintingJob.status, func.count()).where(models.PrintingJob.host_id.is_not(None)).group_by(models.PrintingJob.host_id, models.PrintingJob.status))}
+    from .equipment import printer_data
+    applications=db.scalars(query).all(); fleets={}
+    # Read-only: the applicants' registered printers, so administrators can review them before deciding.
+    for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id.in_({host.user_id for host in applications})).order_by(models.HostPrinter.id)):
+        fleets.setdefault(p.user_id,[]).append(printer_data(p))
     result=[]
-    for host in db.scalars(query).all():
-        # Read-only: the applicant's registered printers, so administrators can review them before deciding.
-        from .equipment import printer_data
-        printers=[printer_data(p) for p in db.scalars(select(models.HostPrinter).where(models.HostPrinter.user_id==host.user_id).order_by(models.HostPrinter.id))]
-        result.append({**host_data(host), 'equipment':printers, 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready','shipped')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
+    for host in applications:
+        result.append({**host_data(host), 'equipment':fleets.get(host.user_id,[]), 'active_jobs':sum(totals.get((host.user_id,s),0) for s in ('accepted','printing','ready','shipped')), 'completed_jobs':totals.get((host.user_id,'completed'),0)})
     return result
 
 @router.post('/admin/hosts/{host_id}/{decision}')
@@ -240,6 +245,18 @@ def persist_order(body,auth,db,commit=True,contact_email=None):
         return order_data(existing,db)
     return order_data(order,db)
 
+# History sorting, always before paging, with the id as a tie-break so pages never overlap. Hosts and buyers can only
+# name one of these: the sort parameter is validated by its Literal type and never reaches the SQL as text.
+SORTS=Literal['newest','oldest','reference']
+def sort_orders(query, sort):
+    if sort=='reference': return query.order_by(None).order_by(models.Order.reference.asc(),models.Order.id.asc())
+    direction=(lambda column: column.asc()) if sort=='oldest' else (lambda column: column.desc())
+    return query.order_by(None).order_by(direction(models.Order.created_at),direction(models.Order.id))
+def sort_jobs(query, sort):
+    if sort=='reference': return query.join(models.Order,models.Order.id==models.PrintingJob.order_id).order_by(models.Order.reference.asc(),models.PrintingJob.id.asc())
+    direction=(lambda column: column.asc()) if sort=='oldest' else (lambda column: column.desc())
+    return query.order_by(direction(models.PrintingJob.updated_at),direction(models.PrintingJob.id))
+
 def order_search(query, q):
     """Orders whose reference or a product title contains q (case-insensitive)."""
     q=(q or '').strip()
@@ -258,21 +275,35 @@ def scoped_page(db, query, column, scopes, scope, group, page, per_page, *where)
     page,pages,offset=page_bounds(total, page, per_page)
     return query.offset(offset).limit(per_page), {'scope':scope, 'group':group or 'all', 'scopes':counts, 'total':total, 'page':page, 'pages':pages, 'per_page':per_page}
 
+def scoped_columns(db, query, column, scopes, scope, per_page, convert, counts):
+    """A board's columns in one response: the first page of every status group of one scope, each with its
+    own total (search and filters included). Later pages come from the same list with group and page."""
+    from .lifecycle import page_bounds
+    columns=[]
+    for key,label,values in scopes[scope]:
+        rows=query.where(column.in_(values))
+        total=db.scalar(select(func.count()).select_from(rows.order_by(None).subquery()))
+        columns.append({'key':key, 'label':label, 'statuses':list(values), 'total':total, 'page':1, 'pages':page_bounds(total,1,per_page)[1], 'items':convert(db.scalars(rows.limit(per_page)).all())})
+    return {'scope':scope, 'group':'all', 'scopes':counts, 'columns':columns, 'total':sum(c['total'] for c in columns), 'per_page':per_page}
+
 @router.get('/orders')
 def my_orders(auth=Depends(require), db: Session=Depends(get_db),
               paginated:bool=False, scope:Literal['active','history']='active', group:str='all', q:str=Query('',max_length=80),
-              sort:Literal['newest','oldest']='newest', page:int=Query(1,ge=1), per_page:int=Query(10,ge=1,le=50)):
+              sort:SORTS='newest', page:int=Query(1,ge=1), per_page:int=Query(10,ge=1,le=50), columns:bool=False):
     """Without paginated: every order (original contract). With it: Current orders (scope=active, the
-    default) or Previous orders (scope=history), one status group, optional search, one page."""
+    default) or Previous orders (scope=history), one status group, optional search, one page.
+    columns=true: the first page of every group of the scope at once (scoped_columns)."""
     if auth[0].role=='admin': fail(403, 'Use marketplace order management')
     owned=models.Order.buyer_id==auth[0].id
     query=select(models.Order).options(selectinload(models.Order.items)).where(owned)
-    direction=lambda column: column.asc() if sort=='oldest' else column.desc()
-    query=query.order_by(direction(models.Order.created_at),direction(models.Order.id))
+    query=sort_orders(query,sort)
     # Preserve the original list contract for existing clients. The buyer UI opts into bounded pages.
     if not paginated:
         return orders_data(db.scalars(query).all(),db)
-    from .lifecycle import ORDER_SCOPES
+    from .lifecycle import ORDER_SCOPES, summary, count_by_status
+    if columns:
+        counts=summary(ORDER_SCOPES, count_by_status(db, models.Order.status, owned))
+        return {**scoped_columns(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, per_page, lambda rows: orders_data(rows,db), counts), 'q':q.strip()}
     query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page, owned)
     return {'items':orders_data(db.scalars(query).all(),db), 'q':q.strip(), **meta}
 
@@ -354,10 +385,11 @@ def host_job_rows(db, jobs, me):
 
 @router.get('/host/jobs')
 def host_jobs(auth=Depends(require), db: Session=Depends(get_db), scope:Literal['active','history']|None=None, group:str='all',
-              q:str=Query('',max_length=80), page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+              q:str=Query('',max_length=80), sort:SORTS='newest', page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50), columns:bool=False):
     """Without scope: every listed job (original contract). scope=active: the operational list (available
     jobs this host may take, and its own jobs not yet completed or cancelled), unpaginated because it is
-    bounded by current work. scope=history: its completed and cancelled jobs, newest first, by page."""
+    bounded by current work. scope=history: its completed and cancelled jobs, newest first, by page, or with
+    columns=true the first page of each history group at once."""
     from .lifecycle import JOB_SCOPES, statuses, summary, page_bounds
     active_host(auth,db)
     me=auth[0].id
@@ -375,14 +407,18 @@ def host_jobs(auth=Depends(require), db: Session=Depends(get_db), scope:Literal[
         return {'items':items, 'scope':scope, 'group':group or 'all', 'scopes':counts, 'total':len(items), 'page':1, 'pages':1, 'per_page':len(items)}
     query=base.where(models.PrintingJob.host_id==me, models.PrintingJob.status.in_(wanted))
     if q.strip(): query=query.where(models.PrintingJob.item.has(models.OrderItem.title.ilike(f'%{q.strip()}%')))
+    if columns:
+        board=scoped_columns(db, sort_jobs(query,sort), models.PrintingJob.status, JOB_SCOPES, scope, per_page, lambda jobs: host_job_rows(db, jobs, me), counts)
+        return {**board, 'q':q.strip()}
     total=db.scalar(select(func.count()).select_from(query.order_by(None).subquery()))
     page,pages,offset=page_bounds(total, page, per_page)
-    jobs=db.scalars(query.order_by(models.PrintingJob.updated_at.desc(),models.PrintingJob.id.desc()).offset(offset).limit(per_page)).all()
+    jobs=db.scalars(sort_jobs(query,sort).offset(offset).limit(per_page)).all()
     return {'items':host_job_rows(db, jobs, me), 'scope':scope, 'group':group or 'all', 'q':q.strip(), 'scopes':counts, 'total':total, 'page':page, 'pages':pages, 'per_page':per_page}
 
 @router.post('/host/jobs/{job_id}/accept')
 def accept_job(job_id: int, auth=Depends(mutate), db: Session=Depends(get_db)):
     active_host(auth,db)
+    if not auth[0].email_verified: fail(403,'Verify your email before accepting jobs')
     job=db.get(models.PrintingJob,job_id)
     if not job: fail(404,'Job not found')
     # Revalidated now, from current equipment and stock. The request holds SQLite's write lock
@@ -445,30 +481,37 @@ def self_assigned_open(db):
 
 @router.get('/admin/orders')
 def all_orders(auth=Depends(admin), db: Session=Depends(get_db), paginated:bool=False, scope:Literal['active','history']='active', group:str='all',
-               q:str=Query('',max_length=80), attention:Literal['own-order','unmatched','unassigned']|None=None, page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+               q:str=Query('',max_length=80), attention:Literal['own-order','unmatched','unassigned']|None=None, sort:SORTS='newest', page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50),
+               columns:bool=False):
     """Without paginated: every order (original contract). With it: Active orders or Order history, one
     status group, optional search by reference or product, one page. attention narrows the list to the
     orders behind an overview warning: a job held by its own buyer, an available job no host can take, or
     any job still waiting for a host (whatever the order's own stage: a partly made order is in progress)."""
-    query=select(models.Order).options(selectinload(models.Order.items)).order_by(models.Order.created_at.desc(),models.Order.id.desc())
+    query=sort_orders(select(models.Order).options(selectinload(models.Order.items)),sort)
     meta=None
     if paginated:
         from .lifecycle import ORDER_SCOPES
         if attention:
             jobs=self_assigned_open(db) if attention=='own-order' else unmatched_job_ids(db) if attention=='unmatched' else select(models.PrintingJob.id).where(models.PrintingJob.status=='available')
             query=query.where(models.Order.id.in_(select(models.PrintingJob.order_id).where(models.PrintingJob.id.in_(jobs))))
+        if columns:
+            from .lifecycle import summary, count_by_status
+            board=scoped_columns(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, per_page, lambda rows: admin_orders_data(db, rows), summary(ORDER_SCOPES, count_by_status(db, models.Order.status)))
+            return {**board, 'q':q.strip(), 'attention':attention or ''}
         query,meta=scoped_page(db, order_search(query, q), models.Order.status, ORDER_SCOPES, scope, group, page, per_page)
     data=admin_orders_data(db, db.scalars(query).all())
     return {'items':data, 'q':q.strip(), 'attention':attention or '', **meta} if meta else data
 
 def admin_orders_data(db, orders):
-    data=orders_data(orders,db)
+    data=orders_data(orders,db,notes=True)   # with each event's note: the cancellation reason
     hosts=approved_hosts(db); conflicts=set(db.scalars(self_assigned(db)))
+    available=[job['id'] for order in data for job in order['jobs'] if job['status']=='available']
+    rows={job.id:job for job in db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.id.in_(available)))} if available else {}
     for order in data:
         for job in order['jobs']:
             job['conflict']='own_order' if job['id'] in conflicts else ''
             # Available jobs: which hosts can take each one, and why the others cannot.
-            if job['status']=='available': job['eligibility']=eligibility(db, db.get(models.PrintingJob, job['id']), hosts)
+            if job['status']=='available': job['eligibility']=eligibility(db, rows[job['id']], hosts)
     return data
 
 @router.get('/admin/jobs/{job_id}/eligibility')
@@ -477,13 +520,40 @@ def job_eligibility(job_id: int, auth=Depends(admin), db: Session=Depends(get_db
     if not job: fail(404,'Job not found')
     return {'job_id':job.id, 'status':job.status, 'conflict':'own_order' if job.id in set(db.scalars(self_assigned(db))) else '', 'hosts':eligibility(db, job, approved_hosts(db))}
 
+# Jobs an administrator's cancellation stops: waiting for a host or with one (accepted, printing reported,
+# ready to ship). Shipped and received products are physical facts and keep their status.
+CANCELLABLE_JOBS = ('available','accepted','printing','ready')
+DELIVERED_JOBS = ('shipped','completed')
+
 @router.post('/admin/orders/{order_id}/cancel')
-def cancel_order(order_id: int, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
-    changed=db.execute(update(models.Order).where(models.Order.id==order_id,models.Order.status.in_(['pending','accepted'])).values(status='cancelled')).rowcount
-    if changed != 1: fail(409,'Only orders not yet in production can be cancelled')
-    db.execute(update(models.PrintingJob).where(models.PrintingJob.order_id==order_id,models.PrintingJob.status.in_(['available','accepted'])).values(status='cancelled',updated_at=datetime.now(timezone.utc)))
-    log(db,auth[0].id,'order.cancelled',f'order:{order_id}'); db.commit()
-    return order_data(db.get(models.Order,order_id),db)
+def cancel_order(order_id: int, body: schemas.OrderCancellation, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
+    """Administrators may cancel any active order, whatever its production stage. Every job not yet shipped
+    is cancelled (its host keeps it in Job history and loses the model file); shipped and received products
+    are kept as they are, and an order with any is cancelled only when the administrator acknowledges them.
+    Idempotent: cancelling a cancelled order changes and records nothing. Completed orders are closed."""
+    order=db.get(models.Order,order_id)
+    if not order: fail(404,'Order not found')
+    if order.status=='cancelled': return admin_orders_data(db,[order])[0]
+    delivered=exists(select(models.PrintingJob.id).where(models.PrintingJob.order_id==order_id,models.PrintingJob.status.in_(DELIVERED_JOBS)))
+    # One conditional update, inside the request's write reservation (database.get_db): a host step or a
+    # receipt confirmed meanwhile is either fully before this check or refused afterwards.
+    conditions=[models.Order.id==order_id,models.Order.status.not_in(['cancelled','completed'])]
+    if not body.shipped_acknowledged: conditions.append(~delivered)
+    changed=db.execute(update(models.Order).where(*conditions).values(status='cancelled')).rowcount
+    if changed!=1:
+        db.refresh(order)
+        if order.status=='completed': fail(409,'This order is completed: every product was received, so there is nothing left to cancel')
+        fail(409,'Products of this order have already shipped or been received. They are not cancelled: review them and confirm the exceptional cancellation')
+    moment=datetime.now(timezone.utc)
+    stopped=list(db.execute(select(models.PrintingJob.id,models.PrintingJob.status).where(models.PrintingJob.order_id==order_id,models.PrintingJob.status.in_(CANCELLABLE_JOBS)).order_by(models.PrintingJob.id)))
+    db.execute(update(models.PrintingJob).where(models.PrintingJob.order_id==order_id,models.PrintingJob.status.in_(CANCELLABLE_JOBS)).values(status='cancelled',updated_at=moment))
+    log(db,auth[0].id,'order.cancelled',f'order:{order_id}',body.reason)
+    # Where each job was, so production already under way stays on record (assignments are kept).
+    for job_id,status in stopped: log(db,auth[0].id,'job.cancelled',f'job:{job_id}',f'Cancelled by an administrator while {CANCELLED_WHILE[status]}')
+    db.commit(); db.refresh(order)
+    return admin_orders_data(db,[order])[0]
+
+CANCELLED_WHILE = {'available':'waiting for a host','accepted':'accepted (printing start not reported)','printing':'printing','ready':'ready to ship'}
 
 @router.post('/admin/jobs/{job_id}/reopen')
 def reopen_job(job_id: int, auth=Depends(admin_mutate), db: Session=Depends(get_db)):
@@ -548,7 +618,7 @@ def change_settings(body: schemas.SettingsInput, auth=Depends(admin_mutate), db:
     return settings(db)
 
 # Activity filters on the user profile, built on activity_log.
-USER_ACTIVITY = {'purchases':('order.created',), 'completions':('order.completed','job.completed'), 'cancellations':('order.cancelled',),
+USER_ACTIVITY = {'purchases':('order.created',), 'completions':('order.completed','job.completed'), 'cancellations':('order.cancelled','job.cancelled'),
                  'custom_requests':('request.submitted','request.updated'), 'printing':('job.accepted','job.printing','job.ready','job.shipped')}
 
 @router.get('/admin/users/{user_id}')
@@ -593,15 +663,24 @@ APPROVAL_DECISIONS = {'hosts':{'host.approve':'approved','host.reject':'rejected
 
 @router.get('/admin/approvals/history')
 def approval_history(auth=Depends(admin), db: Session=Depends(get_db), type:Literal['all','hosts','equipment','listings','printers']='all',
-                     page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50)):
+                     page:int=Query(1,ge=1), per_page:int=Query(20,ge=1,le=50), columns:bool=False):
+    """Past review decisions, newest first: one type (or all) by page, or with columns=true the first page
+    of every type at once (a board's columns)."""
     from .lifecycle import page_bounds
     kind_of={action:kind for kind,actions in APPROVAL_DECISIONS.items() for action in actions}
     by_action=dict(db.execute(select(models.Activity.action,func.count()).where(models.Activity.action.in_(list(kind_of))).group_by(models.Activity.action)).all())
     counts={kind:sum(by_action.get(a,0) for a in actions) for kind,actions in APPROVAL_DECISIONS.items()}
+    decisions=lambda actions, offset: db.scalars(select(models.Activity).where(models.Activity.action.in_(actions)).order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).offset(offset).limit(per_page)).all()
+    if columns:
+        board=[{'key':kind, 'total':counts[kind], 'page':1, 'pages':page_bounds(counts[kind],1,per_page)[1], 'items':approval_items(db, decisions(list(actions), 0), kind_of)} for kind,actions in APPROVAL_DECISIONS.items()]
+        return {'columns':board, 'counts':counts, 'total':sum(counts.values()), 'per_page':per_page}
     wanted=list(kind_of) if type=='all' else list(APPROVAL_DECISIONS[type])
     total=sum(counts.values()) if type=='all' else counts[type]
     page,pages,offset=page_bounds(total, page, per_page)
-    rows=db.scalars(select(models.Activity).where(models.Activity.action.in_(wanted)).order_by(models.Activity.created_at.desc(),models.Activity.id.desc()).offset(offset).limit(per_page)).all()
+    return {'items':approval_items(db, decisions(wanted, offset), kind_of),'type':type,'counts':counts,'total':total,'page':page,'pages':pages,'per_page':per_page}
+
+def approval_items(db, rows, kind_of):
+    """Decisions as listed in Approval history: what was decided, about whom, by whom, and why."""
     ids=lambda kind:{int(a.subject.split(':')[1]) for a in rows if a.subject.startswith(kind+':') and a.subject.split(':')[1].isdigit()}
     listings={p.id:p for p in db.scalars(select(models.Listing).where(models.Listing.id.in_(ids('listing'))))}
     users={u.id:u for u in db.scalars(select(models.User).where(models.User.id.in_(ids('user')|{a.actor_id for a in rows if a.actor_id}|{p.owner_id for p in listings.values()})))}
@@ -619,7 +698,7 @@ def approval_history(auth=Depends(admin), db: Session=Depends(get_db), type:Lite
         return {'id':a.id,'type':kind,'decision':APPROVAL_DECISIONS[kind][a.action],'title':title,'subject':a.subject,
                 'submitter':owner.username if owner else '','reviewer':users[a.actor_id].username if a.actor_id in users else 'System',
                 'reason':a.detail if kind in ('hosts','equipment','listings') else '','created_at':a.created_at,'link':link}
-    return {'items':[item(a) for a in rows],'type':type,'counts':counts,'total':total,'page':page,'pages':pages,'per_page':per_page}
+    return [item(a) for a in rows]
 
 @router.get('/admin/activity')
 def activity(auth=Depends(admin), db: Session=Depends(get_db)):
@@ -629,6 +708,8 @@ def unmatched_job_ids(db):
     """Available jobs no approved host may take at the moment, for example ones only their buyer could make."""
     hosts=approved_hosts(db)
     jobs=db.scalars(select(models.PrintingJob).options(selectinload(models.PrintingJob.item)).where(models.PrintingJob.status=='available')).all()
+    # Held for the loop: job_ineligibility finds each job's order in the session instead of reading it again.
+    orders=db.scalars(select(models.Order).where(models.Order.id.in_({job.order_id for job in jobs}))).all()  # noqa: F841
     return [job.id for job in jobs if all(job_ineligibility(job, uid) for uid in hosts)]
 
 @router.get('/admin/overview')

@@ -19,6 +19,12 @@ class User(Base):
     avatar_mode: Mapped[str] = mapped_column(String(10), default='photo', server_default='photo')
     avatar_style: Mapped[str] = mapped_column(Text, default='', server_default='')
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0')
+    # When a link confirmed the address. NULL for accounts confirmed before this was recorded: the date is not known.
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Existed unverified before verification became mandatory: may still sign in, and is still not verified.
+    legacy_email_access: Mapped[bool] = mapped_column(Boolean, default=False, server_default='0', nullable=False)
+    # An address awaiting confirmation. The sign-in address changes only once it is confirmed.
+    pending_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
     first_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
     last_name: Mapped[str] = mapped_column(String(100), default='', server_default='')
     phone: Mapped[str] = mapped_column(String(40), default='', server_default='')
@@ -185,6 +191,50 @@ class AccountToken(Base):
     purpose: Mapped[str] = mapped_column(String(20))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    # The address an email_change token confirms.
+    new_email: Mapped[str | None] = mapped_column(String(254), nullable=True)
+    # Kept after use, so a reused link can be told from an unknown one.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class UserIdentity(Base):
+    """An external sign-in linked to one internal account. subject is the provider's stable id, not an address."""
+    __tablename__ = 'user_identities'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'))
+    provider: Mapped[str] = mapped_column(String(30))
+    subject: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(254), default='', server_default='')    # shown to the user only
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (UniqueConstraint('provider', 'subject', name='uq_identity_subject'), UniqueConstraint('user_id', 'provider', name='uq_identity_user_provider'))
+
+class OAuthFlow(Base):
+    """One sign-in attempt in progress: state (hashed), nonce and PKCE verifier stay on the server."""
+    __tablename__ = 'oauth_flows'
+    state_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(30))
+    nonce: Mapped[str] = mapped_column(String(100))
+    code_verifier: Mapped[str] = mapped_column(String(128))
+    browser_hash: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=True)    # set when linking
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+class EmailJob(Base):
+    """One message to send (email_service). Holds no link and no body: those are made when it is sent."""
+    __tablename__ = 'email_jobs'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(40))
+    recipient: Mapped[str] = mapped_column(String(254))
+    user_id: Mapped[int | None] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), nullable=True, index=True)
+    context: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    status: Mapped[str] = mapped_column(String(12), default='pending', server_default='pending')  # pending sending sent failed cancelled
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str] = mapped_column(String(200), default='', server_default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (Index('ix_email_jobs_due', 'status', 'next_attempt_at'), Index('ix_email_jobs_recipient', 'recipient', 'kind', 'created_at'))
 
 class UserAddress(Base):
     __tablename__ = 'user_addresses'

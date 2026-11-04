@@ -60,7 +60,8 @@ def test_host_order_and_job_workflow():
     assert received.status_code==200, received.text
     assert received.json()['status']=='completed' and received.json()['jobs'][0]['status']=='completed'
     assert buyer.get('/api/orders').json()[0]['status']=='completed'
-    assert admin.post(f'/api/admin/orders/{order.json()["id"]}/cancel',headers=headers(admin_token)).status_code==409
+    # Completed orders are closed, even for the exceptional cancellation.
+    assert admin.post(f'/api/admin/orders/{order.json()["id"]}/cancel',json={'reason':'Too late','shipped_acknowledged':True},headers=headers(admin_token)).status_code==409
     assert admin.get('/api/admin/overview').json()['orders_completed']>=1
     assert admin.post(f'/api/admin/users/{result.json()["user_id"]}/suspend',headers=headers(admin_token)).status_code==200
     assert host.get('/api/auth/me').status_code==401
@@ -208,7 +209,7 @@ def test_admin_can_delete_admin_account():
     from app.main import rate
     rate.clear()
     with SessionLocal() as db:
-        other = User(email='delete-admin@example.org',display_name='Other admin',password_hash=hasher.hash('another admin password'),role='admin')
+        other = User(email='delete-admin@example.org',display_name='Other admin',password_hash=hasher.hash('another admin password'),role='admin',email_verified=True)
         db.add(other); db.commit(); other_id = other.id
     other_client = TestClient(app)
     other_token = other_client.post('/api/auth/login',json={'email':'delete-admin@example.org','password':'another admin password'}).json()['csrf_token']
@@ -339,7 +340,7 @@ def test_shipping_requires_details_and_only_the_buyer_completes():
     ship_job(host,host_token,second,tracking_url='',note='')
     assert buyer.get('/api/orders').json()[0]['status']=='shipped'
     assert admin.get('/api/admin/overview').json()['orders_shipped']>=1
-    assert admin.post(f'/api/admin/orders/{order_id}/cancel',headers=headers(admin_token)).status_code==409
+    assert admin.post(f'/api/admin/orders/{order_id}/cancel',json={'reason':'Buyer asked'},headers=headers(admin_token)).status_code==409, 'shipped products need the exceptional cancellation'
     # Only the buyer of this order confirms receipt, one job at a time.
     assert stranger.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(stranger_token)).status_code==404
     assert host.post(f'/api/orders/{order_id}/jobs/{first}/received',headers=headers(host_token)).status_code==404
@@ -475,7 +476,7 @@ def test_active_work_and_history_follow_the_authoritative_status():
     withdrawn=buyer.post('/api/orders',json={'idempotency_key':'history_scope_order_2','contact':CONTACT,'address':ADDRESS,'items':lines[2:]},headers=headers(buyer_token)).json()
     dropped=withdrawn['jobs'][0]['id']
     assert host.post(f'/api/host/jobs/{dropped}/accept',headers=headers(host_token)).status_code==200
-    assert admin.post(f'/api/admin/orders/{withdrawn["id"]}/cancel',headers=headers(admin_token)).status_code==200
+    assert admin.post(f'/api/admin/orders/{withdrawn["id"]}/cancel',json={'reason':'Buyer asked'},headers=headers(admin_token)).status_code==200
     # Reporting the print start is optional: one job goes through printing, the other straight from
     # accepted to ready, and only the first gets a printing status or event.
     for job,steps in ((done,('printing','ready')),(shipped,('ready',))):
@@ -569,3 +570,148 @@ def test_active_work_and_history_follow_the_authoritative_status():
     assert everything['total']==sum(everything['counts'].values()) and len(everything['items'])==2 and everything['pages']>=2
     assert buyer.get('/api/admin/approvals/history').status_code==403
     assert admin.get('/api/admin/approvals/history?type=orders').status_code==422
+    # Boards: columns=true returns the first page of every stage of a scope at once, each with its own total
+    # (search and filters included); later pages come from the same list by group and page.
+    board=jobs('scope=history&columns=true&per_page=1')
+    assert [c['key'] for c in board['columns']]==['completed','cancelled'] and board['scopes']['history']['total']==3
+    completed,cancelled=board['columns']
+    assert (completed['total'],completed['page'],completed['pages'],len(completed['items']))==(2,1,2,1) and completed['statuses']==['completed']
+    assert [j['id'] for j in cancelled['items']]==[dropped] and (cancelled['total'],cancelled['pages'])==(1,1)
+    # Load more: the next page of one stage, by group and page, completes it without repeating a job.
+    following=jobs('scope=history&group=completed&per_page=1&page=2')['items']
+    assert {completed['items'][0]['id'],following[0]['id']}=={done,shipped}
+    assert [c['total'] for c in jobs('scope=history&columns=true&q=nothing')['columns']]==[0,0]
+    mine=buyer.get('/api/orders?paginated=true&scope=history&columns=true').json()
+    assert {c['key']:[o['id'] for o in c['items']] for c in mine['columns']}=={'completed':[order['id']],'cancelled':[withdrawn['id']]}
+    assert mine['scopes']['active']['total']==1 and mine['total']==2
+    flagged=admin_orders('scope=active&columns=true&attention=unassigned')
+    assert [c['key'] for c in flagged['columns']]==['pending','in-progress','shipping'] and flagged['attention']=='unassigned'
+    assert mixed['id'] in [o['id'] for o in flagged['columns'][1]['items']] and order['id'] not in [o['id'] for c in flagged['columns'] for o in c['items']]
+    assert 'eligibility' in next(j for o in flagged['columns'][1]['items'] if o['id']==mixed['id'] for j in o['jobs'] if j['id']==waiting), 'admin cards carry the eligibility data'
+    searched=admin_orders('scope=history&columns=true&q='+order['reference'])
+    assert [(c['key'],c['total']) for c in searched['columns']]==[('completed',1),('cancelled',0)]
+    decisions=admin.get('/api/admin/approvals/history?columns=true&per_page=1').json()
+    assert [c['key'] for c in decisions['columns']]==['hosts','equipment','listings','printers'] and decisions['total']==sum(decisions['counts'].values())
+    listings_column=decisions['columns'][2]
+    assert listings_column['total']==decisions['counts']['listings']>=4 and len(listings_column['items'])==1 and listings_column['pages']==listings_column['total']
+    assert all(i['type']=='listings' for i in listings_column['items'])
+
+
+def test_admin_cancels_orders_at_any_production_stage():
+    """Hosts keep the short workflow (accepted jobs are in production and may go straight to ready); an
+    administrator may cancel an order whatever the host reported, with a reason. Shipped and received
+    products are never cancelled, history and assignments stay, and model access ends."""
+    from app.models import Activity, Order, PrintingJob
+    buyer, host, stranger = TestClient(app), TestClient(app), TestClient(app)
+    buyer_token=register(buyer,'admin-cancel-buyer@example.org',host=True)
+    host_token=register(host,'admin-cancel-host@example.org')
+    stranger_token=register(stranger,'admin-cancel-stranger@example.org')
+    admin,admin_token=admin_client()
+    host_app=structured_application(host,host_token).json()['id']
+    assert admin.post(f'/api/admin/hosts/{host_app}/approve',json={},headers=headers(admin_token)).status_code==200
+    stock(host,host_token)
+    host_id=host.get('/api/auth/me').json()['user']['id']
+    lines=[]
+    for title in ('Cancel rack A','Cancel rack B'):
+        listing=buyer.post('/api/listings',json={'title':title,'description':'Rack','category':'Tube racks','price_cents':1200,'material':'PETG','dimensions':'20 mm','compatibility':'Tubes'},headers=headers(buyer_token)).json()
+        upload_test_cad(buyer,listing['id'],buyer_token)
+        buyer.post(f'/api/listings/{listing["id"]}/submit',headers=headers(buyer_token))
+        assert admin.post(f'/api/admin/listings/{listing["id"]}/approve',headers=headers(admin_token)).status_code==200
+        lines.append({'listing_id':listing['id'],'quantity':1,'color':'black','expected_price_cents':1200})
+    def place(key,count=1):
+        response=buyer.post('/api/orders',json={'idempotency_key':f'admin_cancel_{key}','contact':CONTACT,'address':ADDRESS,'items':lines[:count]},headers=headers(buyer_token))
+        assert response.status_code==201, response.text
+        return response.json()
+    def step(job,status): return host.post(f'/api/host/jobs/{job}/status',json={'status':status},headers=headers(host_token)).status_code
+    def accept(job): assert host.post(f'/api/host/jobs/{job}/accept',headers=headers(host_token)).status_code==200
+    def cancel(order,client=admin,token=admin_token,**body): return client.post(f'/api/admin/orders/{order}/cancel',json={'reason':'Buyer withdrew the request',**body},headers=headers(token))
+    def events(subject):
+        with SessionLocal() as db: return [(a.action,a.detail) for a in db.scalars(select(Activity).where(Activity.subject==subject).order_by(Activity.id))]
+    active=lambda:host.get('/api/host/jobs?scope=active').json()
+
+    # The host workflow is unchanged: an accepted job is in production, and may go straight to ready.
+    quick=place('quick'); quick_job=quick['jobs'][0]['id']
+    accept(quick_job)
+    production=next(g for g in active()['scopes']['active']['groups'] if g['key']=='in-production')
+    assert production['count']>=1 and next(j for j in active()['items'] if j['id']==quick_job)['status']=='accepted'
+    assert step(quick_job,'ready')==200 and 'job.printing' not in [a for a,_ in events(f'job:{quick_job}')]
+
+    accepted,printing,ready=place('accepted'),place('printing'),place('ready')
+    accepted_job,printing_job,ready_job=(o['jobs'][0]['id'] for o in (accepted,printing,ready))
+    for job in (accepted_job,printing_job,ready_job): accept(job)
+    assert step(printing_job,'printing')==200 and step(ready_job,'ready')==200
+    assert all(host.get(f'/api/jobs/{job}/cad').status_code==200 for job in (accepted_job,printing_job,ready_job))
+
+    # Only administrators, always with a reason; buyers and hosts keep their own (narrower) rules.
+    for client,token in ((buyer,buyer_token),(host,host_token),(stranger,stranger_token)):
+        assert cancel(accepted['id'],client,token).status_code==403
+    assert buyer.delete(f'/api/orders/{accepted["id"]}',headers=headers(buyer_token)).status_code==409, 'buyers cannot withdraw an accepted order'
+    assert admin.post(f'/api/admin/orders/{accepted["id"]}/cancel',headers=headers(admin_token)).status_code==422
+    assert cancel(accepted['id'],reason='  ').status_code==422
+    assert cancel(999999).status_code==404
+
+    # Accepted (printing start not reported), printing and ready to ship: all cancellable.
+    for order,job,was in ((accepted,accepted_job,'accepted (printing start not reported)'),(printing,printing_job,'printing'),(ready,ready_job,'ready to ship')):
+        response=cancel(order['id'])
+        assert response.status_code==200, response.text
+        data=response.json()
+        assert data['status']=='cancelled' and [j['status'] for j in data['jobs']]==['cancelled']
+        assert data['jobs'][0]['host_id']==host_id, 'the assignment stays on record'
+        assert ('order.cancelled','Buyer withdrew the request') in events(f'order:{order["id"]}')
+        assert events(f'job:{job}')[-1]==('job.cancelled',f'Cancelled by an administrator while {was}')
+        assert host.get(f'/api/jobs/{job}/cad').status_code==403, 'model access ends with the assignment'
+        assert admin.get(f'/api/jobs/{job}/cad').status_code==200, 'the order keeps its model reference'
+        assert step(job,'ready')==409 and step(job,'printing')==409
+    assert [a for a,_ in events(f'job:{printing_job}')]==['job.accepted','job.printing','job.cancelled'], 'production history is kept'
+
+    # Idempotent: a repeat changes and records nothing.
+    again=cancel(accepted['id'],reason='Clicked twice')
+    assert again.status_code==200 and again.json()['status']=='cancelled'
+    assert [a for a,_ in events(f'order:{accepted["id"]}')].count('order.cancelled')==1
+
+    # Cancelled work leaves every active view and stays in history, with its records intact.
+    cancelled={accepted_job,printing_job,ready_job}
+    assert not cancelled&{j['id'] for j in active()['items']}
+    assert cancelled<={j['id'] for j in host.get('/api/host/jobs?scope=history&group=cancelled').json()['items']}
+    admin_list=lambda q:{o['id'] for o in admin.get('/api/admin/orders?paginated=true&'+q).json()['items']}
+    ids={accepted['id'],printing['id'],ready['id']}
+    assert not ids&admin_list('scope=active') and ids<=admin_list('scope=history&group=cancelled')
+    assert ids<={o['id'] for o in buyer.get('/api/orders?paginated=true&scope=history&group=cancelled').json()['items']}
+    detail=next(o for o in admin.get('/api/admin/orders?paginated=true&scope=history&group=cancelled').json()['items'] if o['id']==printing['id'])
+    assert {'action':'order.cancelled','detail':'Buyer withdrew the request'}.items()<=next(e for e in detail['history'] if e['action']=='order.cancelled').items()
+    mine=next(o for o in buyer.get('/api/orders').json() if o['id']==printing['id'])
+    assert len(mine['items'])==1 and all('detail' not in e for e in mine['history']), "buyers do not see administrators' notes"
+
+    # Partly shipped: refused until the administrator acknowledges the shipped product; then only the
+    # unshipped job is cancelled and the shipped one stays shipped, with its tracking, for the buyer.
+    partial=place('partial',count=2); kept,stopped=[j['id'] for j in partial['jobs']]
+    for job in (kept,stopped): accept(job); assert step(job,'ready')==200
+    ship_job(host,host_token,kept)
+    refused=cancel(partial['id'])
+    assert refused.status_code==409 and 'already shipped' in refused.json()['detail']
+    with SessionLocal() as db:
+        assert db.get(Order,partial['id']).status=='ready' and {db.get(PrintingJob,j).status for j in (kept,stopped)}=={'shipped','ready'}
+    done=cancel(partial['id'],shipped_acknowledged=True).json()
+    assert done['status']=='cancelled' and {j['id']:j['status'] for j in done['jobs']}=={kept:'shipped',stopped:'cancelled'}
+    assert next(j for j in done['jobs'] if j['id']==kept)['shipment']['tracking_number']=='JD0146000032'
+    assert 'job.cancelled' not in [a for a,_ in events(f'job:{kept}')]
+    assert buyer.post(f'/api/orders/{partial["id"]}/jobs/{kept}/received',headers=headers(buyer_token)).status_code==200
+    with SessionLocal() as db:
+        assert db.get(Order,partial['id']).status=='cancelled' and db.get(PrintingJob,kept).status=='completed'
+
+    # Concurrent cancellation and host steps serialize: whichever lands first, the other is refused
+    # or applies on top, and the order and its job always agree.
+    def race(order,job,host_body):
+        def run(which):
+            if which=='admin': return cancel(order['id']).status_code
+            return host.post(f'/api/host/jobs/{job}/status',json=host_body,headers=headers(host_token)).status_code
+        with ThreadPoolExecutor(max_workers=2) as pool: codes=dict(zip(('admin','host'),pool.map(run,('admin','host'))))
+        with SessionLocal() as db: return codes,db.get(Order,order['id']).status,db.get(PrintingJob,job).status
+    for n in range(3):
+        o=place(f'race_ready_{n}'); job=o['jobs'][0]['id']; accept(job)
+        codes,order_status,job_status=race(o,job,{'status':'ready'})
+        assert codes['admin'] in (200,503) and codes['host'] in (200,409,503), codes
+        if codes['admin']==200: assert (order_status,job_status)==('cancelled','cancelled'), codes
+        o=place(f'race_ship_{n}'); job=o['jobs'][0]['id']; accept(job); assert step(job,'ready')==200
+        codes,order_status,job_status=race(o,job,{'status':'shipped','carrier':'DHL','tracking_number':f'R{n}'})
+        assert (codes['admin'],codes['host'],order_status,job_status) in ((200,409,'cancelled','cancelled'),(409,200,'shipped','shipped')) or 503 in codes.values(), (codes,order_status,job_status)

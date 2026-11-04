@@ -85,7 +85,7 @@ for key, lines in [
 jobs = {key: [j['id'] for j in o['jobs']] for key, o in orders.items()}
 advance(jobs['completed'][0], 'shipped')
 buyer.post(f'/api/orders/{orders["completed"]["id"]}/jobs/{jobs["completed"][0]}/received')
-admin.post(f'/api/admin/orders/{orders["cancelled"]["id"]}/cancel')
+admin.post(f'/api/admin/orders/{orders["cancelled"]["id"]}/cancel', {'reason': 'The buyer asked to withdraw the order.'})
 for job in jobs['pair']: advance(job, 'accepted')
 advance(jobs['mixed'][0], 'shipped'); advance(jobs['mixed'][1], 'printing')
 advance(jobs['shipped'][0], 'shipped'); advance(jobs['ready'][0], 'ready', printing=False)

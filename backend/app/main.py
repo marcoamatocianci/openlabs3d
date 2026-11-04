@@ -14,19 +14,24 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, Depends, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import FileResponse, JSONResponse
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import select, func, or_
+from sqlalchemy import delete, select, func, or_
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm.exc import StaleDataError
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError, InvalidHashError
-from . import config, models, schemas
+from . import config, email_service, models, schemas
 from .avatars import picture_data
 from .database import get_db
 
 app = FastAPI(title='OpenLabs3D API', docs_url='/api/docs', openapi_url='/api/openapi.json', redoc_url=None)
 hasher = PasswordHasher()
+# Checked when there is no account to check, so a request takes as long whether or not the address is registered.
+NO_ACCOUNT_HASH = hasher.hash(secrets.token_urlsafe(32))
+# Argon2 cannot match this, so no password opens the account until a new one is set from its inbox.
+UNUSABLE_PASSWORD = '!unusable'
+USERNAME_TAKEN = 'This username is already in use. If it is yours and your email is not confirmed yet, open the link we sent you, or sign in to ask for a new one.'
 rate = defaultdict(deque)
 rate_lock = threading.Lock()
 login_lock = threading.Lock()
@@ -58,7 +63,7 @@ def current(request: Request, db: Session = Depends(get_db)):
     session = db.get(models.LoginSession, digest(token))
     if not session or session.expires_at.replace(tzinfo=timezone.utc) <= datetime.now(timezone.utc): return None
     user = db.get(models.User, session.user_id)
-    return (user, session) if user and user.active else None
+    return (user, session) if user and user.active and may_sign_in(user) else None
 def require(auth = Depends(current)):
     if not auth: fail(401, 'Please sign in')
     return auth
@@ -73,13 +78,16 @@ def admin_mutate(auth = Depends(mutate)):
     if auth[0].role != 'admin': fail(403, 'Administrator access required')
     return auth
 
-def new_session(user, response, db):
+def new_session(user, response, db, request=None):
+    # Always a new token: a session id planted before signing in is worthless afterwards (session fixation).
+    previous = request.cookies.get('ol3d_session') if request else None
+    if previous: db.execute(delete(models.LoginSession).where(models.LoginSession.token_hash == digest(previous)))
     token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
     db.add(models.LoginSession(token_hash=digest(token), user_id=user.id, csrf=csrf, expires_at=datetime.now(timezone.utc)+timedelta(days=14)))
     db.commit()
     response.set_cookie('ol3d_session', token, httponly=True, secure=config.SECURE_COOKIE, samesite='lax', max_age=14*86400, path='/')
     return {'user': user_data(user), 'csrf_token': csrf}
-def user_data(user): return {**{key:getattr(user,key) for key in ('id','email','display_name','role','username','theme','email_verified','first_name','last_name','phone','country','city','region','postal_code','street','additional')}, 'profile_picture':picture_data(user.profile_picture)}
+def user_data(user): return {**{key:getattr(user,key) for key in ('id','email','display_name','role','username','theme','email_verified','pending_email','first_name','last_name','phone','country','city','region','postal_code','street','additional')}, 'profile_picture':picture_data(user.profile_picture)}
 def color_images(p):
     return {c:f'/assets/products/{p.collection_key}/{c}.png' for c in ('aqua-blue','signal-red','cream')} if p.collection_key else {}
 
@@ -110,10 +118,20 @@ def complete(p, db):
     if missing: fail(422, 'Complete these fields before submission: ' + ', '.join(missing))
     if not db.scalar(select(models.Category.id).where(models.Category.name == p.category, models.Category.active.is_(True))): fail(422, 'Choose an active category before submission')
 
-def session_limit(request, action):
+def may_sign_in(user): return user.email_verified or user.legacy_email_access
+def password_matches(stored, password):
+    try: return hasher.verify(stored, password)
+    except (VerifyMismatchError, InvalidHashError): return False
+
+# Per address, for 15 minutes. A lab or campus shares one address, so these are generous: the tight limits sit on what
+# is being attacked, which is one account (5 failed sign-ins) or one mailbox (email_service cooldown and hourly limit).
+IP_LIMITS = {'register':30, 'verify':60, 'resend-verification':30, 'forgot-password':30, 'reset-password':30}
+def session_limit(request, action, account_id=None):
     same_origin(request)
+    # Signed in: limited per account, so colleagues behind one address never share a limit.
+    if account_id is not None: return throttle((action, 'account', account_id), 10, 900)
     # Caddy overwrites X-Real-IP with the peer address; the backend is not public.
-    throttle((action, request.headers.get('x-real-ip', request.client.host if request.client else 'unknown')), 10, 900)
+    throttle((action, request.headers.get('x-real-ip', request.client.host if request.client else 'unknown')), IP_LIMITS.get(action, 10), 900)
 
 from fastapi.exceptions import RequestValidationError
 @app.exception_handler(RequestValidationError)
@@ -128,17 +146,47 @@ def database_busy(request, exc): return JSONResponse(status_code=503, content={'
 def health(db: Session = Depends(get_db)):
     db.execute(select(1)); return {'status':'ok'}
 @app.post('/api/auth/register', status_code=201)
-def register(body: schemas.Register, request: Request, response: Response, db: Session = Depends(get_db)):
+def register(body: schemas.Register, request: Request, db: Session = Depends(get_db)):
+    """No session is created: the account opens once its inbox is confirmed. A registered address gets the same
+    answer in the same time as a new one, and the mail tells its owner what happened."""
     session_limit(request, 'register')
-    user = models.User(email=str(body.email).lower(), username=body.username, display_name=body.username, password_hash=hasher.hash(body.password), role='buyer')
-    db.add(user)
-    try: db.commit()
-    except IntegrityError: db.rollback(); fail(409, 'Email or username is already in use')
-    db.add(models.Activity(actor_id=user.id, action='user.registered', subject=f'user:{user.id}'))
-    result = new_session(user, response, db)
-    from .accounts import issue_token
-    result['verification_delivery'] = issue_token(db, user, 'verify')
-    return result
+    email = str(body.email).lower()
+    # Checked first and answered the same whoever the address belongs to: otherwise a taken username would show
+    # whether an address is registered. Usernames are public; addresses are not.
+    if db.scalar(select(models.User.id).where(models.User.username == body.username)) is not None: fail(409, USERNAME_TAKEN)
+    password_hash = hasher.hash(body.password)
+    existing = db.scalar(select(models.User).where(models.User.email == email))
+    same_password = password_matches(existing.password_hash if existing else NO_ACCOUNT_HASH, body.password)
+    if existing is None:
+        user = models.User(email=email, username=body.username, display_name=body.username, password_hash=password_hash, role='buyer')
+        db.add(user)
+        try: db.flush()
+        except IntegrityError:
+            db.rollback()
+            existing = db.scalar(select(models.User).where(models.User.email == email))
+            if existing is None: fail(409, USERNAME_TAKEN)
+        else:
+            db.add(models.Activity(actor_id=user.id, action='user.registered', subject=f'user:{user.id}'))
+            email_service.enqueue(db, 'verify_email', email, user.id)
+    if existing is not None and existing.active:
+        if may_sign_in(existing): email_service.enqueue_limited(db, 'account_exists', email, existing.id)
+        # Not active yet: the name chosen now replaces the earlier choice. It is free, as checked above.
+        elif same_password:
+            existing.username = existing.display_name = body.username
+            email_service.enqueue_limited(db, 'verify_email', email, existing.id)
+        else:
+            existing.username = existing.display_name = body.username
+            # A second registration with another password. Either one could be someone else who registered this
+            # address first, hoping its owner confirms the account and leaves their password working. Neither
+            # password survives: whoever holds the inbox sets a new one.
+            existing.password_hash = UNUSABLE_PASSWORD
+            db.execute(delete(models.AccountToken).where(models.AccountToken.user_id == existing.id, models.AccountToken.purpose == 'verify'))
+            email_service.cancel_pending(db, existing.id, ('verify_email',))
+            email_service.enqueue_limited(db, 'finish_registration', email, existing.id)
+    db.commit()
+    email_service.wake()
+    return {'verification_required':True, 'email':email, 'resend_after':config.EMAIL_RESEND_COOLDOWN_SECONDS,
+            'message':"We've sent a verification link to your email address. Please verify your email to activate your OpenLabs3D account.", **email_service.capture_info()}
 @app.post('/api/auth/login')
 def login(body: schemas.Login, request: Request, response: Response, db: Session = Depends(get_db)):
     same_origin(request)
@@ -157,7 +205,7 @@ def login(body: schemas.Login, request: Request, response: Response, db: Session
                     if not rate[key] or rate[key][-1] <= now - window:
                         del rate[key]
             wait = 0
-            for key, limit in ((account_key, 5), (ip_key, 10)):
+            for key, limit in ((account_key, 5), (ip_key, 50)):
                 q = rate.get(key)
                 if not q: continue
                 while q and q[0] <= now - window: q.popleft()
@@ -166,10 +214,7 @@ def login(body: schemas.Login, request: Request, response: Response, db: Session
             if wait:
                 raise HTTPException(status_code=429, detail='Too many failed sign-in attempts.', headers={'Retry-After': str(wait)})
         user = db.scalar(select(models.User).where(models.User.email == email))
-        valid = False
-        if user and user.active:
-            try: valid = hasher.verify(user.password_hash, body.password)
-            except (VerifyMismatchError, InvalidHashError): pass
+        valid = password_matches(user.password_hash if user and user.active else NO_ACCOUNT_HASH, body.password) and bool(user and user.active)
         if not valid:
             with rate_lock:
                 now = login_clock()
@@ -178,8 +223,11 @@ def login(body: schemas.Login, request: Request, response: Response, db: Session
             fail(401, 'Incorrect email or password')
         with rate_lock:
             rate.pop(account_key, None)
+        # Only reached with the right password, so it says nothing about whether an address is registered.
+        if not may_sign_in(user):
+            fail(403, {'code':'email_unverified', 'message':'Please verify your email address before signing in. We can send you a new link.', **email_service.capture_info()})
         if hasher.check_needs_rehash(user.password_hash): user.password_hash = hasher.hash(body.password); db.commit()
-        return new_session(user, response, db)
+        return new_session(user, response, db, request)
 @app.get('/api/auth/me')
 def me(auth = Depends(require)): return {'user':user_data(auth[0]), 'csrf_token':auth[1].csrf}
 @app.post('/api/auth/logout')
@@ -350,6 +398,11 @@ from .operations import router as operations_router
 app.include_router(operations_router)
 
 @app.on_event('startup')
+def start_email_delivery(): email_service.start_worker()
+@app.on_event('shutdown')
+def stop_email_delivery(): email_service.stop_worker()
+
+@app.on_event('startup')
 def seed_official_collection():
     import os
     if os.getenv('SEED_OFFICIAL_COLLECTION') != 'true': return
@@ -399,3 +452,5 @@ from .cad import router as cad_router
 app.include_router(cad_router)
 from .custom_requests import router as custom_requests_router
 app.include_router(custom_requests_router)
+from .identity import router as identity_router
+app.include_router(identity_router)

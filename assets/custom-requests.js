@@ -58,12 +58,12 @@ async function renderCustomRequests(route) {
   try {
     const q = hashQuery(), view = {scope:q.scope === 'history' ? 'history' : 'active', group:q.group || 'all'};
     let data;
-    try { [data] = await Promise.all([api('/custom-requests?' + new URLSearchParams(mine ? view : {scope:'active'})), mine ? null : crLoadMaterials()]); }
-    catch (e) { if (mine && e.status === 422 && view.group !== 'all') { location.replace('#' + scopeHref('my-requests', {scope:view.scope}, {})); return; } throw e; }
+    // A scope's requests come at once (few per customer); the status group only picks the open stage.
+    [data] = await Promise.all([api('/custom-requests?' + new URLSearchParams({scope:mine ? view.scope : 'active'})), mine ? null : crLoadMaterials()]);
     if (stale()) return;
     // The tab counts the requests still in progress.
-    $('#app').innerHTML = crShell(route, mine ? crList(data) : crForm(), data.scopes.active.total);
-    if (mine) crBindList(); else crBindForm();
+    $('#app').innerHTML = crShell(route, mine ? crList(data, view) : crForm(), data.scopes.active.total);
+    if (mine) crBindList(view); else crBindForm();
   } catch (e) {
     if (!stale()) $('#app').innerHTML = crShell(route, `<div class="banner danger" role="alert"><span>${esc(e.message)}</span><button type="button" class="btn-ghost btn-sm" onclick="render()">Try again</button></div>`);
   }
@@ -162,43 +162,95 @@ function crDetails(r, staff = false) {
     + reviewSection('Quantity & materials', `<dl class="detail-grid">${item('Quantity', `${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}`)}${item('Preferred material', r.material || 'No preference')}${item('Lab conditions', crConditionLabels(r.conditions).join(', '))}</dl><dl class="detail-grid wide">${item('Other requirements', r.requirements)}</dl>`)
     + reviewSection(`Reference files (${r.files.length})`, files);
 }
-function crCard(r, open) {
-  const files = r.files.length ? `${icon('clip')}${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}` : `${icon('clip')}No files`;
-  return `<article class="section-card cr-card ${open ? 'is-new' : ''}" id="request-${r.id}" data-status="${esc(r.status)}" aria-labelledby="cr-title-${r.id}"><header class="cr-card-head"><div class="cr-card-title"><p class="cr-meta"><span class="mono">${esc(r.reference)}</span><span>Submitted <time datetime="${esc(r.created_at)}">${esc(crDate(r.created_at))}</time></span></p><h2 id="cr-title-${r.id}">${esc(r.title)}</h2></div>${crStatus(r.status, CR_CUSTOMER_LABELS[r.status])}</header>
-    <p class="cr-excerpt">${esc(r.application.length > 180 ? r.application.slice(0, 180) + '…' : r.application)}</p>
-    <ul class="cr-facts"><li>${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}</li><li>${esc(r.material || 'Material open')}</li><li class="cr-facts-files">${files}</li></ul>
-    <p class="cr-status-note cr-tone-${(CR_STATUS[r.status] || [])[1] || 'neutral'}">${esc(CR_STATUS[r.status]?.[2] || '')}</p>
-    <details class="bo-details" ${open ? 'open' : ''}><summary aria-label="View details for ${esc(r.reference)}"><span class="bo-open-label">View details</span><span class="bo-close-label">Hide details</span>${icon('chevron')}</summary><div class="bo-detail-body cr-detail">${crDetails(r)}</div></details></article>`;
+/* Request cards on the stage boards (customers and administrators): reference and date above the title,
+   what is asked (quantity, material, files), the status note, and Details for everything submitted. */
+const CR_STAGE_UI = {submitted:{icon:'send', tone:'active', hint:'Waiting for an administrator.'}, under_review:{icon:'search', tone:'review', hint:'Feasibility is being assessed.'},
+  quoted:{icon:'check', tone:'completed', hint:'Quoted: production can follow.'}, closed:{icon:'ban', tone:'neutral', hint:'Closed requests. Reopening one brings it back.'}};
+const CR_NOTE_TONE = {info:'info', warning:'warning', success:'success'};
+const crStages = (data, scope, labels = {}) => data.scopes[scope].groups.map(g => ({...g, label:labels[g.key] || g.label, ...CR_STAGE_UI[g.key]}));
+function crThumb(r) {
+  const image = r.files.find(f => f.kind === 'image');
+  return image ? `<span class="jc-thumb row-thumb"><img src="${esc(image.url)}" alt="" loading="lazy"></span>` : `<span class="jc-thumb jc-icon" aria-hidden="true">${r.files.length ? crKindIcon(r.files[0].kind) : icon('doc')}</span>`;
 }
-function crList(data) {
+// A collapsed stage's preview: the first reference image, or the kind of file attached.
+function crPeek(r) {
+  const image = r.files.find(f => f.kind === 'image');
+  return `<span class="line-thumb sb-peek-thumb">${image ? `<img src="${esc(image.url)}" alt="" loading="lazy">` : r.files.length ? crKindIcon(r.files[0].kind) : icon('doc')}</span>`;
+}
+function crCard(r, {level = 3, staff = false, created = 0} = {}) {
+  const facts = [`${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}`, r.material || 'Material open', r.files.length ? `${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}` : 'No files'].map(esc).join('<span aria-hidden="true"> · </span>');
+  const next = staff && CR_NEXT[r.status];
+  return boardCard({level, thumb:crThumb(r), kicker:`<span class="mono">${esc(r.reference)}</span> · ${esc(crDate(r.created_at))}`, title:r.title,
+    lines:[staff ? `${esc(userName(r.user))} · ${esc(roleLabel(r.user.role))}` : '', facts],
+    side:[crStatus(r.status, staff ? '' : CR_CUSTOMER_LABELS[r.status]), `<span class="jc-since">Updated ${esc(timeAgo(r.updated_at || r.created_at))}</span>`],
+    note:staff ? '' : esc(CR_STATUS[r.status]?.[2] || ''), noteTone:CR_NOTE_TONE[(CR_STATUS[r.status] || [])[1]] || '',
+    links:`<button type="button" class="wf-link" data-cr-details="${r.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(r.reference)}</span></button>`,
+    primary:next ? `<button type="button" class="btn btn-sm jc-primary" data-cr-next="${r.id}" aria-haspopup="dialog">${esc(next[1])}</button>` : '',
+    search:[r.reference, r.title, r.material, staff ? [r.user.username, r.user.email].join(' ') : ''].join(' '), className:r.id === created ? 'is-new' : '',
+    attrs:`id="request-${r.id}" data-cr-card="${r.id}" data-status="${esc(r.status)}"`});
+}
+// Customers: the full request, read-only, in the site dialog.
+let crMine = {};
+function crCustomerDetails(id) {
+  const r = crMine[id]; if (!r) return;
+  openReview(r.title, `Custom request · ${r.reference}`, reviewSection('Status', `<p>${crStatus(r.status, CR_CUSTOMER_LABELS[r.status])}</p><p class="muted">${esc(CR_STATUS[r.status]?.[2] || '')}</p><dl class="detail-grid">${reviewItem('Submitted', esc(safeDate(r.created_at)))}${reviewItem('Last updated', esc(safeDate(r.updated_at || r.created_at)))}</dl>`) + crDetails(r), '');
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-cr-details]'); if (!b) return; if (account?.role === 'admin') crReview(+b.dataset.crDetails); else crCustomerDetails(+b.dataset.crDetails); });
+const CR_STAGE_KEY = scope => 'openlabs-requests-stage-' + scope;
+const crSection = scope => ({one:'request', sorts:sectionSorts({recent:r => sectionWhen(r.created_at), stage:scope === 'history' ? null : r => sectionWhen(r.updated_at || r.created_at), reference:r => r.reference, referenceLabel:'Reference'})});
+function crList(data, view) {
   const created = Number(hashQuery().created), items = data.items;
+  crMine = Object.fromEntries(items.map(r => [r.id, r]));
   if (!data.scopes.active.total && !data.scopes.history.total) return `<div class="section-card">${emptyState('No custom requests yet', 'Describe a laboratory problem or a tool you need. Your submitted requests and their review status appear here.', '<a class="btn btn-sm" href="#custom">Start a request</a>')}</div>`;
   const nav = scopeNav({label:'My requests', base:'my-requests', data, names:CR_SCOPE_NAMES});
-  const label = (data.scopes[data.scope].groups.find(g => g.key === data.group) || {}).label;
-  const empty = data.scope === 'active' && !data.scopes.active.total ? emptyState("You're all caught up", 'No requests in review at the moment. Closed requests are in Request history.', '<a class="btn btn-sm" href="#custom">Start a request</a>')
-    : data.scope === 'history' && !data.scopes.history.total ? emptyState('No request history yet', 'Requests move here once they are closed.')
-    : emptyState(`No ${(label || '').toLowerCase()} requests`, 'None of these requests is at this stage.');
-  return `${created && items.some(r => r.id === created) ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}<div class="cr-scope">${nav.primary}${nav.secondary}</div><div class="cr-list">${items.length ? items.map(r => crCard(r, r.id === created)).join('') : `<div class="section-card">${empty}</div>`}</div>`;
+  const stages = crStages(data, data.scope), fresh = items.find(r => r.id === created);
+  const open = fresh ? stages.find(g => g.statuses.includes(fresh.status))?.key : stageFromAddress(stages, view.group, rememberedStage(CR_STAGE_KEY(data.scope)));
+  const board = stageBoard({id:'cr-board', label:CR_SCOPE_NAMES[data.scope], stages, items, card:(r, level) => crCard(r, {level, created}), peek:crPeek, level:2, open, section:crSection(data.scope),
+    empty:c => data.scope === 'history' ? 'No closed requests yet. Requests move here once they are closed.' : `No requests are ${c.label.toLowerCase()} right now.`});
+  const empty = data.scope === 'active' && !data.scopes.active.total ? emptyState("You're all caught up", 'No requests in review at the moment. Closed requests are in Request history.', '<a class="btn btn-sm" href="#custom">Start a request</a>') : '';
+  return `${fresh ? `<div class="banner info" role="status"><span>Your request was submitted. An administrator will review it; no order or payment has been created.</span></div>` : ''}<div class="board-tools cr-scope">${nav.primary}${items.length ? searchBox('cr-board-search', 'Search title or reference') : ''}</div>${empty ? `<div class="section-card">${empty}</div>` : `<div id="cr-board-search">${board}${listEmpty('No requests match your search.')}</div>`}`;
 }
-function crBindList() { $('#app .cr-card.is-new')?.scrollIntoView({block:'nearest'}); }
+function crBindList(view) {
+  rememberStage($('#cr-board'), CR_STAGE_KEY(view.scope), key => scopeHref('my-requests', {scope:view.scope}, {group:key}));
+  $('#app .wf-card.is-new')?.scrollIntoView({block:'nearest'});
+}
 
 /* Administrator review: compact list, read-only specification dialog, status and internal notes. */
 let crAdminCache = {};
+// The administrator's next step on a request, one per active stage. Reopening or any other change is in Details.
+const CR_NEXT = {submitted:['under_review', 'Start review', 'The requester sees that their request is being assessed.'],
+  under_review:['quoted', 'Mark quoted', 'Send the quotation separately: marking it quoted creates no order and no charge.'],
+  quoted:['closed', 'Close request', 'It moves to Request history. Reopening it later brings it back.']};
 adminPages['admin/requests'] = async function(route) {
-  // Active requests (still to review, quote or produce) by default; closed ones in Request history.
+  // Active requests (still to review, quote or produce) by default; closed ones in Request history. The
+  // status group only picks the open stage: every request of the scope is on the board.
   const q = hashQuery(), legacy = route.split('/')[2], view = legacy ? {scope:legacy === 'closed' ? 'history' : 'active', group:legacy} : {scope:q.scope === 'history' ? 'history' : 'active', group:q.group || 'all'};
-  let data;
-  try { data = await api('/admin/custom-requests?' + new URLSearchParams(view)); }
-  catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + scopeHref('admin/requests', {scope:view.scope}, {})); return {title:'Custom requests', body:''}; } throw e; }
-  const items = data.items;
+  const data = await api('/admin/custom-requests?' + new URLSearchParams({scope:view.scope})), items = data.items;
   crAdminCache = {...crAdminCache, ...Object.fromEntries(items.map(r => [r.id, r]))}; setNavCount('requests', data.scopes.active.groups.find(g => g.key === 'submitted').count);
-  // Administrators see the internal status name ("Quoted"); customers see it as "Accepted".
-  data.scopes.active.groups.forEach(g => { if (g.key === 'quoted') g.label = CR_STATUS.quoted[0]; });
   const nav = scopeNav({label:'Custom requests', base:'admin/requests', data, names:{active:'Active requests', history:'Request history'}});
-  const row = r => `<article class="list-row" data-search="${esc([r.reference, r.title, r.user.username, r.user.email, r.material].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title">${esc(r.title)}</span><span class="row-meta"><span class="mono">${esc(r.reference)}</span> · ${esc(userName(r.user))} · ${esc(roleLabel(r.user.role))} · ${esc(crDate(r.created_at))}</span></div><span class="row-value">${r.quantity} ${r.quantity === 1 ? 'unit' : 'units'}<small>${r.files.length ? `${r.files.length} ${r.files.length === 1 ? 'file' : 'files'}` : 'No files'}</small></span><span class="row-status">${crStatus(r.status)}</span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" onclick="crReview(${r.id})">Review</button></div></article>`;
-  const empty = data.scope === 'active' ? ['No requests to handle', 'Submitted, in-review and accepted requests appear here.'] : ['No closed requests', 'Requests move here once they are closed; reopening one brings it back.'];
-  return {title:'Custom requests', body:`<p class="muted ws-intro">Requests for custom tools from buyers and printing hosts. They are separate from marketplace orders: updating a status never creates an order, price, listing or host assignment.</p>` + nav.primary + toolbar(nav.secondary, items.length ? searchBox('request-list', 'Search title, reference or requester') : '') + filteredList('request-list', items.map(row), ...empty, 'No requests match your search.')};
+  // Administrators see the internal status name ("Quoted"); customers see it as "Accepted".
+  const stages = crStages(data, view.scope, {quoted:CR_STATUS.quoted[0]});
+  const board = stageBoard({id:'cr-admin-board', label:'Custom requests', stages, items, card:(r, level) => crCard(r, {level, staff:true}), peek:crPeek, level:2, section:crSection(view.scope),
+    open:stageFromAddress(stages, view.group, rememberedStage('openlabs-admin-requests-' + view.scope)),
+    empty:c => view.scope === 'history' ? 'No closed requests. Requests move here once they are closed.' : `No requests are ${c.label.toLowerCase()} right now.`});
+  const content = items.length ? `<div id="cr-admin-search">${board}${listEmpty('No requests match your search.')}</div>`
+    : `<div class="section-card">${view.scope === 'active' ? emptyState('No requests to handle', 'Submitted, in-review and quoted requests appear here.') : emptyState('No closed requests', 'Requests move here once they are closed; reopening one brings it back.')}</div>`;
+  return {title:'Custom requests', body:`<p class="muted ws-intro">Requests for custom tools from buyers and printing hosts. They are separate from marketplace orders: updating a status never creates an order, price, listing or host assignment.</p><div class="board-tools">${nav.primary}${items.length ? searchBox('cr-admin-search', 'Search title, reference or requester') : ''}</div>${content}`,
+    bind:() => rememberStage($('#cr-admin-board'), 'openlabs-admin-requests-' + view.scope, key => scopeHref('admin/requests', {scope:view.scope}, {group:key}))};
 };
+// Move a request one stage on, confirmed in the site dialog; the stage it moves to lights up once.
+document.addEventListener('click', async e => {
+  const button = e.target.closest('[data-cr-next]'); if (!button) return;
+  const r = crAdminCache[button.dataset.crNext], next = r && CR_NEXT[r.status]; if (!next) return;
+  const ok = await actionDialog({title:`${next[1]}?`, confirm:next[1], busy:'Saving…', refresh:() => render(),
+    body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(r.title)}</strong><span class="muted">${esc(r.reference)} · ${esc(userName(r.user))}</span></div>${crStatus(r.status)}</div><ul class="ad-notes"><li>New status: ${esc(CR_STATUS[next[0]][0])}.</li><li>${esc(next[2])}</li></ul>`,
+    run:() => api('/admin/custom-requests/' + r.id, {method:'PATCH', body:JSON.stringify({status:next[0]})})});
+  if (!ok) { if (button.isConnected) button.focus(); return; }
+  toast('Request updated'); refreshNavBadges(true);
+  // Closing leaves the active board: the stage stays where the reader was.
+  if (next[0] !== 'closed') stageBumpNext = {board:'cr-admin-board', stage:next[0]};
+  render();
+});
 function crReview(id) {
   const r = crAdminCache[id]; if (!r) return;
   const u = r.user, item = (label, value) => reviewItem(label, value ? esc(value) : '');
@@ -219,5 +271,3 @@ function crReview(id) {
   });
 }
 
-// Loaded after the workspaces: draw the page again now that these routes exist.
-render();

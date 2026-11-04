@@ -50,8 +50,11 @@ async function showWorkspace(kind, route, loader) {
   try {
     const page = await loader(route);
     if (request !== workspaceRequest || currentRoute() !== route) return;
+    const typed = lastWorkspaceRoute === route ? [...document.querySelectorAll('#app [data-filter-list]')].filter(i => i.value).map(i => [i.dataset.filterList, i.value, i === document.activeElement]) : [];
     $('#app').innerHTML = workspacePage(kind, page.title, page.body, page.action);
     lastWorkspaceRoute = route; page.bind?.();
+    // A refresh (after an action, say) keeps the search and what it was showing.
+    typed.forEach(([list, value, focused]) => { const input = document.querySelector(`#app [data-filter-list="${list}"]`); if (!input) return; input.value = value; input.dispatchEvent(new Event('input', {bubbles:true})); if (focused) input.focus(); });
   } catch (e) {
     if (request !== workspaceRequest || currentRoute() !== route) return;
     lastWorkspaceRoute = null;
@@ -104,17 +107,29 @@ function reviewEquipment(id,decision){const reason=decision==='reject'?prompt('R
 const approvalScopeNav = (scope, pending, decided) => `<nav class="segmented scope-nav" aria-label="Approvals"><a class="segment" href="#admin/pending" ${scope === 'active' ? 'aria-current="page"' : ''}>Pending<span class="segment-count">${pending}</span></a><a class="segment scope-history" href="#admin/pending?scope=history" ${scope === 'history' ? 'aria-current="page"' : ''}>${icon('history')}Approval history<span class="segment-count">${decided}</span></a></nav>`;
 const APPROVAL_TYPES = [['all', 'All decisions'], ['hosts', 'Host applications'], ['equipment', 'Equipment updates'], ['listings', 'Listings'], ['printers', 'Printers']];
 const DECISION_TONES = {approved:['approved', 'Approved'], rejected:['rejected', 'Rejected'], verified:['approved', 'Specs verified'], added:['neutral', 'Added unverified']};
+// Approval stages, one per review queue (pending) or decision type (history), in the order of the queues.
+const APPROVAL_STAGES = {hosts:{label:'Host applications', icon:'user'}, equipment:{label:'Equipment updates', icon:'wrench'}, listings:{label:'Listings', icon:'tag'}, printers:{label:'Printers', icon:'printer'}};
+const DECISION_ICONS = {approved:'check', verified:'check', rejected:'ban', added:'printer'};
+const APPROVAL_HISTORY_KEY = 'openlabs-approval-history-stage', APPROVAL_PAGE = 12;
+// A past decision: what, about whom and by whom, the outcome and when; the reason as a note.
+const decisionCard = (d, level) => boardCard({level, thumb:`<span class="jc-thumb jc-icon" data-decision="${esc(DECISION_TONES[d.decision][0])}" aria-hidden="true">${icon(DECISION_ICONS[d.decision] || 'check')}</span>`,
+  title:d.title, titleHtml:d.link ? `<a class="row-link" href="#${esc(d.link)}">${esc(d.title)}</a>` : '',
+  lines:[[d.submitter ? `Submitted by ${esc(d.submitter)}` : '', `reviewed by ${esc(d.reviewer)}`].filter(Boolean).join(' · ')],
+  side:[statusBadge(...DECISION_TONES[d.decision]), `<time class="jc-since" datetime="${esc(d.created_at)}" title="${esc(safeDate(d.created_at))}">${esc(timeAgo(d.created_at))}</time>`],
+  note:d.reason ? `Reason: ${esc(d.reason)}` : '', attrs:`data-decision-card="${d.id}"`});
 async function approvalHistoryPage() {
-  const q = hashQuery(), type = APPROVAL_TYPES.some(([k]) => k === q.type) ? q.type : 'all', page = Math.max(1, parseInt(q.page || '1', 10) || 1);
-  const [data, o, suggestions] = await Promise.all([api('/admin/approvals/history?' + new URLSearchParams({type, page})), api('/admin/overview'), api('/admin/printer-suggestions')]);
+  const q = hashQuery();
+  const perPage = stagePageSize('approval-history-board', APPROVAL_PAGE);
+  const [data, o, suggestions] = await Promise.all([api('/admin/approvals/history?' + new URLSearchParams({columns:true, per_page:perPage})), api('/admin/overview'), api('/admin/printer-suggestions')]);
   const pending = o.pending_hosts + o.products_pending + (o.pending_equipment || 0) + suggestions.length;
   setNavCount('approvals', pending);
-  const href = (params) => scopeHref('admin/pending', {scope:'history', type}, params);
-  const chips = filterChips('Approval history by type', APPROVAL_TYPES.map(([k, label]) => ({value:k, label, href:href({type:k, page:1}), count:k === 'all' ? Object.values(data.counts).reduce((a, b) => a + b, 0) : data.counts[k]})), type);
-  const typeLabel = Object.fromEntries(APPROVAL_TYPES);
-  const row = d => `<article class="list-row decision-row"><div class="row-main"><span class="row-title">${d.link ? `<a class="row-link" href="#${esc(d.link)}">${esc(d.title)}</a>` : esc(d.title)}</span><span class="row-meta">${esc(typeLabel[d.type])}${d.submitter ? ` · submitted by ${esc(d.submitter)}` : ''} · reviewed by ${esc(d.reviewer)}</span>${d.reason ? `<span class="row-note">Reason: ${esc(d.reason)}</span>` : ''}</div><span class="row-status">${statusBadge(...DECISION_TONES[d.decision])}</span><time class="decision-time" datetime="${esc(d.created_at)}">${esc(safeDate(d.created_at))}</time></article>`;
-  const list = data.items.length ? `<div class="list">${data.items.map(row).join('')}</div>` : `<div class="list">${emptyState('No decisions yet', 'Approvals and rejections are recorded here as soon as they are made.')}</div>`;
-  return {title:'Approvals', body:approvalScopeNav('history', pending, Object.values(data.counts).reduce((a, b) => a + b, 0)) + `<p class="muted ws-intro">Every review decision, newest first. Approved hosts, products and printers stay managed in their own pages.</p>` + chips + list + pager(p => href({page:p}), data.page, data.pages)};
+  // Every decision type at once (its first page); Load more within a type.
+  const stages = data.columns.map(c => ({...c, ...APPROVAL_STAGES[c.key], tone:'neutral', statuses:[c.key]}));
+  const board = stageBoard({id:'approval-history-board', label:'Approval history', stages, card:decisionCard, level:2,
+    open:stageFromAddress(stages, q.type, rememberedStage(APPROVAL_HISTORY_KEY)), empty:c => `No ${c.label.toLowerCase()} decided yet.`,
+    load:(type, page, extra = {}) => api('/admin/approvals/history?' + new URLSearchParams({type, page, per_page:perPage, ...extra})), section:{one:'decision'}});
+  return {title:'Approvals', body:`<div class="board-tools">${approvalScopeNav('history', pending, data.total)}</div><p class="muted ws-intro">Every review decision, newest first. Approved hosts, products and printers stay managed in their own pages.</p>` + (data.total ? board : `<div class="section-card">${emptyState('No decisions yet', 'Approvals and rejections are recorded here as soon as they are made.')}</div>`),
+    bind:() => rememberStage($('#approval-history-board'), APPROVAL_HISTORY_KEY, type => scopeHref('admin/pending', {scope:'history'}, {type}))};
 }
 /* Equipment update review: one row per printer, before → after, changed values highlighted. */
 function revisionOtherChanges(r) {
@@ -137,9 +152,22 @@ function waitingText(value) {
   const hours = Math.max(0, (Date.now() - parseServerDate(value)) / 36e5);
   return hours < 1 ? 'Waiting less than an hour' : hours < 48 ? `Waiting ${Math.round(hours)} hour${Math.round(hours) === 1 ? '' : 's'}` : `Waiting ${Math.round(hours / 24)} days`;
 }
-function approvalCard({who, since, title, summary, actions, thumb='', details=''}) {
-  const old = since && (Date.now() - parseServerDate(since)) / 864e5 >= 3;
-  return `<article class="section-card approval-card"><div class="approval-main">${thumb || `<span class="row-avatar">${avatarHtml(who, 40)}</span>`}<div class="approval-copy"><h3>${esc(title)}</h3><p class="approval-summary">${esc(summary)}</p><p class="approval-meta"><span>Submitted by <strong>${esc(userName(who) || 'unknown')}</strong></span><span class="approval-wait ${old ? 'is-old' : ''}">${esc(waitingText(since))}</span></p></div><div class="approval-actions">${actions}</div></div>${details ? `<details class="approval-details"><summary>Compare with the approved equipment</summary>${details}</details>` : ''}</article>`;
+// A pending approval on the board: who submitted what and how long it has waited; the decision on the right
+// (primary), with Details, Reject and any other step beside it. The stage, in turn, is the queue.
+function approvalCard({type, who, since, title, summary, thumb = '', primary = '', secondary = ''}) {
+  const old = since && (Date.now() - parseServerDate(since)) / 864e5 >= 3, submitter = userName(who) || 'unknown';
+  return {type, search:[title, summary, submitter].join(' '), peek:thumb ? thumb.replace(/class="[^"]*(row-thumb|jc-thumb)[^"]*"/, 'class="line-thumb sb-peek-thumb row-thumb"') : `<span class="line-thumb sb-peek-thumb jc-avatar">${avatarHtml(who, 24)}</span>`,
+    card:level => boardCard({level, thumb:thumb || `<span class="jc-thumb jc-avatar">${avatarHtml(who, 56)}</span>`, title, lines:[esc(summary), `Submitted by <strong>${esc(submitter)}</strong>`],
+      side:[`<span class="jc-since jc-wait${old ? ' is-old' : ''}">${esc(waitingText(since))}</span>`], links:secondary, primary, search:[title, summary, submitter].join(' ')})};
+}
+// Equipment updates: the before → after comparison in the site dialog, with the decision in its footer.
+let approvalRevisions = {};
+function equipmentChanges(id) {
+  const r = approvalRevisions[id]; if (!r) return;
+  const other = revisionOtherChanges(r);
+  const dialog = openReview(`Equipment update · ${r.host}`, 'Approvals · equipment update', reviewSection('Printers', revisionTable(r)) + (other.length ? reviewSection('Other changes', `<ul class="ad-notes">${other.map(o => `<li>${esc(o)}</li>`).join('')}</ul>`) : ''),
+    `<button type="button" class="btn-ghost btn-sm danger-text" data-decide="reject">Reject</button><button type="button" class="btn btn-sm" data-decide="approve">Approve</button>`);
+  dialog.querySelectorAll('[data-decide]').forEach(b => b.onclick = () => { dialog.close(); reviewEquipment(id, b.dataset.decide); });
 }
 /* Admin user profile: read-only account settings, printing specs for hosts, filterable activity. */
 const USER_ACTIVITY_FILTERS = [['all', 'All activity'], ['purchases', 'Marketplace purchases'], ['completions', 'Order completions'], ['cancellations', 'Cancellations'], ['custom_requests', 'Custom requests'], ['printing', 'Printing log']];
@@ -162,7 +190,7 @@ function subjectText(subject, index) { const [kind, id] = String(subject).split(
 /* Activity: one readable sentence per event, a colour per area, grouped by day, the first 40 shown. */
 const ACTIVITY_SENTENCES = {
   'order.created':'placed order', 'order.cancelled':'cancelled order', 'order.completed':'completed order (everything received)', 'order.address_changed':'changed the delivery address of order',
-  'job.accepted':'accepted printing job', 'job.printing':'started printing job', 'job.ready':'marked ready printing job', 'job.shipped':'shipped printing job', 'job.completed':'confirmed receipt of printing job', 'job.reopened':'returned to the pool printing job',
+  'job.accepted':'accepted printing job', 'job.printing':'started printing job', 'job.ready':'marked ready printing job', 'job.shipped':'shipped printing job', 'job.completed':'confirmed receipt of printing job', 'job.reopened':'returned to the pool printing job', 'job.cancelled':'cancelled printing job',
   'equipment.submitted':'submitted an equipment update', 'equipment.approve':'approved the equipment update of', 'equipment.reject':'rejected the equipment update of', 'equipment.stock_updated':'updated their materials & colors',
   'host.submitted':'applied as a printing host', 'host.approve':'approved the host application of', 'host.reject':'rejected the host application of', 'host.suspend':'suspended host', 'host.restore':'restored host',
   'listing.submitted':'submitted listing', 'listing.approved':'approved listing', 'listing.rejected':'rejected listing', 'listing.archived':'archived listing', 'listing.published':'published listing',
@@ -202,9 +230,73 @@ function jobEligibility(j, index) {
   return `${able.length ? `<span class="muted">Can be made by ${able.map(h => esc(personName(index, h.host_id))).join(', ')}</span>` : statusBadge('rejected', 'No eligible host')}${why ? `<small class="job-ineligible muted">Not eligible: ${why}</small>` : ''}`;
 }
 // Overview warnings that open the orders behind them (admin/orders?attention=…).
-const ORDER_ATTENTION = {'own-order':'Orders with a job accepted by its own buyer, before hosts were barred from their own orders. Nothing is changed automatically: review each job below.',
+const ORDER_ATTENTION = {'own-order':'Orders with a job accepted by its own buyer, before hosts were barred from their own orders. Nothing is changed automatically: review each job in the order details.',
   unassigned:'Orders with a printing job still waiting for a host, whatever stage the rest of the order has reached.',
-  unmatched:'Orders with an available job that no approved host can make with its current printers and stock. The reasons are listed per host below.'};
+  unmatched:'Orders with an available job that no approved host can make with its current printers and stock. The order details list the reason for each host.'};
+// Administrator orders board: the stages of app/lifecycle.py ORDER_SCOPES, how each looks.
+const ADMIN_ORDER_UI = {pending:{icon:'inbox', tone:'available', hint:'Waiting for printing hosts to accept.', empty:'No order is waiting for a host.'},
+  'in-progress':{icon:'layers', tone:'active', hint:'Accepted, being printed or ready to ship.', empty:'Nothing in production.'},
+  shipping:{icon:'truck', tone:'neutral', hint:'Shipped, waiting for the buyer to confirm receipt.', empty:'Nothing on its way.'},
+  completed:{icon:'check', tone:'completed', hint:'Every product received.', empty:'No completed orders yet.'},
+  cancelled:{icon:'ban', tone:'cancelled', hint:'Cancelled by the buyer or an administrator.', empty:'No cancelled orders.'}};
+const ADMIN_ORDER_PAGE = 12;
+let adminOrders = {}, adminOrderIndex = {};
+// Administrators may cancel any active order, whatever the host has reported (app/operations.py cancel_order).
+const adminOrderCancellable = o => !['completed', 'cancelled'].includes(o.status);
+// One order on the board: reference and buyer, what was ordered, its value and stage, and the problems an
+// administrator must see at a glance. Jobs, hosts, delivery and history are in Details.
+function adminOrderCard(o, level = 3) {
+  const first = o.items[0] || {}, buyer = personName(adminOrderIndex, o.buyer_id), extra = o.items.length - 1;
+  const ownOrder = o.jobs.some(j => j.conflict === 'own_order'), unmatched = o.jobs.some(j => j.eligibility && !j.eligibility.some(h => !h.reason));
+  const flags = [ownOrder ? statusBadge('rejected', 'Host is the buyer') : '', unmatched ? statusBadge('rejected', 'No eligible host') : ''].join('');
+  return boardCard({level, thumb:orderLineThumb(first, 'jc-thumb'), title:o.reference, titleHtml:`<span class="mono">${esc(o.reference)}</span>`,
+    lines:[`${esc(buyer)} · ${esc(safeDate(o.created_at))}`, `${first.quantity || 1} × ${esc(first.title || 'Product')}${extra > 0 ? ` <span class="muted">+${extra} more</span>` : ''}`, orderLineConfig(first)],
+    side:[`<strong class="jc-value">${money(o.total_cents / 100)}</strong>`, statusBadge(o.status), flags ? `<span class="jc-flags">${flags}</span>` : ''],
+    links:`<button type="button" class="wf-link" data-admin-order="${o.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(o.reference)}</span></button>${adminOrderCancellable(o) ? `<button type="button" class="wf-link danger-link" data-cancel-order="${o.id}" aria-haspopup="dialog">Cancel order<span class="sr-only"> ${esc(o.reference)}</span></button>` : ''}`,
+    search:[o.reference, buyer, ...o.items.map(i => i.title)].join(' '), attrs:`data-order-card="${o.id}"`});
+}
+// Everything about an order: each job with its host (or who could take it), delivery and history.
+function adminOrderDetails(id) {
+  const o = adminOrders[id]; if (!o) return;
+  const index = adminOrderIndex, run = action => `document.querySelector('#modal').close();${action}`;
+  const job = j => `<li class="ao-job">${orderLineThumb(j.item, 'detail-thumb')}<div class="ao-job-main"><strong>${esc(j.item.title)} × ${j.item.quantity}</strong>${orderLineConfig(j.item)}<span class="ao-job-status">${statusBadge(j.status)}<span class="muted">${j.host_id ? 'Host: ' + esc(personName(index, j.host_id)) : 'No host yet'}</span>${j.conflict === 'own_order' ? statusBadge('rejected', 'Host is the buyer') : ''}</span>${jobEligibility(j, index)}<span class="ao-job-actions">${jobModel(j)}${j.status === 'accepted' ? `<button type="button" class="btn-ghost btn-sm" onclick="${esc(run(`adminAction('/admin/jobs/${j.id}/reopen','Return this job to the available pool?')`))}">Reopen job</button>` : ''}</span></div></li>`;
+  const body = reviewSection(`Printing jobs (${o.jobs.length})`, `<ul class="ao-jobs">${o.jobs.map(job).join('')}</ul>`)
+    + reviewSection('Delivery', `<dl class="detail-grid"><div><dt>Buyer</dt><dd>${esc(personName(index, o.buyer_id))}</dd></div><div><dt>Total</dt><dd>${money(o.total_cents / 100)}</dd></div><div><dt>Contact</dt><dd>${esc(deliveryText(o.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(o.address))}</dd></div></dl>`)
+    + reviewSection('History', `<ol class="bo-history">${o.history.map(e => `<li><span>${esc(e.action)}${e.detail ? `<small class="ao-note">${esc(e.detail)}</small>` : ''}</span><time datetime="${esc(e.created_at)}">${esc(safeDate(e.created_at))}</time></li>`).join('') || '<li>No events yet.</li>'}</ol>`);
+  openReview(o.reference, `Order · ${statusText(o.status)} · placed ${safeDate(o.created_at)}`, body, adminOrderCancellable(o) ? `<button type="button" class="btn-ghost btn-sm danger-text" data-cancel-order="${o.id}" aria-haspopup="dialog">Cancel order</button>` : '');
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-admin-order]'); if (b) adminOrderDetails(+b.dataset.adminOrder); });
+/* Cancelling an order (administrators only, at any stage before completion): where each product stands and
+   what cancelling does to it, a warning when a host may already be making it, a required reason, and an
+   explicit acknowledgement when products have already shipped or been received (those are never cancelled). */
+const ADMIN_CANCEL_STAGE = {available:'Waiting for a host', accepted:'Accepted, printing start not reported', printing:'Printing reported', ready:'Ready to ship', shipped:'Shipped', completed:'Received by the buyer', cancelled:'Cancelled'};
+async function adminCancelOrder(id, trigger) {
+  const o = adminOrders[id]; if (!o) return;
+  const index = adminOrderIndex;
+  const held = o.jobs.filter(j => ['accepted', 'printing', 'ready'].includes(j.status)), delivered = o.jobs.filter(j => ['shipped', 'completed'].includes(j.status));
+  const fate = j => ['shipped', 'completed'].includes(j.status) ? '<span class="ac-fate">Kept as is</span>' : j.status === 'cancelled' ? '' : '<span class="ac-fate is-stop">Will be cancelled</span>';
+  const job = j => `<li class="ac-job">${orderLineThumb(j.item, 'detail-thumb')}<div class="ac-job-main"><strong>${esc(j.item.title)} × ${j.item.quantity}</strong><span class="muted">${esc(ADMIN_CANCEL_STAGE[j.status] || statusText(j.status))}${j.host_id ? ' · ' + esc(personName(index, j.host_id)) : ''}</span></div>${fate(j)}</li>`;
+  const warnings = (held.length ? `<div class="banner warning" role="note"><span><strong>Manufacturing may already have started.</strong> ${esc(plural(held.length, 'product is', 'products are'))} with a printing host, whether or not printing was reported. Cancelling stops ${held.length === 1 ? 'it' : 'them'} and ends the host's access to the model files; work already done cannot be undone and stays on record.</span></div>` : '')
+    + (delivered.length ? `<div class="banner danger" role="note"><span><strong>Exceptional cancellation.</strong> ${esc(plural(delivered.length, 'product has', 'products have'))} already shipped or been received. ${delivered.length === 1 ? 'It is' : 'They are'} not cancelled or recalled and ${delivered.length === 1 ? 'keeps its' : 'keep their'} shipment record. Any return or refund must be arranged outside OpenLabs3D.</span></div>` : '');
+  const body = `<p class="ac-summary"><span class="mono">${esc(o.reference)}</span>${statusBadge(o.status)}<span class="muted">${esc(personName(index, o.buyer_id))} · ${money(o.total_cents / 100)}</span></p><ul class="ac-jobs">${o.jobs.map(job).join('')}</ul>${warnings}`
+    + `<form class="ad-form" id="cancel-order-form" novalidate><label>Reason for cancelling<textarea name="reason" rows="3" minlength="3" maxlength="500" required aria-describedby="cancel-reason-note"></textarea></label><p class="muted ac-note" id="cancel-reason-note">Kept in the order history for administrators. The buyer and the host see the order as cancelled.</p>${delivered.length ? `<label class="ac-ack"><input type="checkbox" name="acknowledged"><span>I understand that shipped or received products are not cancelled, and that any return or refund is handled outside OpenLabs3D.</span></label>` : ''}</form>`;
+  let stale = false;
+  const ok = await actionDialog({title:'Cancel this order?', body, confirm:'Cancel order', busy:'Cancelling…', danger:true, initialFocus:'#cancel-order-form textarea',
+    run:async () => {
+      const form = $('#cancel-order-form'), reason = form.reason.value.trim(), ack = form.acknowledged;
+      form.reason.removeAttribute('aria-invalid'); ack?.removeAttribute('aria-invalid');
+      if (reason.length < 3) { form.reason.setAttribute('aria-invalid', 'true'); form.reason.focus(); throw Error('Give a reason for cancelling (at least 3 characters).'); }
+      if (ack && !ack.checked) { ack.setAttribute('aria-invalid', 'true'); ack.focus(); throw Error('Confirm that shipped or received products are not cancelled.'); }
+      try { await api(`/admin/orders/${id}/cancel`, {method:'POST', body:JSON.stringify({reason, shipped_acknowledged:!!ack})}); }
+      // Changed meanwhile (a product shipped, or the buyer received everything): the list refreshes on close.
+      catch (e) { stale = e.status === 409; throw e; }
+    }});
+  if (ok) { toast(`Order ${o.reference} cancelled`); render(); return; }
+  if (stale) return render();
+  // From the details dialog (now closed), focus returns to the order's card.
+  (trigger?.isConnected && trigger.checkVisibility?.() ? trigger : $(`[data-order-card="${id}"] [data-cancel-order]`))?.focus();
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-cancel-order]'); if (!b) return; if (b.closest('#modal')) $('#modal').close(); adminCancelOrder(+b.dataset.cancelOrder, b); });
 const adminPages = {
   async 'admin'() {
     const [o, activity, users, suggestions] = await Promise.all([api('/admin/overview'), api('/admin/activity'), api('/admin/users'), api('/admin/printer-suggestions')]), approvals = o.pending_hosts + o.products_pending + (o.pending_equipment || 0) + suggestions.length;
@@ -228,19 +320,26 @@ const adminPages = {
     const products = listings.filter(p => p.status === 'pending' && !p.removed), index = userIndex(users);
     printerSuggestions = suggestions; hosts.forEach(h => { adminHostsCache[h.id] = h; });
     setNavCount('approvals', hosts.length + products.length + revisions.length + suggestions.length);
-    const groups = [
-      ['hosts', 'Host applications', hosts.map(h => approvalCard({who:h.user, since:h.submitted_at || h.updated_at, title:h.name || userName(h.user), summary:[h.printers, h.technologies, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || 'No equipment details',
-        actions:`<button type="button" class="btn-ghost btn-sm" onclick="hostDetails(${h.id})">View details</button><button type="button" class="btn-ghost btn-sm" onclick="rejectHost(${h.id})">Reject</button><button type="button" class="btn btn-sm" onclick="adminAction('/admin/hosts/${h.id}/approve','Approve this printing host?',{})">Approve</button>`})), ['No applications waiting', 'New printing host applications appear here.']],
-      ['equipment', 'Equipment updates', revisions.map(r => { const c = diffCounts(r.before.printers, r.proposal), other = revisionOtherChanges(r); return approvalCard({who:index[r.user_id] || {username:r.host}, since:r.updated_at, title:`Equipment update · ${r.host}`, summary:[...[[c.added, 'added'], [c.modified, 'modified'], [c.removed, 'removed']].filter(([n]) => n).map(([n, l]) => `${n} printer${n === 1 ? '' : 's'} ${l}`), ...other].join(' · ') || 'No changes compared with the approved equipment',
-        details:revisionTable(r), actions:`<button type="button" class="btn-ghost btn-sm" aria-label="Reject equipment update" onclick="reviewEquipment(${r.id},'reject')">Reject</button><button type="button" class="btn btn-sm" aria-label="Approve equipment update" onclick="reviewEquipment(${r.id},'approve')">Approve</button>`}); }), ['No equipment updates waiting', 'Equipment revisions that hosts submit appear here.']],
-      ['listings', 'Listings', products.map(p => approvalCard({who:index[p.owner_id] || {username:p.seller}, since:p.updated_at || p.created_at, title:p.title || 'Untitled listing', thumb:listingThumb(p), summary:[p.category, money(p.price_cents / 100), p.listing_type === 'official' ? 'Official' : 'Community'].filter(Boolean).join(' · '),
-        actions:`<button type="button" class="btn-ghost btn-sm" onclick="productDetails(${p.id})">View details</button><button type="button" class="btn-ghost btn-sm" onclick="moderateListing(${p.id},'reject')">Reject</button><button type="button" class="btn btn-sm" onclick="moderateListing(${p.id},'approve')">Approve</button>`})), ['No listings waiting', 'Listings submitted for review appear here.']],
-      ['printers', 'Printer suggestions', suggestions.map((p, n) => approvalCard({who:users.find(u => u.username === p.suggested_by) || {username:p.suggested_by || 'A host'}, since:null, title:`${p.manufacturer} ${p.model}`, summary:`${p.x} × ${p.y} × ${p.z} mm · ${p.technology === 'FDM' ? 'FDM' : 'Resin'} · ${p.origin === 'revision' ? 'from an equipment update' : 'from a host application'}`,
-        actions:`<button type="button" class="btn-ghost btn-sm" onclick="approvePrinterSuggestion(${n})">Add as unverified</button><button type="button" class="btn btn-sm" onclick="verifyPrinterSuggestion(${n})">Verify specs</button>`})), ['No printer suggestions', 'Printers typed by hand in applications or equipment updates appear here.']]];
-    const asked = new URLSearchParams(location.hash.split('?')[1] || '').get('type'), type = groups.some(([k]) => k === asked) ? asked : (groups.find(([, , rows]) => rows.length) || groups[0])[0];
-    const tabs = `<nav class="chips approvals-tabs" aria-label="Pending approvals by type">${groups.map(([k, l, rows]) => `<a class="chip ${k === type ? 'active' : ''}" href="#admin/pending?type=${k}" ${k === type ? 'aria-current="true"' : ''}>${esc(l)}<span>${rows.length}</span></a>`).join('')}</nav>`;
-    const [, label, rows, empty] = groups.find(([k]) => k === type), pending = groups.reduce((n, [, , r]) => n + r.length, 0);
-    return {title:'Approvals', body:approvalScopeNav('active', pending, past.total) + tabs + `<section class="approvals" aria-label="${esc(label)}">${rows.length ? rows.join('') : `<div class="section-card">${emptyState(...empty)}</div>`}</section>`};
+    approvalRevisions = Object.fromEntries(revisions.map(r => [r.id, r]));
+    const link = (label, onclick, extra = '', aria = '') => `<button type="button" class="wf-link ${extra}" ${aria ? `aria-label="${esc(aria)}"` : ''} onclick="${onclick}">${label}</button>`, approve = (label, onclick, aria = '') => `<button type="button" class="btn btn-sm jc-primary" ${aria ? `aria-label="${esc(aria)}"` : ''} onclick="${onclick}">${label}</button>`;
+    const items = [
+      ...hosts.map(h => approvalCard({type:'hosts', who:h.user, since:h.submitted_at || h.updated_at, title:h.name || userName(h.user), summary:[h.printers, h.technologies, [h.region, countryLabel(h.country)].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || 'No equipment details',
+        secondary:link('View details', `hostDetails(${h.id})`) + link('Reject', `rejectHost(${h.id})`, 'danger-link'), primary:approve('Approve', `adminAction('/admin/hosts/${h.id}/approve','Approve this printing host?',{})`)})),
+      ...revisions.map(r => { const c = diffCounts(r.before.printers, r.proposal), other = revisionOtherChanges(r); return approvalCard({type:'equipment', who:index[r.user_id] || {username:r.host}, since:r.updated_at, title:`Equipment update · ${r.host}`, summary:[...[[c.added, 'added'], [c.modified, 'modified'], [c.removed, 'removed']].filter(([n]) => n).map(([n, l]) => `${n} printer${n === 1 ? '' : 's'} ${l}`), ...other].join(' · ') || 'No changes compared with the approved equipment',
+        secondary:link('View changes', `equipmentChanges(${r.id})`) + link('Reject', `reviewEquipment(${r.id},'reject')`, 'danger-link', 'Reject equipment update'), primary:approve('Approve', `reviewEquipment(${r.id},'approve')`, 'Approve equipment update')}); }),
+      ...products.map(p => approvalCard({type:'listings', who:index[p.owner_id] || {username:p.seller}, since:p.updated_at || p.created_at, title:p.title || 'Untitled listing', thumb:listingThumb(p).replace('class="row-thumb', 'class="jc-thumb row-thumb'), summary:[p.category, money(p.price_cents / 100), p.listing_type === 'official' ? 'Official' : 'Community'].filter(Boolean).join(' · '),
+        secondary:link('View details', `productDetails(${p.id})`) + link('Reject', `moderateListing(${p.id},'reject')`, 'danger-link'), primary:approve('Approve', `moderateListing(${p.id},'approve')`)})),
+      ...suggestions.map((p, n) => approvalCard({type:'printers', who:users.find(u => u.username === p.suggested_by) || {username:p.suggested_by || 'A host'}, since:null, title:`${p.manufacturer} ${p.model}`, thumb:cardIcon('printer'), summary:`${p.x} × ${p.y} × ${p.z} mm · ${p.technology === 'FDM' ? 'FDM' : 'Resin'} · ${p.origin === 'revision' ? 'from an equipment update' : 'from a host application'}`,
+        secondary:link('Add as unverified', `approvePrinterSuggestion(${n})`), primary:approve('Verify specs', `verifyPrinterSuggestion(${n})`)}))];
+    const counts = {hosts:hosts.length, equipment:revisions.length, listings:products.length, printers:suggestions.length}, pending = items.length;
+    const hints = {hosts:'New printing hosts to approve.', equipment:'Changes to approved equipment.', listings:'Products submitted for the catalogue.', printers:'Printers typed by hand by hosts.'};
+    const empties = {hosts:'No applications waiting.', equipment:'No equipment updates waiting.', listings:'No listings waiting.', printers:'No printer suggestions.'};
+    const stages = Object.entries(APPROVAL_STAGES).map(([key, s]) => ({key, ...s, label:key === 'printers' ? 'Printer suggestions' : s.label, statuses:[key], tone:'review', hint:hints[key], count:counts[key]}));
+    const asked = hashQuery().type, board = stageBoard({id:'approvals-board', label:'Pending approvals', stages, items, statusOf:i => i.type, card:(i, level) => i.card(level), peek:i => i.peek, level:2,
+      open:stageFromAddress(stages, asked, rememberedStage('openlabs-approvals-stage')), empty:c => empties[c.key], section:{one:'item', search:'Search title or submitter'}});
+    const tools = `<div class="board-tools">${approvalScopeNav('active', pending, past.total)}${pending ? searchBox('approvals-search', 'Search title or submitter') : ''}</div>`;
+    return {title:'Approvals', body:tools + (pending ? `<div id="approvals-search">${board}${listEmpty('No pending item matches your search.')}</div>` : `<div class="section-card">${emptyState('Nothing to review', 'Host applications, equipment updates, listings and printer suggestions appear here when they are submitted.')}</div>`),
+      bind:() => rememberStage($('#approvals-board'), 'openlabs-approvals-stage', type => 'admin/pending?type=' + type)};
   },
   async 'admin/hosts'(route) {
     const selected = route.split('/')[2] || '', [all] = await Promise.all([api('/admin/hosts'), ensureCountries()]), items = all.filter(h => !selected || h.status === selected);
@@ -256,29 +355,34 @@ const adminPages = {
     return {title:'Users', body:toolbar(filterChips('Role', filters, selected), searchBox('user-list', 'Search name, username or email')) + filteredList('user-list', items.map(row), 'No users here', 'No accounts have this role.', 'No users match your search.')};
   },
   async 'admin/orders'(route) {
-    // Active orders by default; Order history (completed and cancelled) on request, both by page.
+    // Active orders by default, Order history on request: every stage of the scope on one board (the first
+    // page of each), Load more within a stage. The status group only picks the open stage.
     const q = hashQuery(), legacy = {pending:['active', 'pending'], completed:['history', 'completed'], cancelled:['history', 'cancelled']}[route.split('/')[2]];
-    const view = {scope:legacy ? legacy[0] : q.scope === 'history' ? 'history' : 'active', group:legacy ? legacy[1] : q.group || 'all', q:(q.q || '').slice(0, 80), page:Math.max(1, parseInt(q.page || '1', 10) || 1)};
-    // attention: only the orders behind an overview warning (switching scope or status shows every order again).
+    const view = {scope:legacy ? legacy[0] : q.scope === 'history' ? 'history' : 'active', group:legacy ? legacy[1] : q.group || 'all', q:(q.q || '').slice(0, 80)};
+    // attention: only the orders behind an overview warning (switching scope shows every order again).
     const attention = ORDER_ATTENTION[q.attention] ? q.attention : '';
-    const href = (params = {}) => scopeHref('admin/orders', {scope:view.scope, group:view.group, q:view.q, attention}, params);
-    let data;
-    try { data = await api('/admin/orders?' + new URLSearchParams({paginated:true, ...view, ...(attention && {attention})})); }
-    catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + href({group:'all', page:1})); return {title:'Orders', body:''}; } throw e; }
-    const users = await api('/admin/users'), index = userIndex(users), items = data.items;
+    const depthView = [view.scope, view.q, attention].join('|'), filter = {paginated:true, scope:view.scope, q:view.q, per_page:stagePageSize('admin-orders-board', ADMIN_ORDER_PAGE, depthView), ...(attention && {attention})};
+    const [data, users] = await Promise.all([api('/admin/orders?' + new URLSearchParams({...filter, columns:true})), api('/admin/users')]);
+    adminOrderIndex = userIndex(users); adminOrders = {};
+    const remember = items => items.forEach(o => { adminOrders[o.id] = o; });
+    data.columns.forEach(c => remember(c.items));
     const nav = scopeNav({label:'Orders', base:'admin/orders', data, names:{active:'Active orders', history:'Order history'}});
-    const row = o => {
-      const titles = o.items.map(i => `${i.quantity} × ${i.title}`);
-      const ownOrder = o.jobs.some(j => j.conflict === 'own_order'), unmatched = o.jobs.some(j => j.eligibility && !j.eligibility.some(h => !h.reason));
-      const jobs = o.jobs.map(j => `<li><span>${esc(j.item.title)}</span>${statusBadge(j.status)}<span class="muted">${j.host_id ? 'Host: ' + esc(personName(index, j.host_id)) : 'No host yet'}</span>${j.conflict === 'own_order' ? statusBadge('rejected', 'Host is the buyer') : ''}${jobEligibility(j, index)}${jobModel(j)}${j.status === 'accepted' ? `<button type="button" class="btn-ghost btn-sm" onclick="adminAction('/admin/jobs/${j.id}/reopen','Return this job to the available pool?')">Reopen job</button>` : ''}</li>`).join('');
-      return `<article class="list-row order-row" data-search="${esc([o.reference, personName(index, o.buyer_id), ...titles].join(' ').toLowerCase())}"><div class="row-main"><span class="row-title mono">${esc(o.reference)}</span><span class="row-meta">${esc(personName(index, o.buyer_id))} · ${safeDate(o.created_at)}</span></div><span class="row-main row-summary">${esc(titles[0] || '')}${titles.length > 1 ? ` <span class="muted">+${titles.length - 1} more</span>` : ''}</span><span class="row-value">${money(o.total_cents / 100)}</span><span class="row-status">${statusBadge(o.status)}${ownOrder ? statusBadge('rejected', 'Host is the buyer') : ''}${unmatched ? statusBadge('rejected', 'No eligible host') : ''}</span><div class="row-actions">${['pending', 'accepted'].includes(o.status) ? `<button type="button" class="btn-ghost btn-sm danger-text" onclick="adminAction('/admin/orders/${o.id}/cancel','Cancel order ${esc(o.reference)}? Jobs that have not started printing are cancelled.')">Cancel order</button>` : ''}</div><details class="row-details" ${attention ? 'open' : ''}><summary>Jobs, delivery and history</summary><ul class="job-list">${jobs}</ul><dl class="detail-grid"><div><dt>Contact</dt><dd>${esc(deliveryText(o.contact))}</dd></div><div><dt>Delivery address</dt><dd>${esc(deliveryText(o.address))}</dd></div><div><dt>History</dt><dd>${o.history.map(e => `${esc(safeDate(e.created_at))} · ${esc(e.action)}`).join('<br>') || 'No events yet.'}</dd></div></dl></details></article>`;
-    };
-    const label = (data.scopes[data.scope].groups.find(g => g.key === data.group) || {}).label;
-    const empty = attention ? ['Nothing needs attention', 'No order has this problem any more.'] : data.scope === 'active' && !data.scopes.active.total ? ['No active orders', 'Every order is completed or cancelled. Past orders are in Order history.'] : data.scope === 'history' && !data.scopes.history.total ? ['No order history yet', 'Completed and cancelled orders move here automatically.'] : view.q ? ['No orders match your search', `Nothing here matches “${view.q}”.`] : [`No ${(label || '').toLowerCase()} orders`, 'No order is at this stage right now.'];
+    const stages = data.columns.map(c => ({...c, ...ADMIN_ORDER_UI[c.key]})), storage = 'openlabs-admin-orders-' + view.scope;
+    // A warning opens on the first stage holding one of its orders.
+    const open = stageFromAddress(stages, view.group, attention ? (stages.find(c => c.total) || {}).key : rememberedStage(storage));
+    const board = stageBoard({id:'admin-orders-board', label:view.scope === 'active' ? 'Active orders' : 'Order history', stages, card:adminOrderCard, peek:o => orderLineThumb(o.items[0] || {}, 'sb-peek-thumb'), level:2, open, onLoad:remember, depthView,
+      empty:c => view.q ? `No ${c.label.toLowerCase()} orders match “${view.q}”.` : attention ? 'None of these orders is at this stage.' : ADMIN_ORDER_UI[c.key]?.empty || 'Nothing here.',
+      load:(group, page, extra = {}) => api('/admin/orders?' + new URLSearchParams({...filter, group, page, ...extra})),
+      section:{one:'order', serverSearch:true, sorts:sectionSorts({recent:o => sectionWhen(o.created_at), stage:view.scope === 'active' ? o => sectionWhen(o.history.at(-1)?.created_at || o.created_at) : null, reference:o => o.reference})}});
+    const empty = attention && !data.total ? ['Nothing needs attention', 'No order has this problem any more.'] : !data.scopes[view.scope].total ? (view.scope === 'active' ? ['No active orders', 'Every order is completed or cancelled. Past orders are in Order history.'] : ['No order history yet', 'Completed and cancelled orders move here automatically.']) : null;
     const search = `<form class="search-field" id="admin-order-search" role="search">${icon('search')}<label class="sr-only" for="admin-order-q">Search orders</label><input id="admin-order-q" type="search" name="q" value="${esc(view.q)}" placeholder="Reference or product" autocomplete="off" maxlength="80"></form>`;
     const notice = attention ? `<div class="banner warning attention-filter"><span>${esc(ORDER_ATTENTION[attention])}</span><a class="btn-ghost btn-sm" href="#${scopeHref('admin/orders', {}, {scope:view.scope})}">Show all orders</a></div>` : '';
-    return {title:'Orders', body:nav.primary + toolbar(nav.secondary, search) + notice + (items.length ? `<div class="list" id="order-list">${items.map(row).join('')}</div>` : `<div class="list">${emptyState(...empty)}</div>`) + pager(page => href({page}), data.page, data.pages),
-      bind:() => { const form = $('#admin-order-search'); form.onsubmit = e => { e.preventDefault(); location.hash = '#' + href({q:form.elements.q.value.trim(), page:1}); }; }};
+    const matches = view.q ? `<p class="bo-results">${data.total} ${data.total === 1 ? 'order matches' : 'orders match'} “${esc(view.q)}” · <a class="textlink" href="#${scopeHref('admin/orders', {scope:view.scope, attention}, {})}">Clear search</a></p>` : '';
+    return {title:'Orders', body:`<div class="board-tools">${nav.primary}${search}</div>${notice}${matches}${empty ? `<div class="section-card">${emptyState(...empty)}</div>` : board}`,
+      bind:() => {
+        rememberStage($('#admin-orders-board'), storage, group => scopeHref('admin/orders', {scope:view.scope, q:view.q, attention}, {group}));
+        const form = $('#admin-order-search'); form.onsubmit = e => { e.preventDefault(); location.hash = '#' + scopeHref('admin/orders', {scope:view.scope, attention, group:$('#admin-orders-board')?.dataset.open || ''}, {q:form.elements.q.value.trim()}); };
+      }};
   },
   async 'admin/categories'() {
     const cats = await api('/admin/categories');
@@ -318,7 +422,7 @@ const adminPages = {
 function deleteUserDialog(id) {
   const u = adminUsersCache[id], self = id === account.id, dialog = $('#modal');
   dialog.innerHTML = `<form id="delete-user-form" class="modal-form"><h2>Delete ${esc(userName(u))}?</h2><p>The account, its host application and its sessions are removed permanently. Accounts with listings, orders, printing jobs or custom requests cannot be deleted.${self ? ' <strong>This is your own account.</strong>' : ''}</p><label>Your administrator password<input name="password" type="password" maxlength="128" autocomplete="current-password" required></label><p class="form-error" role="alert"></p><div class="modal-actions"><button type="button" class="secondary" data-close-modal>Cancel</button><button class="danger">Delete account</button></div></form>`;
-  dialog.showModal();
+  nameDialog(dialog); dialog.showModal();
   const form = $('#delete-user-form');
   form.onsubmit = async e => {
     e.preventDefault(); const button = form.querySelector('.danger'); button.disabled = true;
@@ -334,7 +438,7 @@ async function manageProduct(id, action) { if (!confirm(action === 'remove' ? 'R
 let printerSuggestions = [];
 async function approvePrinterSuggestion(n) {
   const p = printerSuggestions[n];
-  const ok = await actionDialog({title:'Add as unverified?', confirm:'Add to catalogue', busy:'Adding…', body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(p.manufacturer + ' ' + p.model)}</strong><span class="ad-job-meta">${esc(`${p.x} × ${p.y} × ${p.z} mm · ${p.technology}`)}</span></div></div><ul class="ad-notes"><li>The printer joins the catalogue with the host's specifications, marked unverified.</li><li>No materials are assumed: hosts cannot offer any until the specifications are verified.</li></ul>`, run:() => api(p.approve, {method:'POST'})});
+  const ok = await actionDialog({title:'Add as unverified?', confirm:'Add to catalogue', busy:'Adding…', refresh:() => render(), body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(p.manufacturer + ' ' + p.model)}</strong><span class="ad-job-meta">${esc(`${p.x} × ${p.y} × ${p.z} mm · ${p.technology}`)}</span></div></div><ul class="ad-notes"><li>The printer joins the catalogue with the host's specifications, marked unverified.</li><li>No materials are assumed: hosts cannot offer any until the specifications are verified.</li></ul>`, run:() => api(p.approve, {method:'POST'})});
   if (ok) { toast('Printer added to the catalogue'); render(); }
 }
 // Verify specs: the administrator checks every field; the entry is saved as verified.
@@ -342,7 +446,7 @@ async function verifyPrinterSuggestion(n) {
   const p = printerSuggestions[n], materials = await api('/materials');
   const checks = tech => materials.filter(m => m.technology === tech).map(m => `<label class="check"><input type="checkbox" name="materials" value="${esc(m.name)}"> ${esc(m.name)}</label>`).join('');
   const body = `<form class="ad-form" id="verify-printer" novalidate><p class="muted">${esc(p.manufacturer + ' ' + p.model)} · suggested ${p.origin === 'revision' ? 'in an equipment update' : 'in a host application'}${p.suggested_by ? ' by ' + esc(p.suggested_by) : ''}</p><div class="fields">${uiSelect({name:'technology', label:'Technology', value:p.technology, className:'cf-select-field wide', options:[['FDM', 'FDM / FFF'], ['RESIN', 'Resin']]})}<label>Build volume X (mm)<input name="x" type="number" min="1" max="5000" step="0.01" required value="${p.x}"></label><label>Y (mm)<input name="y" type="number" min="1" max="5000" step="0.01" required value="${p.y}"></label><label>Z (mm)<input name="z" type="number" min="1" max="5000" step="0.01" required value="${p.z}"></label><label class="wide">Source<input name="source" type="url" required placeholder="https://manufacturer.example/specs"></label><fieldset class="wide verify-materials"><legend>Supported materials</legend><div data-material-checks>${checks(p.technology)}</div></fieldset><label class="wide">Limitations <span class="optional">(optional)</span><textarea name="limitations" rows="2" maxlength="2000"></textarea></label></div></form>`;
-  const ok = await actionDialog({title:'Verify printer specifications', confirm:'Save as verified', busy:'Saving…', body, setup:d => {
+  const ok = await actionDialog({title:'Verify printer specifications', confirm:'Save as verified', busy:'Saving…', body, refresh:() => render(), setup:d => {
     d.querySelector('[data-select=technology] input[type=hidden]').addEventListener('change', e => { d.querySelector('[data-material-checks]').innerHTML = checks(e.target.value); });
   }, run:() => {
     const form = $('#verify-printer'); if (!form.reportValidity()) throw Error('Enter the build volume and the source of the specifications.');
@@ -383,19 +487,16 @@ const jobSince = j => JOB_SINCE[j.status] ? `${JOB_SINCE[j.status]} ${timeAgo(j.
    and the actions this stage allows. Buyer contact, address and shipment stay in Details. */
 const jobFile = i => i.cad_format ? `${i.cad_format} model` : '';
 function jobCard(j, level = 3) {
-  const i = j.item, shipped = j.status === 'shipped' && j.shipment;
-  // In production holds two statuses: say which (accepted, or printing reported).
-  const sub = ['accepted', 'printing'].includes(j.status) ? `<span class="jc-sub">${jobBadge(j.status, false)}</span>` : '';
+  const i = j.item, shipped = ['shipped', 'completed'].includes(j.status) && j.shipment;
+  // In production holds two statuses: say which (accepted, or printing reported). History shows the outcome.
+  const sub = ['accepted', 'printing', 'completed', 'cancelled'].includes(j.status) ? `<span class="jc-sub">${jobBadge(j.status, false)}</span>` : '';
   const spec = [i.dimensions, jobFile(i)].filter(Boolean).map(esc).join('<span aria-hidden="true"> · </span>');
-  return `<li class="wf-card job-card jc" data-job-card="${j.id}" data-search="${esc(jobSearchText(j))}">${orderLineThumb(i, 'jc-thumb')}<div class="jc-main"><h${level} class="jc-title">${esc(i.title)}</h${level}><p class="jc-config">${orderLineConfig(i)}</p>${spec ? `<p class="jc-spec">${spec}</p>` : ''}<p class="jc-ref">Order ${esc(jobOrderRef(j))}</p></div><div class="jc-side"><span class="jc-qty">× ${i.quantity}<span class="sr-only"> ${i.quantity === 1 ? 'piece' : 'pieces'}</span></span><strong class="jc-value">${money(i.price_cents * i.quantity / 100)}</strong><span class="jc-since">${esc(jobSince(j))}</span>${sub}</div>${shipped ? `<p class="jc-note">${esc(j.shipment.carrier)} · Tracking ${jobTracking(j.shipment)}</p>` : ''}<div class="jc-foot"><div class="wf-card-links"><button type="button" class="wf-link" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button>${jobDownload(j, 'wf-link')}</div>${jobStepButton(j, 'btn btn-sm jc-primary')}</div></li>`;
+  // Finished jobs have nothing to do: Details sits under the value, with no footer row.
+  const details = `<button type="button" class="wf-link" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button>`, foot = jobStep(j) || jobDownload(j, 'wf-link');
+  return `<li class="wf-card job-card jc" data-job-card="${j.id}" data-search="${esc(jobSearchText(j))}">${orderLineThumb(i, 'jc-thumb')}<div class="jc-main"><h${level} class="jc-title">${esc(i.title)}</h${level}><p class="jc-config">${orderLineConfig(i)}</p>${spec ? `<p class="jc-spec">${spec}</p>` : ''}<p class="jc-ref">Order ${esc(jobOrderRef(j))}</p></div><div class="jc-side"><span class="jc-qty">× ${i.quantity}<span class="sr-only"> ${i.quantity === 1 ? 'piece' : 'pieces'}</span></span><strong class="jc-value">${money(i.price_cents * i.quantity / 100)}</strong><span class="jc-since">${esc(jobSince(j))}</span>${sub}${foot ? '' : `<div class="wf-card-links jc-side-links">${details}</div>`}</div>${shipped ? `<p class="jc-note">${esc(j.shipment.carrier)} · Tracking ${jobTracking(j.shipment)}</p>` : ''}${foot ? `<div class="jc-foot"><div class="wf-card-links">${details}${jobDownload(j, 'wf-link')}</div>${jobStepButton(j, 'btn btn-sm jc-primary')}</div>` : ''}</li>`;
 }
 // A collapsed stage's preview: the product in its colour, small.
 const jobPeek = j => orderLineThumb(j.item, 'sb-peek-thumb');
-// Job history: one compact row per job, with the product, its configuration and the outcome.
-function jobRow(j) {
-  const i = j.item;
-  return `<article class="list-row job-row" data-search="${esc(jobSearchText(j))}">${orderLineThumb(i)}<div class="row-main"><span class="row-title">${esc(i.title)} × ${i.quantity}</span><span class="row-meta job-meta">${orderLineConfig(i)}<span>${esc([i.dimensions, jobOrderRef(j)].filter(Boolean).join(' · '))}</span></span></div><span class="row-value">${money(i.price_cents * i.quantity / 100)}<small>${money(i.price_cents / 100)} / unit</small></span><span class="row-status">${jobBadge(j.status)}<small class="job-status-note">${esc(safeDate(j.updated_at))}</small></span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" data-job-details="${j.id}" aria-haspopup="dialog">Details<span class="sr-only"> for ${esc(i.title)}</span></button></div></article>`;
-}
 /* Job steps are confirmed in a site-styled dialog (not the browser's confirm box) that shows which
    job changes and what the step means for the buyer. */
 let hostJobs = {};
@@ -426,15 +527,17 @@ function jobSummary(j, action) {
     <ol class="ad-flow" aria-label="Job progress">${JOB_FLOW.map(([s, label], n) => `<li class="${n < reached ? 'done' : n === reached ? 'next' : ''}"${n === reached ? ' aria-current="step"' : ''}><span aria-hidden="true"></span>${label}${s === 'completed' ? '<small>Awaiting buyer confirmation</small>' : ''}</li>`).join('')}</ol>`;
 }
 /** A themed confirmation. run() does the work; errors stay in the dialog. Resolves true on success. */
-function actionDialog({title, body, confirm, busy, run, setup, initialFocus}) {
+// refresh: redraws the page after a refusal because things changed meanwhile (403, 404, 409). The reason stays in the
+// dialog, and when it closes the page shows what the server now says.
+function actionDialog({title, body, confirm, busy, run, setup, initialFocus, danger, refresh}) {
   return new Promise(resolve => {
     let d = $('#action-dialog');
     if (!d) { d = document.createElement('dialog'); d.id = 'action-dialog'; d.className = 'ad-dialog'; d.setAttribute('aria-labelledby', 'ad-title'); document.body.append(d); keepFocusInside(d); }
-    d.innerHTML = `<div class="ad"><header class="ad-head"><h2 id="ad-title">${esc(title)}</h2><button type="button" class="icon-btn" data-ad-cancel aria-label="Close">${icon('close')}</button></header><div class="ad-body">${body}<p class="ad-error" role="alert"></p></div><div class="ad-foot"><button type="button" class="btn-ghost" data-ad-cancel>Cancel</button><button type="button" class="primary" data-ad-confirm>${esc(confirm)}</button></div></div>`;
-    let working = false, result = false;
+    d.innerHTML = `<div class="ad"><header class="ad-head"><h2 id="ad-title">${esc(title)}</h2><button type="button" class="icon-btn" data-ad-cancel aria-label="Close">${icon('close')}</button></header><div class="ad-body">${body}<p class="ad-error" role="alert"></p></div><div class="ad-foot"><button type="button" class="btn-ghost" data-ad-cancel>Cancel</button><button type="button" class="${danger ? 'danger' : 'primary'}" data-ad-confirm>${esc(confirm)}</button></div></div>`;
+    let working = false, result = false, refused = false;
     const button = d.querySelector('[data-ad-confirm]'), error = d.querySelector('.ad-error');
     const finish = ok => { result = ok; document.documentElement.classList.remove('dialog-open'); d.close(); };
-    d.onclose = () => resolve(result);
+    d.onclose = () => { resolve(result); if (refused && !result) refresh(); };
     d.oncancel = e => { e.preventDefault(); if (!working) finish(false); };   // Escape
     let outside = false; d.onpointerdown = e => { outside = e.target === d; };
     d.onclick = async e => {
@@ -443,7 +546,7 @@ function actionDialog({title, body, confirm, busy, run, setup, initialFocus}) {
       if (!e.target.closest('[data-ad-confirm]')) return;
       working = true; button.disabled = true; button.textContent = busy; error.textContent = '';
       try { await run(); finish(true); }
-      catch (err) { working = false; button.disabled = false; button.textContent = confirm; error.textContent = err.message || 'Something went wrong. Please try again.'; }
+      catch (err) { working = false; button.disabled = false; button.textContent = confirm; error.textContent = err.message || 'Something went wrong. Please try again.'; refused = !!refresh && [403, 404, 409].includes(err.status); }
     };
     document.documentElement.classList.add('dialog-open');
     // Enter inside a form in the dialog confirms instead of submitting the page.
@@ -464,12 +567,13 @@ jobAction = async function(id, action) {
     run:async () => {
       const extra = step.form ? shipmentInput($('#shipment-form')) : {};
       try { return await api(`/host/jobs/${id}/${action === 'accept' ? 'accept' : 'status'}`, {method:'POST', ...(action === 'accept' ? {} : {body:JSON.stringify({status:action, ...extra})})}); }
-      // Taken meanwhile, or no longer one this host may accept (stock or equipment changed):
+      // Taken or cancelled meanwhile, or no longer one this host may accept (stock or equipment changed):
       // the reason stays in the dialog, and the list is refreshed when it closes.
-      catch (e) { refused = action === 'accept' && [403, 404, 409].includes(e.status); throw e; }
+      catch (e) { refused = [403, 404, 409].includes(e.status); throw e; }
     }});
   if (!ok && !refused) { if (trigger?.isConnected) trigger.focus(); return; }
   if (ok) toast(step.done);
+  if (sectionIsOpen()) return render();   // the dialog redraws with the page, and keeps focus
   // Once the page has refreshed, the open stage stays open. Focus returns to the same job when it is still
   // there (its next step, or its details); a job that moved on to another stage leaves focus on the card now
   // in its place (or the stage itself), and the stage it moved to lights up briefly with its new count.
@@ -490,7 +594,6 @@ jobAction = async function(id, action) {
 /* Host jobs: Active jobs (what to accept, make and ship) and Job history (completed and cancelled),
    split by the API (app/lifecycle.py). A shipped job stays active until its buyer confirms receipt. */
 inPageRoutes.add('#host/jobs');
-const HOST_SCOPE_NAMES = {active:'Active jobs', history:'Job history'};
 // Earlier links named the status in the path (#host/jobs/accepted); they open the same view.
 const LEGACY_JOB_PATHS = {available:['active', 'available'], accepted:['active', 'in-production'], 'in-progress':['active', 'in-production'], ready:['active', 'ready'], shipped:['active', 'shipped'], completed:['history', 'completed'], cancelled:['history', 'cancelled']};
 // Accepted and In progress were separate stages before In production joined them.
@@ -541,6 +644,10 @@ document.addEventListener('click', e => { const b = e.target.closest('[data-job-
 const hostStageCard = s => `<a class="ho-stat" href="#host/jobs?group=${s.key}" data-stage="${s.key}" data-tone="${s.tone}"><span class="ho-stat-head"><span class="ho-stat-icon" aria-hidden="true">${icon(s.icon)}</span><span class="ho-stat-label">${esc(s.label)}</span></span><strong class="ho-stat-count">${s.count}</strong><small class="ho-stat-hint">${esc(s.summary)}</small></a>`;
 const hostAlert = ([tone, text, href, label]) => `<div class="banner ${tone}"><span>${esc(text)}</span><a class="btn-ghost btn-sm" href="#${href}">${esc(label)}</a></div>`;
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
+// Job history stages (app/lifecycle.py JOB_SCOPES history): how each looks, and what an empty one says.
+const HOST_HISTORY_UI = {completed:{icon:'check', tone:'completed', hint:'The buyer confirmed receipt.', empty:'No completed jobs yet.'},
+  cancelled:{icon:'ban', tone:'cancelled', hint:'Cancelled before they were delivered.', empty:'No cancelled jobs.'}};
+const HOST_HISTORY_KEY = 'openlabs-host-history-stage', HISTORY_PAGE = 12;
 const HOST_EMPTY_STAGE = {available:'No new jobs match your printers and stock right now.', 'in-production':'Nothing in production. Accepted jobs appear here.', ready:'Nothing waiting to be shipped.', shipped:'Nothing waiting for a buyer’s confirmation.'};
 const hostPages = {
   async 'host'() {
@@ -570,8 +677,10 @@ const hostPages = {
     const view = hostJobsView(route), active = view.scope === 'active';
     let data;
     // Active jobs come all at once (one board, every stage); history is filtered by page.
-    try { data = await api('/host/jobs?' + new URLSearchParams(active ? {scope:'active'} : {scope:'history', group:view.group, q:view.q, page:view.page})); }
+    const depthView = view.q, perPage = stagePageSize('job-history-board', HISTORY_PAGE, depthView);
+    try { data = await api('/host/jobs?' + new URLSearchParams(active ? {scope:'active'} : {scope:'history', columns:true, q:view.q, per_page:perPage})); }
     catch (e) { if (e.status === 422 && view.group !== 'all') { location.replace('#' + hostJobsHref(view, {group:'all', page:1})); return {title:'Printing jobs', body:''}; } throw e; }
+    if (!active) data.items = data.columns.flatMap(c => c.items);
     rememberJobs(data.items);
     const stages = hostStages(data);
     setNavCount('jobs', stages.find(g => g.key === 'available').count);
@@ -579,23 +688,31 @@ const hostPages = {
       const historyLink = `<a class="btn-ghost btn-sm" href="#host/jobs?scope=history">${icon('history')}Job history<span class="segment-count">${data.scopes.history.total}</span></a>`;
       const intro = '<p class="muted ws-intro">Accept jobs that fit your approved printers and stocked colours, make them, then ship them. Jobs from your own orders are never listed. Completed and cancelled jobs move to Job history.</p>';
       if (!data.items.length) return {title:'Printing jobs', action:historyLink, body:`${intro}<div class="section-card">${emptyState("You're all caught up", 'No jobs to accept or make right now. New order requests matching your printers and materials appear here.')}</div>`};
-      const open = stages.some(s => s.key === view.group) ? view.group : rememberedHostStage();
-      const board = stageBoard({id:'host-jobs-board', label:'Active jobs', stages, items:data.items, card:jobCard, peek:jobPeek, level:2, open, empty:c => HOST_EMPTY_STAGE[c.key] || 'Nothing here right now.'});
+      const open = stageFromAddress(stages, view.group, rememberedHostStage());
+      const board = stageBoard({id:'host-jobs-board', label:'Active jobs', stages, items:data.items, card:jobCard, peek:jobPeek, level:2, open, empty:c => HOST_EMPTY_STAGE[c.key] || 'Nothing here right now.',
+        section:{one:'manufacturing job', many:'manufacturing jobs', search:'Search jobs', sorts:sectionSorts({recent:j => j.id, stage:j => sectionWhen(j.updated_at), reference:j => j.order_reference})}});
       // Switching stage rewrites the address (no new history entry, no reload) so a refresh, or a return
       // from another page, opens the same stage.
       const remember = (key, address) => { try { sessionStorage.setItem(HOST_STAGE_KEY, key); } catch (e) {} if (address) history.replaceState(history.state, '', '#' + hostJobsHref({...view, group:key})); };
       return {title:'Printing jobs', action:historyLink, body:`${intro}<div class="wf-toolbar">${searchBox('host-jobs-search', 'Search active jobs')}</div><div id="host-jobs-search">${board}${listEmpty('No active jobs match your search.')}</div>`,
         bind:() => { const b = $('#host-jobs-board'); remember(b.dataset.open, false); b.addEventListener('stagechange', e => remember(e.detail.key, true)); }};
     }
-    const nav = scopeNav({label:'Printing jobs', base:'host/jobs', data, names:HOST_SCOPE_NAMES});
-    const label = (data.scopes.history.groups.find(g => g.key === data.group) || {}).label;
-    const empty = !data.scopes.history.total ? ['No job history yet', 'Jobs move here once their buyer confirms receipt, or if they are cancelled.']
-      : view.q ? ['No jobs match your search', `Nothing in your job history matches “${view.q}”.`] : [`No ${(label || '').toLowerCase()} jobs`, 'None of your past jobs has this status.'];
-    const tools = `<form class="search-field" id="job-history-search" role="search">${icon('search')}<label class="sr-only" for="job-q">Search job history</label><input id="job-q" type="search" name="q" value="${esc(view.q)}" placeholder="Search by product" autocomplete="off" maxlength="80"></form>`;
-    const list = data.items.length ? `<div class="list job-history" id="job-list">${data.items.map(jobRow).join('')}</div>` : `<div class="list">${emptyState(...empty)}</div>`;
+    // Job history: Completed and Cancelled, the first page of each at once; Load more within a stage.
+    // Search runs on the server, so every stage counts its own matches.
+    const historyStages = data.columns.map(c => ({...c, ...HOST_HISTORY_UI[c.key]}));
+    const open = stageFromAddress(historyStages, view.group, rememberedStage(HOST_HISTORY_KEY));
+    const board = stageBoard({id:'job-history-board', label:'Job history', stages:historyStages, card:jobCard, peek:jobPeek, level:2, open, onLoad:rememberJobs,
+      empty:c => view.q ? `No ${c.label.toLowerCase()} jobs match “${view.q}”.` : HOST_HISTORY_UI[c.key]?.empty || 'Nothing here.',
+      depthView, load:(group, page, extra = {}) => api('/host/jobs?' + new URLSearchParams({scope:'history', group, q:view.q, page, per_page:perPage, ...extra})),
+      section:{one:'job', serverSearch:true, sorts:sectionSorts({recent:j => sectionWhen(j.updated_at), reference:j => j.order_reference})}});
+    const tools = `<div class="board-tools"><form class="search-field" id="job-history-search" role="search">${icon('search')}<label class="sr-only" for="job-q">Search job history</label><input id="job-q" type="search" name="q" value="${esc(view.q)}" placeholder="Search by product" autocomplete="off" maxlength="80"></form>${view.q ? `<a class="btn-ghost btn-sm" href="#${hostJobsHref({...view, q:''}, {page:1})}">Clear search</a>` : ''}</div>`;
+    const content = !data.scopes.history.total ? `<div class="section-card">${emptyState('No job history yet', 'Jobs move here once their buyer confirms receipt, or if they are cancelled.')}</div>` : tools + board;
     return {title:'Job history', action:`<a class="btn-ghost btn-sm" href="#host/jobs">${icon('back')}Active jobs<span class="segment-count">${data.scopes.active.total}</span></a>`,
-      body:`<p class="muted ws-intro">Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.</p>${toolbar(nav.secondary, tools)}${list}${pager(page => hostJobsHref(view, {page}), data.page, data.pages)}`,
-      bind:() => { const form = $('#job-history-search'); form.onsubmit = e => { e.preventDefault(); location.hash = '#' + hostJobsHref(view, {q:form.elements.q.value.trim(), page:1}); }; }};
+      body:`<p class="muted ws-intro">Completed and cancelled jobs, with the product, material, colour and shipment they had. Nothing here can be changed.</p>${content}`,
+      bind:() => {
+        rememberStage($('#job-history-board'), HOST_HISTORY_KEY, key => hostJobsHref({...view, group:key}, {page:1}));
+        const form = $('#job-history-search'); if (form) form.onsubmit = e => { e.preventDefault(); location.hash = '#' + hostJobsHref({...view, group:$('#job-history-board')?.dataset.open || view.group}, {q:form.elements.q.value.trim(), page:1}); };
+      }};
   },
   async 'my-listings'() {
     const items = (await api('/listings/mine')).filter(p => !p.removed);
@@ -613,8 +730,6 @@ const hostPages = {
 
 /* Listing editor inside the workspace of the signed-in role. */
 listingPage = function(title, body) { return ['admin', 'host'].includes(account?.role) ? workspacePage(account.role, title, body) : layout(head(title, 'Your products') + body); };
-// All scripts are loaded: draw the final navigation and page once.
-render();
 
 
 /* Read-only review dialogs for Approvals: everything submitted, before Approve or Reject. */

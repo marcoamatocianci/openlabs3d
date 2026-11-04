@@ -18,6 +18,5 @@ let homeRequest=0;
 render=function(){collectionRender();const route=location.hash||'#home';if(route==='#home'){const request=++homeRequest;Promise.all([api('/listings?per_page=6'),api('/listings?featured=true&per_page=6')]).then(([latest,featured])=>{if(request!==homeRequest||(location.hash||'#home')!=='#home')return;homeLatest=latest.items.map(asProduct);homeFeatured=featured.items.map(asProduct);for(const p of homeLatest)if(homeFeatured.length<3&&!homeFeatured.some(x=>x.id===p.id))homeFeatured.push(p);for(const p of [...homeLatest,...homeFeatured]){state.products=state.products.filter(x=>x.id!==p.id);state.products.push(p)}$('#app').innerHTML=home()}).catch(e=>{$('#app').innerHTML=layout('<p role="alert">Unable to load products. Please refresh to retry.</p>')})}};
 state.products=state.products.filter(p=>p.api);
 document.querySelector('.demo').innerHTML='MADE TO ORDER <span>Payments and delivery arranged with your printing host</span><a href="#about">How it works ↗</a>';
-render();
 const collectionRows=rows;
 rows=function(items,adminView=false){return collectionRows(items.map(p=>p.images.length||!Object.keys(p.color_images||{}).length?p:{...p,images:[{url:Object.values(p.color_images)[0],thumbnail_url:Object.values(p.color_images)[0]}]}),adminView)};

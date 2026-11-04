@@ -89,7 +89,11 @@ def test_validation_and_access_rules():
 
 def test_unverified_accounts_and_administrators_cannot_submit():
     fresh=TestClient(app)
-    r=fresh.post('/api/auth/register',json={'email':'cr-unverified@example.org','password':'LongPasswordForTest2026','username':'cr_unverified'})
+    fresh.post('/api/auth/register',json={'email':'cr-unverified@example.org','password':'LongPasswordForTest2026','username':'cr_unverified'})
+    # Only a legacy account can be signed in without having verified.
+    with SessionLocal() as db:
+        db.scalar(select(models.User).where(models.User.email=='cr-unverified@example.org')).legacy_email_access=True;db.commit()
+    r=fresh.post('/api/auth/login',json={'email':'cr-unverified@example.org','password':'LongPasswordForTest2026'})
     assert submit(fresh,r.json()['csrf_token'],payload('request_key_unverified1')).status_code==403
     admin,admin_token=admin_client()
     assert submit(admin,admin_token,payload('request_key_admin_00001')).status_code==403

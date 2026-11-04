@@ -26,9 +26,9 @@ def session(browser, who, w=1440, h=900, theme='light', touch=False):
 
 def api(ctx, path): return ctx.request.get(BASE + '/api' + path).json()
 def overflow(page): return page.evaluate('document.documentElement.scrollWidth - innerWidth')
-def board(page, sel='[data-wf-board]'): page.wait_for_selector(sel); page.wait_for_function("!document.querySelector('.ws-main[aria-busy], #bo-results[aria-busy]')")
+def board(page, sel='[data-stage-board]'): page.wait_for_selector(sel); page.wait_for_function("!document.querySelector('.ws-main[aria-busy], #bo-results[aria-busy]')")
 # {stage key: [ids]} as drawn, for job cards (data-job-card) or order cards (data-order-id).
-COLUMNS = """([sel, attr]) => Object.fromEntries([...document.querySelectorAll(sel + ' .wf-column')].map(c => [c.dataset.stage, [...c.querySelectorAll('[' + attr + ']')].map(e => +e.getAttribute(attr))]))"""
+COLUMNS = """([sel, attr]) => Object.fromEntries([...document.querySelectorAll(sel + ' .sb-col')].sort((a, b) => a.dataset.index - b.dataset.index).map(c => [c.dataset.stage, [...c.querySelectorAll('[' + attr + ']')].map(e => +e.getAttribute(attr))]))"""
 def thumbs_ready(page):
     page.wait_for_function("[...document.querySelectorAll('.line-thumb img[data-color]')].filter(i => i.checkVisibility() && i.getBoundingClientRect().top < innerHeight && i.getBoundingClientRect().bottom > 0 && i.getBoundingClientRect().right > 0 && i.getBoundingClientRect().left < innerWidth).every(i => i.classList.contains('is-ready'))")
 def confirm(page):
@@ -60,26 +60,27 @@ with sync_playwright() as pw:
     ok(p.url.endswith('#host/jobs?group=ready') and p.locator('.sb-col.is-open').get_attribute('data-stage') == 'ready', 'Ready to ship card opens Printing jobs on Ready to ship')
 
     # ---------- Printing jobs: expandable board (desktop) ----------
-    STAGES = """sel => Object.fromEntries([...document.querySelectorAll(sel + ' .sb-col')].map(c => [c.dataset.stage, [...c.querySelectorAll('[data-job-card]')].map(e => +e.dataset.jobCard)]))"""
+    # In workflow order (data-index): on the mosaic board the open stage comes first in the page.
+    STAGES = """sel => Object.fromEntries([...document.querySelectorAll(sel + ' .sb-col')].sort((a, b) => a.dataset.index - b.dataset.index).map(c => [c.dataset.stage, [...c.querySelectorAll('[data-job-card]')].map(e => +e.dataset.jobCard)]))"""
     drawn = p.evaluate(STAGES, '#host-jobs-board')
     ok(list(drawn) == [g['key'] for g in groups], f'stages follow the API order {list(drawn)}')
     ok(all(len(drawn[g['key']]) == g['count'] for g in groups), 'stage counts match the API counts')
     ok(all(j['status'] in next(g['statuses'] for g in groups if j['id'] in drawn[g['key']]) for j in data['items']), 'every job sits in the stage of its status')
     ok(sorted(i for ids in drawn.values() for i in ids) == sorted(j['id'] for j in data['items']), 'each active job appears exactly once')
-    ok(p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-head [data-sb-count]')].map(e => +e.textContent)") == [len(v) for v in drawn.values()], 'stage headers show their counts')
+    ok(p.evaluate("Object.fromEntries([...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => [c.dataset.stage, +c.querySelector('.sb-head [data-sb-count]').textContent]))") == {k: len(v) for k, v in drawn.items()}, 'stage headers show their counts')
     ok(p.locator('#app').get_by_text('Start printing').count() == 0, 'no Start printing step anywhere')
     p.evaluate('window.__still = 1'); requests.clear()
-    geometry = """() => { const b = document.querySelector('#host-jobs-board .sb-track').getBoundingClientRect(); return [...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => { const r = c.getBoundingClientRect(), t = c.querySelector('.sb-title'); return {stage:c.dataset.stage, open:c.classList.contains('is-open'), share:r.width / b.width, width:r.width, top:r.top, cards:[...c.querySelectorAll('[data-job-card]')].filter(e => e.checkVisibility()).length, fits:t.scrollWidth <= t.clientWidth + 1 && t.checkVisibility()}; }); }"""
+    geometry = """() => { const b = document.querySelector('#host-jobs-board .sb-track').getBoundingClientRect(); return [...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => { const r = c.getBoundingClientRect(), t = c.querySelector('.sb-title'); return {stage:c.dataset.stage, open:c.classList.contains('is-open'), share:r.width / b.width, width:r.width, top:r.top, left:r.left, right:r.right, mosaic:!!c.closest('.sb-mosaic'), cards:[...c.querySelectorAll('[data-job-card]')].filter(e => e.checkVisibility()).length, fits:t.scrollWidth <= t.clientWidth + 1 && t.checkVisibility()}; }); }"""
     for key in ('in-production', 'shipped', 'available', 'ready'):
         p.locator(f'#host-jobs-board .sb-head[data-sb-open="{key}"]').click(); p.wait_for_timeout(450)
         cols = p.evaluate(geometry)
         opened = [c for c in cols if c['open']]
         ok(len(opened) == 1 and opened[0]['stage'] == key, f'{key}: exactly one stage open')
-        ok(.55 <= opened[0]['share'] <= .65, f'{key}: the open stage takes {opened[0]["share"]:.0%} of the board')
+        ok(.65 <= opened[0]['share'] <= .75, f'{key}: the open stage takes {opened[0]["share"]:.0%} of the board')
         ok(all(c['width'] >= 100 and c['cards'] == 0 and c['fits'] for c in cols if not c['open']), f'{key}: collapsed stages are compact (≥100 px), show no cards, and their names fit')
         ok(opened[0]['cards'] == len(drawn[key]), f'{key}: the open stage shows its {len(drawn[key])} cards')
-        ok(len({round(c['top']) for c in cols}) == 1, f'{key}: the four stages sit side by side')
-        ok(p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-head')].map(h => h.getAttribute('aria-expanded'))") == [str(s == key).lower() for s in drawn], f'{key}: aria-expanded marks only the open stage')
+        ok(all(c['mosaic'] and c['left'] >= opened[0]['right'] for c in cols if not c['open']) and not opened[0]['mosaic'], f'{key}: the other stages share the mosaic on the right')
+        ok(p.evaluate("Object.fromEntries([...document.querySelectorAll('#host-jobs-board .sb-head')].map(h => [h.dataset.sbOpen, h.getAttribute('aria-expanded')]))") == {s: str(s == key).lower() for s in drawn}, f'{key}: aria-expanded marks only the open stage')
         ok(p.url.endswith(f'#host/jobs?group={key}'), f'{key}: the address remembers the stage')
     ok(p.evaluate('window.__still') == 1 and not requests, f'switching stages: no reload and no API request ({len(requests)})')
     labels = {'available': 'Accept job', 'in-production': 'Mark ready to ship', 'ready': 'Mark shipped'}
@@ -106,10 +107,10 @@ with sync_playwright() as pw:
     # Search counts the matches of every stage; the open one says when none of its own match.
     p.fill('[data-filter-list="host-jobs-search"]', 'microtube')
     matches = {k: sum(1 for i in v if 'Microtube' in next(j['item']['title'] for j in data['items'] if j['id'] == i)) for k, v in drawn.items()}
-    ok(p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-head [data-sb-count]')].map(e => +e.textContent)") == list(matches.values()), f'search: stage counts become match counts {matches}')
+    ok(p.evaluate("Object.fromEntries([...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => [c.dataset.stage, +c.querySelector('.sb-head [data-sb-count]').textContent]))") == matches, f'search: stage counts become match counts {matches}')
     p.fill('[data-filter-list="host-jobs-search"]', 'no such product'); ok(p.locator('#host-jobs-search [data-filter-empty]').is_visible(), 'search with no match says so')
     p.fill('[data-filter-list="host-jobs-search"]', '')
-    ok(p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-head [data-sb-count]')].map(e => +e.textContent)") == [len(v) for v in drawn.values()], 'clearing the search restores the counts')
+    ok(p.evaluate("Object.fromEntries([...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => [c.dataset.stage, +c.querySelector('.sb-head [data-sb-count]').textContent]))") == {k: len(v) for k, v in drawn.items()}, 'clearing the search restores the counts')
 
     # Accept: the job goes straight to In production; the open stage stays, the next job takes focus.
     p.locator('#host-jobs-board .sb-head[data-sb-open="available"]').click(); p.wait_for_timeout(400)
@@ -160,13 +161,14 @@ with sync_playwright() as pw:
     p.goto(BASE + '/#host/jobs'); board(p, '[data-stage-board]')
     ok(p.locator(f'[data-job-card="{job["id"]}"]').count() == 0, 'a completed job leaves the board')
     ok(p.locator('.sb-col.is-open').get_attribute('data-stage') == 'ready', 'returning to Printing jobs reopens the stage open last')
-    p.locator('.ws-actions a', has_text='Job history').click(); p.wait_for_selector('#job-list .job-row')
+    p.locator('.ws-actions a', has_text='Job history').click(); p.wait_for_selector('#job-history-board')
     hist = api(host, '/host/jobs?scope=history')
-    ok(p.locator('#ws-title').inner_text() == 'Job history' and p.locator(f'#job-list [data-job-details="{job["id"]}"]').count() == 1, 'Job history lists the completed job')
-    ok(p.locator('#job-list .job-row').count() == hist['total'] and all(j['status'] in ('completed', 'cancelled') for j in hist['items']), 'Job history holds only closed jobs')
-    p.locator(f'#job-list [data-job-details="{job["id"]}"]').click(); p.wait_for_selector('#modal[open]')
+    ok(p.locator('#ws-title').inner_text() == 'Job history' and p.locator(f'#job-history-board [data-stage="completed"] [data-job-details="{job["id"]}"]').count() == 1, 'Job history lists the completed job in Completed')
+    ok(p.locator('#job-history-board [data-job-card]').count() == hist['total'] and all(j['status'] in ('completed', 'cancelled') for j in hist['items']), 'Job history holds only closed jobs')
+    ok(p.locator(f'#job-history-board [data-job-card="{job["id"]}"] button.jc-primary, #job-history-board a[download]').count() == 0, 'history cards have no step and no download')
+    p.locator(f'#job-history-board [data-job-details="{job["id"]}"]').click(); p.wait_for_selector('#modal[open]')
     ok(p.locator('#modal .ad-flow .done').count() == 4, 'a completed job shows every step done'); p.keyboard.press('Escape')
-    p.locator('.ws-actions a', has_text='Active jobs').click(); board(p, '[data-stage-board]')
+    p.locator('.ws-actions a', has_text='Active jobs').click(); board(p, '#host-jobs-board')   # Job history has a board of its own
 
     # Overview and Printing jobs agree; legacy stage links still land on the right stage.
     final = p.evaluate(STAGES, '#host-jobs-board')
@@ -183,17 +185,17 @@ with sync_playwright() as pw:
         p.goto(BASE + '/#host/jobs'); board(p, '[data-stage-board]')
     host.close()
 
-    # ---------- Narrower: stage pills above one open stage; side by side again from 900 px ----------
+    # ---------- Narrower: the mosaic while it fits (one column on a tablet), then stage pills above one open stage ----------
     for w, theme in ((320, 'dark'), (390, 'light'), (768, 'dark'), (1024, 'light'), (900, 'dark')):
         ctx, q = session(browser, 'host', w, 860, theme, touch=w <= 430)
         q.goto(BASE + '/#host/jobs?group=available'); board(q, '[data-stage-board]')
         ok(overflow(q) <= 0, f'{w}px {theme}: no page overflow')
         pills = q.evaluate("[...document.querySelectorAll('.sb-pills .chip')].filter(c => c.checkVisibility()).map(c => { const r = c.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height), r.right <= innerWidth, getComputedStyle(c).backgroundColor, c.getAttribute('aria-pressed')]; })")
-        if w == 900:
-            ok(not pills and len(q.evaluate("[...new Set([...document.querySelectorAll('.sb-col')].map(c => Math.round(c.getBoundingClientRect().top)))]")) == 1, '900px: the board is wide enough to expand side by side')
+        if w >= 768:
+            ok(not pills and q.evaluate("document.querySelector('.sb-mosaic').checkVisibility() && document.querySelectorAll('.sb-mosaic > .sb-col').length === 3"), f'{w}px: wide enough for the open stage and the mosaic')
         else:
             rows = len({t for t, *_ in pills})
-            ok(len(pills) == 4 and rows == (2 if w < 700 else 1) and all(h >= 44 and inside for _, h, inside, *_ in pills), f'{w}px: four 44 px stage pills in {rows} row(s), all on screen')
+            ok(len(pills) == 4 and rows == 2 and all(h >= 44 and inside for _, h, inside, *_ in pills), f'{w}px: four 44 px stage pills in {rows} row(s), all on screen')
             ok([bg for *_, bg, pressed in pills if pressed == 'true'] == ['rgb(29, 53, 87)'], f'{w}px {theme}: the selected stage is navy')
             ok(q.evaluate("[...document.querySelectorAll('.sb-col')].filter(c => c.checkVisibility()).map(c => c.dataset.stage)") == ['available'], f'{w}px: only the open stage is shown')
             q.locator('.sb-pills [data-sb-open="ready"]').click(); q.wait_for_timeout(350)
@@ -217,6 +219,8 @@ with sync_playwright() as pw:
     ok(all(o['status'] in next(g['statuses'] for g in ogroups if o['id'] in drawn[g['key']]) for o in orders['items']), 'every order sits in the column of its status')
     ok(sorted(i for v in drawn.values() for i in v) == sorted(o['id'] for o in orders['items']), 'each current order appears once (multi-product orders included)')
     mixed = next(o for o in orders['items'] if len({j['status'] for j in o['jobs']}) > 2)
+    open_stage = lambda key: (b.locator(f'#bo-board .sb-head[data-sb-open="{key}"]').click(), b.wait_for_timeout(380))
+    if b.locator('#bo-board').get_attribute('data-open') != 'in-progress': open_stage('in-progress')
     mcard = b.locator(f'#bo-board [data-order-id="{mixed["id"]}"]')
     ok(mixed['id'] in drawn['in-progress'] and 'Partly shipped' in mcard.locator('.bo-card-stage').inner_text(), 'mixed order: In progress, marked partly shipped')
     ok('1 shipped · 1 in production · 1 awaiting a host' in mcard.inner_text(), 'mixed order: every product stage is counted on the card')
@@ -228,6 +232,7 @@ with sync_playwright() as pw:
 
     # Details dialog: each product with its own stage; the address can be changed until something ships.
     pending = next(o for o in orders['items'] if o['status'] == 'pending' and len(o['jobs']) == 1)
+    open_stage('pending')
     b.locator(f'#bo-board [data-order-id="{pending["id"]}"] [data-order-details]').click(); b.wait_for_selector('#modal[open]')
     ok(b.locator('#modal .bo-detail-line').count() == len(pending['items']) and b.locator('#modal [data-change-address]').is_enabled(), 'details: products listed, address editable')
     b.locator('#modal [data-change-address]').click(); b.wait_for_selector('#action-dialog[open]')
@@ -241,15 +246,16 @@ with sync_playwright() as pw:
 
     # Confirm delivery from the board: the order completes and moves to Previous orders.
     shipped = next(o for o in orders['items'] if o['status'] == 'shipped')
+    open_stage('shipping')
     b.locator(f'#bo-board [data-order-id="{shipped["id"]}"] [data-received]').click(); confirm(b)
     b.wait_for_function(f"!document.querySelector('#bo-board [data-order-id=\"{shipped['id']}\"]')")
     ok('Previous orders' in b.locator('#toast').inner_text(), 'completed order: the toast says where it went')
-    b.locator('#bo-toolbar .scope-history').click(); b.wait_for_selector('.bo-history-list')
-    ok(b.locator(f'.bo-row[data-order-id="{shipped["id"]}"]').count() == 1, 'it is in Previous orders')
+    b.locator('#bo-toolbar .scope-history').click(); b.wait_for_selector('#bo-history-board')
+    ok(b.locator(f'#bo-history-board [data-stage="completed"] [data-order-id="{shipped["id"]}"]').count() == 1, 'it is in Previous orders, under Completed')
     b.fill('#bo-q', shipped['reference'][-6:]); b.press('#bo-q', 'Enter')
-    b.wait_for_function(f"document.querySelectorAll('.bo-row').length === 1 && document.querySelector('.bo-row').dataset.orderId === '{shipped['id']}'")
-    ok(True, 'previous orders: search by reference')
-    b.locator('.bo-row [data-order-details]').click(); b.wait_for_selector('#modal[open]')
+    b.wait_for_function(f"document.querySelectorAll('#bo-history-board .bo-card').length === 1 && document.querySelector('#bo-history-board .bo-card').dataset.orderId === '{shipped['id']}'")
+    ok(b.locator('#bo-history-board [data-stage="completed"] .sb-head [data-sb-count]').inner_text() == '1', 'previous orders: search by reference, counted per stage')
+    b.locator('#bo-history-board .bo-card [data-order-details]').click(); b.wait_for_selector('#modal[open]')
     ok(b.locator('#modal .bo-progress .current').count() == 1 and b.locator('#modal [data-change-address]').is_disabled(), 'previous order details: received, address locked')
     b.keyboard.press('Escape')
     buyer.close()
@@ -258,7 +264,7 @@ with sync_playwright() as pw:
         ctx, q = session(browser, 'buyer', w, 900, theme)
         q.goto(BASE + '/#orders'); board(q, '#bo-board')
         ok(overflow(q) <= 0, f'orders {w}px {theme}: no page overflow')
-        ok(q.locator('.wf-stages').is_visible() == (w < 600), f'orders {w}px: stage strip only when the columns do not fit')
+        ok(q.locator('#bo-board .sb-pills').is_visible() == (w < 600), f'orders {w}px: stage pills only when the mosaic does not fit')
         q.screenshot(path=str(OUT / f'orders-{w}-{theme}.png'), full_page=True)
         ctx.close()
     browser.close()

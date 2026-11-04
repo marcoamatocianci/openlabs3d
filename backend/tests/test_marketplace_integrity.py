@@ -219,7 +219,7 @@ def test_manufacturing_files_follow_the_current_assignment():
     assert host_a.get(f'/api/jobs/{job2}/cad').status_code == 403
     with SessionLocal() as db:
         db.scalar(select(models.HostApplication).where(models.HostApplication.user_id == ha)).status = 'approved'; db.commit()
-    assert admin_c.post(f"/api/admin/orders/{second['id']}/cancel").status_code == 200
+    assert admin_c.post(f"/api/admin/orders/{second['id']}/cancel", json={'reason': 'Integrity test'}).status_code == 200
     assert host_a.get(f'/api/jobs/{job2}/cad').status_code == 403
     assert host_a.get('/api/jobs/999999/cad').status_code == 404
 

@@ -28,7 +28,8 @@ def register(client, email, host=False):
         if host:
             user.role='host';db.add(HostApplication(user_id=user.id,status='approved'))
         db.commit()
-    return r.json()['csrf_token']
+    signed_in=client.post('/api/auth/login',json={'email':email,'password':'LongPasswordForTest2026'});assert signed_in.status_code==200,signed_in.text
+    return signed_in.json()['csrf_token']
 def headers(token): return {'X-CSRF-Token':token}
 def picture():
     f=io.BytesIO(); Image.new('RGB',(32,32),'red').save(f,format='PNG'); return f.getvalue()
@@ -94,14 +95,28 @@ def test_image_limits_order_and_origin():
     assert client.get(f'/api/listings/{id}/images/{ids[0]}').status_code==404
 
 def test_compose_configuration():
-    import shutil, subprocess
+    import json, shutil, subprocess
     import pytest
     if not shutil.which('docker'): pytest.skip('Docker CLI unavailable')
     project=Path(__file__).resolve().parents[2]
-    env={**os.environ,'SITE_DOMAIN':'example.com'}
-    for args in ([],['-f','compose.yaml','-f','compose.production.yaml']):
-        result=subprocess.run(['docker','compose',*args,'config','--quiet'],cwd=project,env=env,capture_output=True,text=True)
-        assert result.returncode==0, result.stderr
+    # Without a verified sender and a public address new accounts could never be activated, so production refuses to start.
+    production=['-f','compose.yaml','-f','compose.production.yaml']
+    config=lambda args,env,*more:subprocess.run(['docker','compose',*args,'config',*more],cwd=project,env=env,capture_output=True,text=True)
+    bare={k:v for k,v in os.environ.items() if k not in ('APP_PUBLIC_URL','PUBLIC_BASE_URL','SMTP_HOST','SMTP_FROM_EMAIL')}
+    env={**bare,'SITE_DOMAIN':'example.com'}
+    assert config([],env,'--quiet').returncode==0
+    for missing in ('APP_PUBLIC_URL','SMTP_HOST','SMTP_FROM_EMAIL'):
+        partial={**env,'APP_PUBLIC_URL':'https://example.com','SMTP_HOST':'smtp.example.com','SMTP_FROM_EMAIL':'noreply@example.com'};del partial[missing]
+        assert config(production,partial,'--quiet').returncode!=0, missing
+    full={**env,'APP_PUBLIC_URL':'https://example.com','SMTP_HOST':'smtp.example.com','SMTP_FROM_EMAIL':'noreply@example.com'}
+    result=config(production,full);assert result.returncode==0, result.stderr
+    # The development mail capture and its settings never reach production.
+    assert 'mailpit' not in result.stdout.lower() and 'smtp.example.com' in result.stdout
+    # In development every message goes to it, whatever the environment says, and its interface stays on this computer.
+    development=config([],{**full,'SMTP_HOST':'smtp.real-provider.example','SMTP_PASSWORD':'secret'},'--format','json');assert development.returncode==0
+    services=json.loads(development.stdout)['services']
+    assert services['backend']['environment']['SMTP_HOST']=='mailpit' and services['backend']['environment']['SMTP_PASSWORD']==''
+    assert services['mailpit']['ports'] and all(port['host_ip']=='127.0.0.1' for port in services['mailpit']['ports'])
 
 def test_stale_review_cannot_overwrite_changed_listing():
     import pytest

@@ -34,7 +34,7 @@ function buyerOrderLines(order) {
   const jobs = Object.fromEntries(order.jobs.map(j => [j.item_id, j]));
   return order.items.map((item, n) => ({item, job:jobs[item.id] || order.jobs[n]}));
 }
-const buyerOrderEvents = {'order.created':'Order requested','order.cancelled':'Order cancelled','job.accepted':'A printing host accepted a product','job.printing':'Printing started for a product','job.ready':'A product is ready for delivery','job.shipped':'A product was shipped','job.completed':'A product was received','order.completed':'Order completed','job.reopened':'A product is awaiting a new host','order.address_changed':'Delivery address changed'};
+const buyerOrderEvents = {'order.created':'Order requested','order.cancelled':'Order cancelled','job.accepted':'A printing host accepted a product','job.printing':'Printing started for a product','job.ready':'A product is ready for delivery','job.shipped':'A product was shipped','job.completed':'A product was received','order.completed':'Order completed','job.reopened':'A product is awaiting a new host','job.cancelled':'A product was cancelled','order.address_changed':'Delivery address changed'};
 const buyerTracking = s => s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}<span class="sr-only"> (opens the carrier’s tracking page)</span> ↗</a>` : esc(s.tracking_number || '');
 // Shipped products: tracking details and the receipt confirmation that completes them.
 function buyerOrderShipment(order, job) {
@@ -86,12 +86,14 @@ function buyerOrderMix(order) {
 function buyerOrderCard(order, level = 3) {
   const lines = buyerOrderLines(order), shipped = order.jobs.filter(j => j.status === 'shipped'), multi = order.jobs.length > 1;
   const line = ({item, job}) => `<li class="bo-line">${buyerOrderThumb(item)}<div class="bo-line-copy"><span class="bo-line-title">${esc(item.title)}</span>${buyerOrderConfig(item)}<span class="bo-meta">Quantity ${item.quantity}${multi && job ? ` · ${esc(buyerItemStages[job.status] || '')}` : ''}</span></div></li>`;
-  return `<li class="wf-card bo-card${shipped.length ? ' needs-action' : ''}" data-order-id="${order.id}" aria-labelledby="bo-title-${order.id}"><div class="bo-card-top"><h${level} class="bo-ref" id="bo-title-${order.id}">${esc(order.reference)}</h${level}><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div><div class="bo-card-stage">${buyerOrderHeadBadge(order)}${buyerOrderProgress(order, false)}</div><ul class="bo-lines">${lines.slice(0, 2).map(line).join('')}</ul>${lines.length > 2 ? `<p class="bo-more">+ ${lines.length - 2} more ${lines.length === 3 ? 'product' : 'products'}</p>` : ''}${buyerOrderMix(order)}${buyerOrderShipments(order, shipped)}<div class="bo-card-foot"><span class="bo-total">Total <strong>${buyerOrderMoney(order.total_cents, order.currency)}</strong></span><button type="button" class="wf-link" data-order-details="${order.id}" aria-haspopup="dialog">View details<span class="sr-only"> for ${esc(order.reference)}</span></button></div></li>`;
+  const ended = buyerOrderEnded(order);
+  return `<li class="wf-card bo-card${shipped.length ? ' needs-action' : ''}" data-order-id="${order.id}" data-search="${esc([order.reference, ...lines.map(l => l.item.title)].join(' ').toLowerCase())}" aria-labelledby="bo-title-${order.id}"><div class="bo-card-top"><h${level} class="bo-ref" id="bo-title-${order.id}">${esc(order.reference)}</h${level}><time class="bo-meta" datetime="${esc(order.created_at)}">${esc(buyerOrderDate(order.created_at))}</time></div><div class="bo-card-stage">${buyerOrderHeadBadge(order)}${ended ? `<span class="bo-meta bo-ended">${esc(ended)}</span>` : buyerOrderProgress(order, false)}</div><ul class="bo-lines">${lines.slice(0, 2).map(line).join('')}</ul>${lines.length > 2 ? `<p class="bo-more">+ ${lines.length - 2} more ${lines.length === 3 ? 'product' : 'products'}</p>` : ''}${buyerOrderMix(order)}${buyerOrderShipments(order, shipped)}<div class="bo-card-foot"><span class="bo-total">Total <strong>${buyerOrderMoney(order.total_cents, order.currency)}</strong></span><button type="button" class="wf-link" data-order-details="${order.id}" aria-haspopup="dialog">View details<span class="sr-only"> for ${esc(order.reference)}</span></button></div></li>`;
 }
-// Previous orders: one compact row each; the details dialog holds the rest.
-function buyerOrderRow(order) {
-  const lines = buyerOrderLines(order), first = lines[0]?.item || {}, count = order.items.reduce((n, i) => n + i.quantity, 0);
-  return `<article class="list-row bo-row bo-card" data-order-id="${order.id}">${buyerOrderThumb(first)}<div class="row-main"><span class="row-title">${esc(first.title || 'Order')}${lines.length > 1 ? ` <span class="muted">+ ${lines.length - 1} more</span>` : ''}</span><span class="row-meta">${buyerOrderConfig(first)}</span><span class="row-meta"><span class="bo-ref">${esc(order.reference)}</span> · ${esc(buyerOrderDate(order.created_at))} · ${count} ${count === 1 ? 'item' : 'items'}</span></div><span class="row-value">${buyerOrderMoney(order.total_cents, order.currency)}</span><span class="row-status">${buyerOrderHeadBadge(order)}</span><div class="row-actions"><button type="button" class="btn-ghost btn-sm" data-order-details="${order.id}" aria-haspopup="dialog">View details<span class="sr-only"> for ${esc(order.reference)}</span></button></div></article>`;
+// A finished order says when it ended: completed (the last product received) or cancelled.
+function buyerOrderEnded(order) {
+  if (!['completed', 'cancelled'].includes(order.status)) return '';
+  const event = [...order.history].reverse().find(e => e.action === 'order.' + order.status) || order.history[order.history.length - 1];
+  return event ? `${order.status === 'completed' ? 'Completed' : 'Cancelled'} ${buyerOrderDate(event.created_at)}` : '';
 }
 // A pending order nobody has accepted yet can still be deleted (the server checks the same rule).
 const buyerOrderDeletable = order => order.status === 'pending' && order.jobs.every(j => j.status === 'available' && !j.host_id) && !order.history.some(e => e.action === 'job.accepted');
@@ -123,27 +125,40 @@ function buyerOrdersShell(body) {
   return layout(`<div class="bo-page"><header class="bo-page-head"><div><p class="ws-crumb eyebrow-dot">Buyer workspace</p><h1>My orders</h1><p class="muted">Track your purchases and their progress.</p></div><a class="btn-ghost btn-sm" href="#catalogue">Explore products</a></header>${body}</div>`);
 }
 const BUYER_SCOPE_NAMES = {active:'Current orders', history:'Previous orders'};
-const BUYER_STAGE_HINTS = {pending:'Waiting for a printing host to accept.', 'in-progress':'Accepted by a host and being made.', shipping:'On its way. Confirm each product when it arrives.'};
+const BUYER_STAGE_UI = {pending:{icon:'inbox', tone:'available', hint:'Waiting for a printing host to accept.'}, 'in-progress':{icon:'layers', tone:'active', hint:'Accepted by a host and being made.'}, shipping:{icon:'truck', tone:'neutral', hint:'On its way. Confirm each product when it arrives.'}};
+const BUYER_ACTIVE_KEY = 'openlabs-orders-active-stage';
+const buyerOrderPeek = o => orderLineThumb(buyerOrderLines(o)[0]?.item || {}, 'sb-peek-thumb');
+// Expand section: the order the page chose comes first, because the server's order is the first sort.
+function buyerOrderSorts(filters, waits) {
+  const sorts = sectionSorts({recent:o => sectionWhen(o.created_at), stage:waits ? o => sectionWhen(o.history.at(-1)?.created_at || o.created_at) : null, reference:o => o.reference});
+  return filters.sort === 'oldest' ? [sorts[1], sorts[0], ...sorts.slice(2)] : sorts;
+}
 function buyerOrdersBody(data, filters) {
   const nav=scopeNav({label:'My orders', base:'orders', query:{sort:filters.sort === 'newest' ? '' : filters.sort}, data, names:BUYER_SCOPE_NAMES, all:{active:'All active', history:'All previous'}});
   const sort=uiSelect({id:'bo-sort',label:'Sort by',value:filters.sort,options:[['newest','Newest first'],['oldest','Oldest first']],className:'bo-sort'});
   if (data.scope === 'active') {
     const empty = emptyState("You're all caught up", 'No current orders at the moment.', `<div class="empty-actions"><a class="btn btn-sm" href="#catalogue">Explore catalogue</a>${data.scopes.history.total?`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{scope:'history',group:'all',q:'',page:1})}">Previous orders</a>`:''}</div>`);
-    const board = workflowBoard({id:'bo-board', label:'Current orders', stages:data.scopes.active.groups.map(g => ({...g, hint:BUYER_STAGE_HINTS[g.key] || ''})), items:data.items, card:buyerOrderCard, level:2, focus:filters.group,
-      empty:c => c.key === 'shipping' ? 'Nothing on its way right now.' : 'No orders at this stage.'});
+    const stages = data.scopes.active.groups.map(g => ({...g, ...BUYER_STAGE_UI[g.key]}));
+    const board = stageBoard({id:'bo-board', label:'Current orders', stages, items:data.items, card:buyerOrderCard, peek:buyerOrderPeek, level:2, open:stageFromAddress(stages, filters.group, rememberedStage(BUYER_ACTIVE_KEY)),
+      empty:c => c.key === 'shipping' ? 'Nothing on its way right now.' : 'No orders at this stage.', section:{one:'order', sorts:buyerOrderSorts(filters, true)}});
     return {toolbar:`<div class="wf-toolbar">${nav.primary}<div class="bo-tools">${sort}</div></div>`, results:data.items.length ? board : `<div class="section-card">${empty}</div>`};
   }
-  // Search by order reference or product name, in Previous orders (where the list grows).
+  // Previous orders: Completed and Cancelled side by side, the first page of each at once, Load more within
+  // a stage. Search (order number or product) runs on the server and every stage counts its own matches.
   const search=`<form class="search-field bo-search" id="bo-search" role="search">${icon('search')}<label class="sr-only" for="bo-q">Search previous orders</label><input id="bo-q" type="search" name="q" value="${esc(filters.q)}" placeholder="Order number or product" autocomplete="off" maxlength="80"></form>`;
-  const scopeTotal=data.scopes.history.total, groupLabel=(data.scopes.history.groups.find(g=>g.key===data.group)||{}).label;
-  let empty;
-  if(!scopeTotal) empty=emptyState('No previous orders yet','Completed and cancelled orders move here automatically.',`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{scope:'active',group:'all',q:'',page:1})}">Current orders</a>`);
-  else if(filters.q) empty=emptyState('No orders match your search',`Nothing in ${groupLabel?groupLabel.toLowerCase()+' ':''}previous orders matches “${filters.q}”.`,`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{q:'',page:1})}">Clear search</a>`);
-  else empty=emptyState('No orders with this status',`None of your previous orders is ${(groupLabel||'').toLowerCase()}.`,`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{group:'all',page:1})}">All previous orders</a>`);
-  const content=data.items.length?`<div class="list bo-history-list">${data.items.map(buyerOrderRow).join('')}</div>`:`<div class="section-card">${empty}</div>`;
-  return {toolbar:`${nav.primary}<div class="bo-filters">${nav.secondary}<div class="bo-tools">${search}${sort}</div></div>`,
-    results:`<p class="bo-results">${data.total?`${(data.page-1)*data.per_page+1}–${Math.min(data.page*data.per_page,data.total)} of ${data.total} previous ${data.total===1?'order':'orders'}`:'0 previous orders'}</p>${content}${pager(page=>buyerOrderHref(filters,{page}).slice(1),data.page,data.pages)}`};
+  const toolbar=`<div class="board-tools">${nav.primary}<div class="bo-tools">${search}${sort}</div></div>`;
+  if(!data.scopes.history.total)return {toolbar, results:`<div class="section-card">${emptyState('No previous orders yet','Completed and cancelled orders move here automatically.',`<a class="btn-ghost btn-sm" href="${buyerOrderHref(filters,{scope:'active',group:'all',q:'',page:1})}">Current orders</a>`)}</div>`};
+  const stages=data.columns.map(c=>({...c,...BUYER_HISTORY_UI[c.key]}));
+  const board=stageBoard({id:'bo-history-board',label:'Previous orders',stages,card:buyerOrderCard,peek:buyerOrderPeek,level:2,section:{one:'order',serverSearch:true,sorts:buyerOrderSorts(filters,false)},
+    open:stageFromAddress(stages,filters.group,rememberedStage(BUYER_HISTORY_KEY)),
+    empty:c=>filters.q?`No ${c.label.toLowerCase()} orders match “${filters.q}”.`:BUYER_HISTORY_UI[c.key]?.empty||'Nothing here.',
+    depthView:buyerHistoryView(filters),load:(group,page,extra={})=>api('/orders?'+new URLSearchParams({paginated:true,scope:'history',group,q:filters.q,sort:filters.sort,page,per_page:stagePageSize('bo-history-board',BUYER_HISTORY_PAGE,buyerHistoryView(filters)),...extra})),
+    onLoad:items=>items.forEach(o=>{buyerOrdersById[o.id]=o})});
+  const cleared=filters.q?`<p class="bo-results">${data.total} ${data.total===1?'order matches':'orders match'} “${esc(filters.q)}” · <a class="textlink" href="${buyerOrderHref(filters,{q:'',page:1})}">Clear search</a></p>`:'';
+  return {toolbar, results:cleared+board};
 }
+const BUYER_HISTORY_UI={completed:{icon:'check',tone:'completed',hint:'Every product received.',empty:'No completed orders yet.'},cancelled:{icon:'ban',tone:'cancelled',hint:'Cancelled before delivery.',empty:'No cancelled orders.'}};
+const BUYER_HISTORY_KEY='openlabs-orders-history-stage',BUYER_HISTORY_PAGE=12,buyerHistoryView=filters=>[filters.q,filters.sort].join('|');
 // Highlight the chosen view at once, before its orders arrive.
 function buyerOrdersMarkTab(filters) {
   document.querySelectorAll('#bo-toolbar .segment, #bo-toolbar .chip').forEach(link=>{
@@ -155,13 +170,15 @@ function buyerOrdersMarkTab(filters) {
 }
 // Current orders are bounded by work in progress: load them all (in pages of 50) so every column is complete.
 async function buyerOrdersData(filters) {
-  if (filters.scope === 'history') return api('/orders?'+new URLSearchParams({...filters,paginated:true,per_page:10}));
+  if (filters.scope === 'history') { const data = await api('/orders?'+new URLSearchParams({paginated:true,scope:'history',columns:true,q:filters.q,sort:filters.sort,per_page:stagePageSize('bo-history-board',BUYER_HISTORY_PAGE,buyerHistoryView(filters))})); return {...data, items:data.columns.flatMap(c => c.items)}; }
   const query = page => api('/orders?'+new URLSearchParams({scope:'active',sort:filters.sort,paginated:true,per_page:50,page}));
   const first = await query(1), rest = await Promise.all(Array.from({length:first.pages - 1}, (_, n) => query(n + 2)));
   return {...first, items:[first, ...rest].flatMap(p => p.items)};
 }
+const BUYER_ORDERS_FRAME='<div class="bo-toolbar" id="bo-toolbar"></div><div id="bo-results" aria-busy="true"><div class="bo-skeletons" role="status" aria-label="Loading orders"><span class="sr-only">Loading orders…</span>'+Array.from({length:3},()=>'<div class="bo-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>').join('')+'</div></div><p id="bo-status" class="sr-only" role="status"></p>';
 async function renderBuyerOrders() {
-  if(!account||account.role==='admin')return buyerOrdersRenderOperations('orders');
+  // Another page drawn meanwhile (signed out, an administrator) cancels any orders request still loading.
+  if(!account||account.role==='admin'){buyerOrdersRequest++;buyerOrdersShown=null;return buyerOrdersRenderOperations('orders');}
   const request=++buyerOrdersRequest,owner=account.id,hash=location.hash,filters=buyerOrderFilters();
   const current=()=>request===buyerOrdersRequest&&account?.id===owner&&location.hash===hash;
   try{sessionStorage.setItem('ol3d-orders-'+owner,JSON.stringify(filters))}catch(e){}
@@ -169,11 +186,13 @@ async function renderBuyerOrders() {
   // layout and the scroll position stay, and the previous orders stay visible (dimmed) while loading.
   const region=$('#app #bo-results'),inPlace=!!(region&&buyerOrdersShown?.owner===owner);
   if(inPlace){buyerOrdersMarkTab(filters);region.setAttribute('aria-busy','true');$('#bo-status').textContent='Updating orders…';}
-  else{buyerOrdersShown=null;$('#app').innerHTML=buyerOrdersShell('<div class="bo-toolbar" id="bo-toolbar"></div><div id="bo-results" aria-busy="true"><div class="bo-skeletons" role="status" aria-label="Loading orders"><span class="sr-only">Loading orders…</span>'+Array.from({length:3},()=>'<div class="bo-skeleton" aria-hidden="true"><span></span><span></span><span></span></div>').join('')+'</div></div><p id="bo-status" class="sr-only" role="status"></p>');}
+  else{buyerOrdersShown=null;$('#app').innerHTML=buyerOrdersShell(BUYER_ORDERS_FRAME);}
   try{
     // Country names for the delivery addresses; a code is shown if the list cannot be loaded.
     const [data]=await Promise.all([buyerOrdersData(filters),ensureCountries().catch(()=>[])]);
     if(!current())return;
+    // The page was redrawn while loading (an earlier render finishing late): draw the frame again.
+    if(!$('#bo-toolbar')||!$('#bo-results'))$('#app').innerHTML=buyerOrdersShell(BUYER_ORDERS_FRAME);
     buyerOrdersById=Object.fromEntries(data.items.map(o=>[o.id,o]));
     const body=buyerOrdersBody(data,filters),toolbar=$('#bo-toolbar'),results=$('#bo-results');
     if(toolbar.innerHTML!==body.toolbar){
@@ -182,7 +201,9 @@ async function renderBuyerOrders() {
       toolbar.innerHTML=body.toolbar;
       if(focused)toolbar.querySelector(`[href="${CSS.escape(focused)}"],[id="${CSS.escape(focused)}"]`)?.focus();
     }
-    results.innerHTML=body.results;results.removeAttribute('aria-busy');bindWorkflowBoards(results);
+    results.innerHTML=body.results;results.removeAttribute('aria-busy');
+    rememberStage($('#bo-board'),BUYER_ACTIVE_KEY,key=>buyerOrderHref({...filters,group:key},{page:1}).slice(1));
+    rememberStage($('#bo-history-board'),BUYER_HISTORY_KEY,key=>buyerOrderHref({...filters,group:key},{page:1}).slice(1));
     $('#bo-status').textContent=`${data.items.length} ${data.scope==='active'?'current':'previous'} ${data.items.length===1?'order':'orders'}`;
     // A new page starts at its first order; filters and sort keep the reader where they are.
     if(inPlace&&buyerOrdersShown.page!==filters.page&&buyerOrdersShown.scope===filters.scope&&buyerOrdersShown.group===filters.group&&buyerOrdersShown.sort===filters.sort&&toolbar.getBoundingClientRect().top<0)toolbar.scrollIntoView({block:'start'});
@@ -207,7 +228,7 @@ async function changeOrderAddress(button) {
   try { [saved] = await Promise.all([api('/addresses'), ensureCountries()]); current = buyerOrderJson(buyerOrdersById[orderId]?.address); } catch (e) { showError(e); return; }
   const picker = saved.length ? uiSelect({id:'order-address-saved', label:'Use a saved address', className:'cf-select-field', value:'', options:[['', 'Keep the details below'], ...saved.map(a => [String(a.id), [a.label || 'Address', addressLines(a).slice(1, 3).join(', ')].filter(Boolean).join(' · ')])]}) : '';
   const body = `${picker}<form class="ad-form" id="order-address-form" novalidate><div class="fields">${textField('first_name', current.first_name)}${textField('last_name', current.last_name)}${textField('phone', current.phone, {wide:true})}${textField('street', current.street, {required:true, wide:true})}${textField('additional', current.additional, {optional:true, wide:true})}${countryField(current.country, true)}${regionField(current.region)}${cityField(current.city, {required:true})}${textField('postal_code', current.postal_code)}</div></form><ul class="ad-notes"><li>Your printing host sees the new address straight away.</li><li>It can be changed until a product of this order has shipped.</li></ul>`;
-  const ok = await actionDialog({title:'Change delivery address', confirm:'Save address', busy:'Saving…', body, run:() => {
+  const ok = await actionDialog({title:'Change delivery address', confirm:'Save address', busy:'Saving…', body, refresh:async () => { await renderBuyerOrders(); refreshOpenOrder(orderId); }, run:() => {
     const form = $('#order-address-form');
     if (!form.reportValidity()) throw Error('Enter the street, city and country.');
     const d = Object.fromEntries(new FormData(form));
@@ -231,7 +252,7 @@ document.addEventListener('click', async e => {
   const button = e.target.closest('[data-received]'); if (!button) return;
   const [orderId, jobId] = button.dataset.received.split(':'), title = button.closest('.bo-shipment').querySelector('strong').textContent;
   let completed = false;
-  const ok = await actionDialog({title:'Mark as received?', confirm:'Mark as received', busy:'Saving…',
+  const ok = await actionDialog({title:'Mark as received?', confirm:'Mark as received', busy:'Saving…', refresh:async () => { await renderBuyerOrders(); refreshOpenOrder(orderId); },
     body:`<div class="ad-job"><div class="ad-job-main"><strong>${esc(title)}</strong></div></div><ul class="ad-notes"><li>Confirm the product arrived in good condition.</li><li>The printing job is completed; the order completes once every product is received.</li></ul>`,
     run:async () => { completed = (await api(`/orders/${orderId}/jobs/${jobId}/received`, {method:'POST'})).status === 'completed'; }});
   if (!ok) { if (button.isConnected) button.focus(); return; }
@@ -241,7 +262,7 @@ document.addEventListener('click', async e => {
 document.addEventListener('click', async e => {
   const button = e.target.closest('[data-delete-order]'); if (!button) return;
   const order = buyerOrdersById[button.dataset.deleteOrder], reference = order?.reference || '';
-  const ok = await actionDialog({title:'Delete this order?', confirm:'Delete order', busy:'Deleting…', initialFocus:'.ad-foot [data-ad-cancel]',
+  const ok = await actionDialog({title:'Delete this order?', confirm:'Delete order', busy:'Deleting…', initialFocus:'.ad-foot [data-ad-cancel]', refresh:async () => { await renderBuyerOrders(); refreshOpenOrder(+button.dataset.deleteOrder); },
     body:`<div class="bo-delete-confirm"><span class="bo-delete-reference">${esc(reference)}</span><p>This permanently deletes the order and withdraws all its printing requests. It will disappear from your order history, and hosts will no longer be able to accept it.</p><p class="bo-delete-note">This cannot be undone. You can place a new order later.</p></div>`,
     run:() => api(`/orders/${button.dataset.deleteOrder}`, {method:'DELETE'})});
   if (!ok) { if (button.isConnected) button.focus(); return; }

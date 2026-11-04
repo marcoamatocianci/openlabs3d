@@ -45,6 +45,8 @@ Backend ──► SQLite  /app/data/openlabs3d.db  (Docker volume app_data)
 - **Containers:** `compose.yaml` (dev, Caddy on 8080) and `compose.production.yaml` (HTTPS
   via Caddy, `APP_ENV=production` → secure cookies). The backend container runs
   `alembic upgrade head` on every start.
+- **Email:** queued in `email_jobs` and sent by a worker thread (`backend/app/email_service.py`). Development mail goes
+  to Mailpit (`compose.override.yaml`, http://127.0.0.1:8025). Setup and DNS: `docs/email/EMAIL_VERIFICATION.md`.
 
 ---
 
@@ -132,7 +134,7 @@ Rules for new frontend code:
 
 | Model | Purpose / key fields |
 |---|---|
-| `User` | email, username, display_name, `role` (buyer/host/admin), `email_verified`, contact fields (first/last name, phone, country, city), theme, `active` |
+| `User` | email, username, display_name, `role` (buyer/host/admin), `email_verified`, `email_verified_at`, `legacy_email_access`, `pending_email`, contact fields (first/last name, phone, country, city), theme, `active` |
 | `LoginSession` | hashed session token + CSRF token, expiry (cookie `ol3d_session`) |
 | `AccountToken` | single-use hashed verify/reset tokens |
 | `UserAddress`, `CartItem` | saved delivery addresses; server-side basket lines (listing, material, color, qty) |
@@ -243,7 +245,7 @@ Migrations are additive; never edit an applied migration — add a new one.
   per-material prices, submitting host, dates) and host applications (applicant, facility,
   printer cards, capabilities, stock, dates). Approve/Reject from the dialog or the row.
 - Products, Printers (catalogue + host suggestions), Materials, Categories, Users (incl.
-  delete with password confirmation), Printing hosts (suspend/restore), Orders (cancel/reopen),
+  delete with password confirmation), Printing hosts (suspend/restore), Orders (cancel at any stage before completion, with a reason; reopen accepted jobs),
   Activity log, Settings. Official products: `#admin/create-official`.
 
 ---

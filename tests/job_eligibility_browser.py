@@ -96,12 +96,16 @@ with sync_playwright() as pw:
     for width, height, theme in ((1366, 900, 'light'), (1366, 900, 'dark'), (390, 844, 'light'), (390, 844, 'dark')):
         ctx, ap = session(browser, 'admin', width, height, theme); ap.emulate_media(color_scheme=theme)
         jobs_page(ap, 'admin/orders'); ap.evaluate(f"applyTheme('{theme}')")
-        rows = {ref: ap.locator('.list-row', has_text=ref) for ref in (own['reference'], stranded['reference'])}
-        for row in rows.values(): row.locator('summary').click()
-        own_text, stranded_text = rows[own['reference']].inner_text(), rows[stranded['reference']].inner_text()
+        rows = {ref: ap.locator('#admin-orders-board .sb-col.is-open [data-order-card]', has_text=ref) for ref in (own['reference'], stranded['reference'])}
+        def details(ref):
+            rows[ref].locator('[data-admin-order]').click(); ap.wait_for_selector('#modal[open]')
+            text = ap.locator('#modal').inner_text(); ap.keyboard.press('Escape'); ap.wait_for_selector('#modal[open]', state='detached')
+            return text
         if width == 1366 and theme == 'light':
+            own_text, stranded_text = details(own['reference']), details(stranded['reference'])
             ok('can be made by other' in own_text.lower() and 'buyer of this order' in own_text, 'admin: the host\'s own order can be made by the other host, not its buyer')
             ok('No eligible host' in stranded_text and 'does not stock PLA orange' in stranded_text, 'admin: the stranded job shows why no host can take it')
+            ok('No eligible host' in rows[stranded['reference']].inner_text() and 'No eligible host' not in rows[own['reference']].inner_text(), 'admin: the card itself flags the order no host can make')
         ok(ap.evaluate('document.documentElement.scrollWidth - innerWidth') <= 0, f'{width} {theme}: admin orders fit the screen')
         rows[stranded['reference']].scroll_into_view_if_needed()
         ap.screenshot(path=str(OUT / f'admin-orders-{width}-{theme}.png'))
@@ -112,11 +116,11 @@ with sync_playwright() as pw:
             # The warning opens the orders behind it, marked and expanded; one click shows every order again.
             ap.locator('.attention-list a', has_text='available job no approved host can make').click()
             ap.wait_for_url('**attention=unmatched**'); ap.wait_for_selector('.attention-filter'); ap.wait_for_selector('.ws-main[aria-busy]', state='detached')
-            ok(ap.locator('#order-list .row-title').all_inner_texts() == [stranded['reference']], 'the warning lists only the order no host can make')
-            ok(ap.locator('#order-list .row-status', has_text='No eligible host').count() == 1 and ap.locator('#order-list details[open]').count() == 1, 'it is marked on the row and opened')
+            ok(ap.locator('#admin-orders-board [data-order-card] .jc-title').all_inner_texts() == [stranded['reference']], 'the warning lists only the order no host can make')
+            ok(ap.locator('#admin-orders-board .sb-col.is-open [data-order-card]', has_text='No eligible host').count() == 1, 'it is marked on its card, in the stage that opens')
             ap.screenshot(path=str(OUT / 'admin-attention-1366-light.png'))
             ap.locator('.attention-filter a', has_text='Show all orders').click(); ap.wait_for_selector('.attention-filter', state='detached')
-            ok(ap.locator('#order-list .list-row').count() > 1 and 'attention' not in ap.url, 'Show all orders clears the filter')
+            ok(ap.locator('#admin-orders-board [data-order-card]').count() > 1 and 'attention' not in ap.url, 'Show all orders clears the filter')
         ctx.close()
     browser.close()
 print('ERRORS', errors)

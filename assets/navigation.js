@@ -4,11 +4,19 @@ const iconPaths = {
   menu:'<path d="M4 7h16M4 12h16M4 17h16"/>', close:'<path d="M6 6l12 12M18 6 6 18"/>', chevron:'<path d="m6 9 6 6 6-6"/>',
   cart:'<path d="M3 4h2l2.3 10.1a2 2 0 0 0 2 1.6h7.6a2 2 0 0 0 1.9-1.4L21 8H6.1"/><circle cx="10" cy="20" r="1.3"/><circle cx="17" cy="20" r="1.3"/>',
   more:'<circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/>',
-  plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>', history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4.2l2.8 1.8"/>',
+  expand:'<path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/>', collapse:'<path d="m6 15 6-6 6 6"/>', plus:'<path d="M12 5v14M5 12h14"/>', search:'<circle cx="11" cy="11" r="6.5"/><path d="m20 20-4.2-4.2"/>', edit:'<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>', history:'<path d="M3.5 12a8.5 8.5 0 1 0 2.5-6"/><path d="M3.5 4.5v4h4"/><path d="M12 8v4.2l2.8 1.8"/>',
   camera:'<path d="M4 8.5h3.2L9 6h6l1.8 2.5H20V19H4z"/><circle cx="12" cy="13.2" r="3.4"/>', logout:'<path d="M14 4h5v16h-5M10 8l-4 4 4 4M6 12h10"/>',
   arrow:'<path d="M5 12h14M13 6l6 6-6 6"/>', back:'<path d="M19 12H5M11 6l-6 6 6 6"/>',
   // Printing job stages: new work, in production, packed, on its way.
   inbox:'<path d="M4 13.5 6.3 6h11.4l2.3 7.5V19H4z"/><path d="M4 13.5h4.6l1.3 2.2h4.2l1.3-2.2H20"/>', layers:'<path d="m12 4 8 4-8 4-8-4z"/><path d="m4 12 8 4 8-4M4 16l8 4 8-4"/>',
+  // Finished work, review queues and requests.
+  check:'<path d="m5 12.5 4.5 4.5L19 7.5"/>', ban:'<circle cx="12" cy="12" r="8.5"/><path d="m6 6 12 12"/>',
+  user:'<circle cx="12" cy="8.5" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/>',
+  printer:'<path d="M7 9V4h10v5"/><rect x="4" y="9" width="16" height="7" rx="1.5"/><path d="M7 14h10v6H7z"/>',
+  tag:'<path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7l8.3 8.3a1 1 0 0 1 0 1.4l-7.3 7.3a1 1 0 0 1-1.4 0z"/><circle cx="8" cy="8" r="1.4"/>',
+  wrench:'<path d="M14.5 6.2a4 4 0 0 0 5 5l-8.8 8.8a2.1 2.1 0 0 1-3-3z"/><path d="M14.5 6.2 17 3.7"/>',
+  send:'<path d="M20.5 3.5 3.5 10.6l6.8 3.1 3.1 6.8z"/><path d="m10.3 13.7 4.6-4.6"/>',
+  clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
   box:'<path d="M4 7.6 12 4l8 3.6v8.8L12 20l-8-3.6z"/><path d="M4 7.6 12 11l8-3.4M12 11v9"/>', truck:'<path d="M3 6.5h11v9.5H3zM14 9.5h3.6L21 13v3h-7"/><circle cx="7" cy="17.6" r="1.7"/><circle cx="17.2" cy="17.6" r="1.7"/>'
 };
 const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${iconPaths[name]}</svg>`;
@@ -108,10 +116,17 @@ async function refreshNavBadges(force=false) {
 
 /* Modal dialogs: native <dialog> keeps the page inert, but lets Tab leave to the browser after the
    last control. This keeps keyboard focus cycling inside the dialog. */
+/* A dialog is announced by its heading: every dialog names itself from the first one it holds. */
+function nameDialog(dialog) {
+  const heading = dialog?.querySelector('h1,h2,h3');
+  if (!heading) return dialog?.removeAttribute('aria-labelledby');
+  heading.id ||= dialog.id + '-title';
+  dialog.setAttribute('aria-labelledby', heading.id);
+}
 function keepFocusInside(dialog) {
   dialog.addEventListener('keydown', e => {
     if (e.key !== 'Tab') return;
-    const items = [...dialog.querySelectorAll('button,input,select,textarea,[href]')].filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length && !el.closest('[hidden]') && (el.type !== 'radio' || el.checked || !dialog.querySelector(`input[name="${el.name}"]:checked`)));
+    const items = [...dialog.querySelectorAll('button,input,select,textarea,summary,[href],[tabindex]:not([tabindex="-1"])')].filter(el => !el.disabled && el.tabIndex >= 0 && el.getClientRects().length && !el.closest('[hidden]') && (el.type !== 'radio' || el.checked || !dialog.querySelector(`input[name="${el.name}"]:checked`)));
     const first = items[0], last = items.at(-1);
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -220,99 +235,536 @@ const searchBox = (list, placeholder) => `<label class="search-field">${icon('se
 const toolbar = (...parts) => `<div class="ws-toolbar">${parts.filter(Boolean).join('')}</div>`;
 const emptyState = (title, text, action='') => `<div class="empty-state"><h3>${esc(title)}</h3><p>${esc(text)}</p>${action}</div>`;
 const statCard = (label, value, href, hint='', tone='') => `<a class="stat-card ${tone}" href="#${href}"><span>${esc(label)}</span><strong>${value}</strong>${hint ? `<small>${esc(hint)}</small>` : ''}</a>`;
-/* Workflow boards: work that moves through stages, one column per stage, in stage order. The stages,
-   and the statuses each one holds, come from the API (app/lifecycle.py groups), so a board never
-   disagrees with the server. Finished work lives in the History view, never in a column.
-   Wide enough: every column side by side. Narrower: the board scrolls sideways one column at a time and a
-   strip of stage pills shows which stage is in view and jumps to the others (style.css, "Workflow boards").
-   stages: [{key, label, statuses, hint}] · card(item, headingLevel) returns one <li class="wf-card">. */
-const wfScroll = {};
-function workflowBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, empty = 'Nothing here right now.', focus = ''}) {
-  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i)))}));
-  const count = n => `<span class="segment-count">${n}<span class="sr-only"> ${n === 1 ? 'item' : 'items'}</span></span>`;
-  const strip = `<nav class="chips wf-stages" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-wf-jump="${id}-${c.key}" aria-controls="${id}-${c.key}">${esc(c.label)}<span>${c.items.length}</span></button>`).join('')}</nav>`;
-  const column = c => `<section class="wf-column${c.key === focus ? ' is-focus' : ''}" id="${id}-${c.key}" data-stage="${c.key}" tabindex="-1" aria-labelledby="${id}-${c.key}-title"><header class="wf-column-head"><h${level} class="wf-column-title" id="${id}-${c.key}-title">${esc(c.label)}</h${level}>${count(c.items.length)}</header>${c.hint ? `<p class="wf-hint">${esc(c.hint)}</p>` : ''}${c.items.length ? `<ul class="wf-list">${c.items.map(i => card(i, level + 1)).join('')}</ul>` : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`}</section>`;
-  return `<div class="wf" data-cols="${columns.length}">${strip}<div class="wf-board" id="${id}" data-wf-board>${columns.map(column).join('')}</div></div>`;
+/* Stage boards: every Active/History list (Printing jobs, Job history, My orders, My requests, admin Orders,
+   Approvals and Custom requests). The stages and the statuses each one holds come from the API
+   (app/lifecycle.py groups), so a board never disagrees with the server; finished work lives in the History
+   scope. Three states:
+   A. Overview (open is STAGE_NONE): no stage open. Every stage is a tile of one proportional mosaic, all at the
+      same level of hierarchy, their areas following their workloads (overviewPlan). A tile opens its stage.
+   B. Focus: one stage is open, about two thirds of the row with its full cards; the others share a muted mosaic
+      on the right, each panel sized by its workload (mosaicPlan). Clicking another panel switches; clicking the
+      open stage's own header collapses back to A. Narrower boards use stage pills above the open stage instead
+      of the mosaic. A scope with a single stage is one full-width column, and never collapses.
+   C. Expand section: the open stage's own action shows all its items in a large dialog (openSection).
+   Moving between A and B is local: no request, no re-render. The page decides what to remember (a 'stagechange'
+   event, see rememberStage).
+   stages: [{key, label, statuses, hint, tone, icon, count, total, page, pages, error}] · open: the stage to show
+   first, or STAGE_NONE (falls back to the first stage with work) · peek(item): a small preview for a panel.
+   Server-paged columns: a stage's items are its first page (page/pages/total from the API); load(key, page,
+   extra) returns {items, page, pages, total} for "Load more", for retrying a column that failed (error) and for
+   the dialog (extra overrides q or per_page), and onLoad(items) lets the page keep what it needs (details
+   dialogs) about the cards that were added. section: what the dialog needs to know ({one, many, sorts,
+   serverSearch}; see sectionSorts). */
+const stageBoardConfig = {}, STAGE_NONE = 'none';
+/* A refresh keeps what the reader had loaded. A page asks for its stages with stagePageSize(), so after an action the
+   stage comes back as deep as it was, with whatever replaced the item that moved on, and nothing beyond that is
+   fetched. Remembered per list (view: its scope, search and sort), and capped by the API's largest page. */
+const stageDepths = {}, STAGE_MAX_PAGE = 50;
+function stagePageSize(id, base, view = '') {
+  const depth = stageDepths[id];
+  return depth && depth.view === view ? Math.min(STAGE_MAX_PAGE, Math.max(base, ...Object.values(depth.loaded))) : base;
 }
-// The stage pills mark every column that is (almost) fully in view: one on a phone, several on a tablet.
-function syncWorkflowStrip(board) {
-  const strip = board.previousElementSibling; if (!strip?.matches('.wf-stages')) return;
-  const box = board.getBoundingClientRect();
-  const inView = new Set([...board.children].filter(c => { const r = c.getBoundingClientRect(); return r.width && Math.min(r.right, box.right) - Math.max(r.left, box.left) >= r.width * .85; }).map(c => c.id));
-  strip.querySelectorAll('[data-wf-jump]').forEach(b => b.classList.toggle('active', inView.has(b.dataset.wfJump)));
+function rememberDepth(id, view = '', key, count) {
+  if (stageDepths[id]?.view !== view) stageDepths[id] = {view, loaded:{}};
+  stageDepths[id].loaded[key] = count;
 }
-// Per address (stage links included) and board: a refresh keeps the position, a stage link opens on its stage.
-const wfScrollKey = board => (location.hash || '#home') + ' ' + board.id;
-function scrollToStage(board, column, smooth) {
-  const left = column.offsetLeft - parseFloat(getComputedStyle(board).paddingLeft || 0);
-  board.scrollTo({left, behavior:smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'auto'});
+// The state a board opens in: what the address asks for (a stage, or all collapsed), else what the page remembers.
+const stageFromAddress = (stages, asked, otherwise) => asked === STAGE_NONE || stages.some(s => s.key === asked) ? asked : otherwise;
+function stageBoard({id, label, stages, items = [], card, statusOf = i => i.status, level = 2, open = '', empty = 'Nothing here right now.', peek, load, onLoad, section = {}, depthView = ''}) {
+  const columns = stages.map(s => ({...s, items:s.items || items.filter(i => s.statuses.includes(statusOf(i)))}));
+  const counted = c => c.count ?? c.total ?? c.items.length, single = columns.length === 1;
+  const overview = !single && open === STAGE_NONE;
+  const current = overview ? STAGE_NONE : (columns.find(c => c.key === open) || columns.find(c => counted(c)) || columns[0]).key;
+  const conf = stageBoardConfig[id] = {card, level, empty, load, onLoad, section, columns, depthView};
+  const collapsed = columns.filter(c => c.key !== current), plan = single ? {} : overview ? overviewPlan(collapsed.map(counted)) : mosaicPlan(collapsed.map(counted));
+  const placed = new Map(collapsed.map((c, i) => [c.key, overview ? {shown:5, more:0, tile:plan.tiles[i]} : plan.panels?.[i]]));
+  const count = c => `<span class="segment-count"><span data-sb-count data-total="${counted(c)}">${counted(c)}</span><span class="sr-only"> ${counted(c) === 1 ? 'item' : 'items'}</span></span>`;
+  const pills = single ? '' : `<nav class="chips sb-pills" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-sb-open="${c.key}" data-tone="${c.tone || ''}" aria-controls="${id}-${c.key}" aria-pressed="${c.key === current}"><i class="sb-dot" aria-hidden="true"></i>${esc(c.label)}<span data-sb-count data-total="${counted(c)}">${counted(c)}</span></button>`).join('')}</nav>`;
+  const column = (c, index) => {
+    const on = c.key === current, place = placed.get(c.key);
+    // Panels carry up to five previews; the plan shows as many as fit on one row of the panel.
+    const previews = !peek || !c.items.length ? '' : `<span class="sb-peek" aria-hidden="true">${c.items.slice(0, 5).map((item, k) => `<span class="sb-peek-item"${k >= (place?.shown ?? 0) ? ' hidden' : ''}>${peek(item)}</span>`).join('')}<span class="sb-peek-more"${place?.more > 0 ? '' : ' hidden'}>+${place?.more || 0}</span></span>`;
+    const inner = `<span class="sb-head-row"><span class="sb-icon" aria-hidden="true">${c.icon ? icon(c.icon) : ''}</span><span class="sb-title" id="${id}-${c.key}-title">${esc(c.label)}</span>${count(c)}<span class="sb-chevron" aria-hidden="true">${icon('collapse')}</span></span>${c.hint ? `<span class="sb-hint">${esc(c.hint)}</span>` : ''}${previews}`;
+    const head = single ? `<div class="sb-head">${inner}</div>` : `<button type="button" class="sb-head" data-sb-open="${c.key}" aria-expanded="${on}" aria-controls="${id}-${c.key}-body"${on ? ' title="Collapse this stage"' : ''}>${inner}</button>`;
+    const expand = `<button type="button" class="sb-expand" data-sb-expand="${c.key}" aria-haspopup="dialog" aria-label="Expand section: ${esc(c.label)}">${icon('expand')}<span class="sb-expand-label">Expand section</span></button>`;
+    const layout = place?.tile ? ` style="${place.tile}"` : place ? ` data-size="${place.size}" data-span="${place.span}"` : '';
+    return `<section class="sb-col${on ? ' is-open' : ''}" id="${id}-${c.key}" data-stage="${c.key}" data-tone="${c.tone || ''}" data-index="${index}" data-count="${counted(c)}"${layout} aria-labelledby="${id}-${c.key}-title"><div class="sb-top"><h${level} class="sb-heading">${head}</h${level}>${expand}</div><div class="sb-body" id="${id}-${c.key}-body">${stageBody(c, conf)}</div></section>`;
+  };
+  const drawn = columns.map(column);
+  const track = single ? drawn.join('')
+    : `<div class="sb-main">${drawn.filter((_, i) => columns[i].key === current).join('')}</div><div class="sb-mosaic" role="group" aria-label="Other stages" style="${overview ? plan.style : mosaicStyle(plan)}">${drawn.filter((_, i) => columns[i].key !== current).join('')}</div>`;
+  return `<div class="sb${single ? ' sb-single' : ''}${overview ? ' is-overview' : ''}" id="${id}" data-stage-board data-open="${current}">${pills}<div class="sb-track">${track}</div></div>`;
 }
-/* After a board is drawn: open on the requested stage, or where the reader was before an in-place
-   refresh (a job that moved on, a confirmed delivery), instead of jumping back to the first column. */
-function bindWorkflowBoards(root = document) {
-  root.querySelectorAll('[data-wf-board]').forEach(board => {
-    const focus = board.querySelector('.wf-column.is-focus'), key = wfScrollKey(board);
-    if (focus && !(key in wfScroll)) scrollToStage(board, focus, false); else if (wfScroll[key]) board.scrollLeft = wfScroll[key];
-    syncWorkflowStrip(board);
+/* The mosaic: the collapsed stages, in workflow order, as rows of a two-column grid, each row one panel across
+   both columns or two side by side, so it is always a full rectangle. Panels are sized on a bounded scale, not by
+   raw counts: none, 1–2, 3–5, 6–10, more. A busy stage takes more of the mosaic without crowding the others.
+   - Empty stages are slim bars (fixed height), and the two largest sizes always span the grid.
+   - Row heights give each panel an area in proportion to its weight (one across both columns: weight / 2).
+   - Of the possible arrangements the plan takes the one closest to those proportions, with the fewest rows
+     and then the busiest stage across the grid. Two panels simply stack: side by side they would be too narrow.
+   - The rows fill the height of the open stage, up to a maximum that grows with the workload (so a few jobs
+     never stretch into big empty tiles), and stay in view while a long stage scrolls.
+   Returns {panels:[{size, span, shown, more}], rows, rows1, max, max1}: rows as grid tracks, for two columns
+   and for one; max in px, likewise. */
+const mosaicSize = n => n === 0 ? 'xs' : n <= 2 ? 's' : n <= 5 ? 'm' : n <= 10 ? 'l' : 'xl';
+const MOSAIC_WEIGHT = {s:2, m:3, l:4, xl:5};
+const MOSAIC_MAX = {xs:40, s:92, m:112, l:148, xl:172}, MOSAIC_MAX_PAIR = {s:120, m:140}, MOSAIC_GAP = 8;
+function mosaicPlan(counts) {
+  const sizes = counts.map(mosaicSize), pairable = i => sizes[i] === 's' || sizes[i] === 'm';
+  const weight = i => MOSAIC_WEIGHT[sizes[i]] || 0, score = rows => {
+    // Row height (fr): a panel across two columns needs half the height of one in a single column.
+    const fr = row => row.length === 2 ? Math.max(weight(row[0]), weight(row[1])) : weight(row[0]) / 2;
+    const area = i => { const row = rows.find(r => r.includes(i)); return fr(row) * (row.length === 2 ? 1 : 2); };
+    const held = sizes.map((_, i) => i).filter(i => weight(i)), used = held.reduce((n, i) => n + area(i), 0) || 1, wanted = held.reduce((n, i) => n + weight(i), 0) || 1;
+    const off = held.reduce((n, i) => n + Math.abs(area(i) / used - weight(i) / wanted), 0);
+    return {cost:off + .2 * rows.length, across:rows.reduce((n, r) => n + (r.length === 1 ? counts[r[0]] : 0), 0)};
+  };
+  let best = null, bestScore = null;
+  const visit = (i, rows) => {
+    if (i >= sizes.length) { const now = score(rows); if (!best || now.cost < bestScore.cost - 1e-9 || (Math.abs(now.cost - bestScore.cost) < 1e-9 && now.across > bestScore.across)) { best = rows; bestScore = now; } return; }
+    visit(i + 1, [...rows, [i]]);
+    if (sizes.length > 2 && i + 1 < sizes.length && pairable(i) && pairable(i + 1)) visit(i + 2, [...rows, [i, i + 1]]);
+  };
+  visit(0, []);
+  const track = fr => fr ? `minmax(min-content,${fr}fr)` : 'auto';
+  const panels = sizes.map((size, i) => {
+    const span = best.find(r => r.includes(i)).length === 2 ? 1 : 2, limit = span === 2 ? 5 : 3, shown = counts[i] > limit ? limit - 1 : counts[i];
+    return {size, span, shown, more:counts[i] - shown};
+  });
+  const gaps = n => Math.max(0, n - 1) * MOSAIC_GAP;
+  return {panels,
+    rows:best.map(r => track(r.length === 2 ? Math.max(weight(r[0]), weight(r[1])) : weight(r[0]) / 2)).join(' '),
+    rows1:sizes.map((_, i) => track(weight(i))).join(' '),
+    max:best.reduce((n, r) => n + (r.length === 2 ? Math.max(MOSAIC_MAX_PAIR[sizes[r[0]]], MOSAIC_MAX_PAIR[sizes[r[1]]]) : MOSAIC_MAX[sizes[r[0]]]), 0) + gaps(best.length),
+    max1:sizes.reduce((n, size) => n + MOSAIC_MAX[size], 0) + gaps(sizes.length)};
+}
+const mosaicStyle = plan => `--mosaic-rows:${plan.rows};--mosaic-rows-1:${plan.rows1};--mosaic-max:${plan.max}px;--mosaic-max-1:${plan.max1}px`;
+/* The overview: every stage a tile of one mosaic, areas in proportion to a bounded, nonlinear weight. An ordered
+   treemap: the stages keep their workflow order, and of every way to cut the rectangle (side by side or stacked,
+   recursively) it takes the one with the most comfortable tiles and every tile above its minimum size. It is
+   worked out for three board widths and applied by container queries (style.css), so resizing needs no script.
+   Returns {style, tiles}: the grid's tracks and height, and each tile's grid area, per width. */
+const overviewWeight = n => n === 0 ? 1 : Math.min(9, 1.6 + 1.5 * Math.log2(n + 1));
+const OVERVIEW_WIDTHS = [{name:'s', width:300, unit:5200, minW:112, minH:84, maxH:520}, {name:'m', width:540, unit:9000, minW:130, minH:84, maxH:420}, {name:'l', width:800, unit:10500, minW:150, minH:84, maxH:360}];
+// A near-empty stage gets a minimum share of the mosaic, enough to fit one row of tiles, rather than exact proportion:
+// otherwise the whole mosaic would have to grow just to give that one tile its minimum size.
+function overviewShares(weights, floor) {
+  const limit = Math.min(floor, .8 / weights.length), floored = new Set();
+  for (;;) {
+    const rest = weights.reduce((sum, w, i) => floored.has(i) ? sum : sum + w, 0), total = rest / (1 - floored.size * limit);
+    const next = weights.findIndex((w, i) => !floored.has(i) && w < limit * total);
+    if (next < 0) return weights.map((w, i) => floored.has(i) ? limit * total : w);
+    floored.add(next);
+  }
+}
+function overviewCut(weights, W, H, minW, minH) {
+  const total = (i, j) => weights.slice(i, j).reduce((a, b) => a + b, 0);
+  const cost = (w, h) => Math.abs(Math.log(w / h / 1.7)) + (w < minW ? 8 * (minW - w) / minW : 0) + (h < minH ? 8 * (minH - h) / minH : 0);
+  const fit = (i, j, x, y, w, h) => {
+    if (j - i === 1) return {cost:cost(w, h), rects:[{x, y, w, h}]};
+    let best = null;
+    for (let k = i + 1; k < j; k++) {
+      const share = total(i, k) / total(i, j);
+      for (const beside of [true, false]) {
+        const a = beside ? fit(i, k, x, y, w * share, h) : fit(i, k, x, y, w, h * share);
+        const b = beside ? fit(k, j, x + w * share, y, w * (1 - share), h) : fit(k, j, x, y + h * share, w, h * (1 - share));
+        if (!best || a.cost + b.cost < best.cost - 1e-6) best = {cost:a.cost + b.cost, rects:[...a.rects, ...b.rects]};
+      }
+    }
+    return best;
+  };
+  return fit(0, weights.length, 0, 0, W, H).rects;
+}
+function overviewPlan(counts) {
+  const weights = counts.map(overviewWeight), sum = weights.reduce((a, b) => a + b, 0), tiles = counts.map(() => []), style = [];
+  for (const {name, width, unit, minW, minH, maxH} of OVERVIEW_WIDTHS) {
+    const shares = overviewShares(weights, minW / width);
+    let height = Math.min(maxH, Math.max(minH, sum * unit / width)), rects = overviewCut(shares, width, height, minW, minH);
+    // A tile still too small to hold its name and count: grow the mosaic until every tile can, within its maximum.
+    for (let tries = 0; tries < 10 && height < maxH && rects.some(r => r.h < minH - .5 || r.w < minW - .5); tries++) { height = Math.min(maxH, height * 1.15); rects = overviewCut(shares, width, height, minW, minH); }
+    const lines = values => [...new Set(values.map(v => +v.toFixed(2)))].sort((a, b) => a - b);
+    const xs = lines(rects.flatMap(r => [r.x, r.x + r.w])), ys = lines(rects.flatMap(r => [r.y, r.y + r.h]));
+    const tracks = list => list.slice(1).map((v, i) => `minmax(0,${(v - list[i]).toFixed(2)}fr)`).join(' ');
+    const at = (list, v) => list.indexOf(+v.toFixed(2)) + 1;
+    style.push(`--ov-cols-${name}:${tracks(xs)};--ov-rows-${name}:${tracks(ys)};--ov-h-${name}:${Math.round(height)}px`);
+    rects.forEach((r, i) => tiles[i].push(`--ov-area-${name}:${at(ys, r.y)} / ${at(xs, r.x)} / ${at(ys, r.y + r.h)} / ${at(xs, r.x + r.w)}`));
+  }
+  return {style:style.join(';'), tiles:tiles.map(t => t.join(';'))};
+}
+// After a switch or a search: the open stage (if any) in the main area, the others back in the mosaic in workflow
+// order, laid out again for what they now hold (the stage's matches while searching). Nodes move only when their place
+// changed. Previews follow the search as well: a stage shows the first ones whose cards still match.
+function arrangeMosaic(board) {
+  const main = board.querySelector('.sb-main'), mosaic = board.querySelector('.sb-mosaic'); if (!mosaic) return;
+  const cols = [...board.querySelectorAll('.sb-col')].sort((a, b) => a.dataset.index - b.dataset.index);
+  const open = cols.find(c => c.classList.contains('is-open')), rest = cols.filter(c => c !== open);
+  if (open && open.parentElement !== main) main.append(open);
+  if (rest.some((c, i) => mosaic.children[i] !== c)) rest.forEach(c => mosaic.append(c));
+  const matching = c => { const cards = c.querySelectorAll('.sb-list > *'); return [...c.querySelectorAll('.sb-peek-item')].filter((_, k) => !cards[k]?.hidden); };
+  if (!open) {
+    const plan = overviewPlan(rest.map(c => +(c.dataset.matches ?? c.dataset.count)));
+    mosaic.style.cssText = plan.style;
+    rest.forEach((c, i) => {
+      c.style.cssText = plan.tiles[i]; delete c.dataset.size; delete c.dataset.span;
+      // A tile shows the previews that fit on one row (style.css); its count already says how many there are.
+      const shown = matching(c); c.querySelectorAll('.sb-peek-item').forEach(t => { t.hidden = !shown.includes(t); });
+      const extra = c.querySelector('.sb-peek-more'); if (extra) extra.hidden = true;
+    });
+    return;
+  }
+  open.removeAttribute('style');
+  const plan = mosaicPlan(rest.map(c => +(c.dataset.matches ?? c.dataset.count)));
+  mosaic.style.cssText = mosaicStyle(plan);
+  rest.forEach((c, i) => {
+    const {size, span, shown} = plan.panels[i], count = +(c.dataset.matches ?? c.dataset.count), extra = c.querySelector('.sb-peek-more');
+    const thumbs = [...c.querySelectorAll('.sb-peek-item')], wanted = matching(c);
+    c.removeAttribute('style'); c.dataset.size = size; c.dataset.span = span;
+    thumbs.forEach(t => { t.hidden = wanted.indexOf(t) < 0 || wanted.indexOf(t) >= shown; });
+    if (extra) { const left = count - Math.min(shown, wanted.length); extra.textContent = '+' + left; extra.hidden = left <= 0; }
+  });
+  delete open.dataset.size; delete open.dataset.span;
+}
+// Panels slide from where they were to where they are now; one that grows is revealed from its old size rather
+// than stretched, so text never distorts. Measured as drawn, so a switch during a switch carries on smoothly.
+function slideStages(board, change) {
+  const cols = [...board.querySelectorAll('.sb-col')], drawn = c => c.getClientRects().length > 0;
+  const before = new Map(cols.filter(drawn).map(c => [c, c.getBoundingClientRect()]));
+  cols.forEach(c => c.getAnimations().filter(a => !(a instanceof CSSAnimation)).forEach(a => a.cancel()));
+  change();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches || !board.querySelector('.sb-mosaic')?.getClientRects().length) return;
+  // Switching from far down a long stage: bring the board's top back into view first.
+  const top = board.getBoundingClientRect().top, bar = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--topbar-h')) || 64;
+  if (top < bar) window.scrollBy(0, top - bar - 12);
+  cols.forEach(c => {
+    const a = before.get(c); if (!a || !drawn(c)) return;
+    const b = c.getBoundingClientRect(), dx = a.left - b.left, dy = a.top - b.top;
+    if (Math.abs(dx) < 1 && Math.abs(dy) < 1 && Math.abs(a.width - b.width) < 1 && Math.abs(a.height - b.height) < 1) return;
+    const clip = `inset(0 ${Math.max(0, b.width - a.width)}px ${Math.max(0, b.height - a.height)}px 0 round 12px)`;
+    c.animate([{transform:`translate(${dx}px, ${dy}px)`, clipPath:clip}, {transform:'none', clipPath:'inset(0 0 0 0 round 12px)'}], {duration:320, easing:'cubic-bezier(.2,.7,.2,1)'});
   });
 }
-document.addEventListener('click', e => {
-  const jump = e.target.closest('[data-wf-jump]'), column = jump && document.getElementById(jump.dataset.wfJump); if (!column) return;
-  scrollToStage(column.parentElement, column, true); column.focus({preventScroll:true});
-});
-let wfFrame = 0;
-document.addEventListener('scroll', e => {
-  const board = e.target.matches?.('[data-wf-board]') && e.target; if (!board) return;
-  wfScroll[wfScrollKey(board)] = board.scrollLeft;
-  cancelAnimationFrame(wfFrame); wfFrame = requestAnimationFrame(() => syncWorkflowStrip(board));
-}, true);
-addEventListener('resize', () => document.querySelectorAll('[data-wf-board]').forEach(syncWorkflowStrip));
-/* Expandable stage boards (Printing jobs): the stages and cards of a workflow board, one stage open at a
-   time. Wide: the open stage takes about 60% of the row with its full cards; the others shrink to compact
-   columns (name, count, a few previews) that open on click. Narrower: stage pills above the open stage.
-   Switching is local: no request, no re-render. The page decides what to remember (a 'stagechange' event).
-   stages: [{key, label, statuses, hint, tone, icon}] · open: the stage to show first (falls back to the
-   first stage with work) · peek(item): a small preview for a collapsed column. */
-function stageBoard({id, label, stages, items, card, statusOf = i => i.status, level = 2, open = '', empty = 'Nothing here right now.', peek}) {
-  const columns = stages.map(s => ({...s, items:items.filter(i => s.statuses.includes(statusOf(i)))}));
-  const current = (columns.find(c => c.key === open) || columns.find(c => c.items.length) || columns[0]).key;
-  const pills = `<nav class="chips sb-pills" aria-label="${esc(label)} stages">${columns.map(c => `<button type="button" class="chip" data-sb-open="${c.key}" data-tone="${c.tone || ''}" aria-controls="${id}-${c.key}" aria-pressed="${c.key === current}"><i class="sb-dot" aria-hidden="true"></i>${esc(c.label)}<span data-sb-count>${c.items.length}</span></button>`).join('')}</nav>`;
-  const column = c => {
-    const on = c.key === current, more = c.items.length - 3;
-    const previews = peek && c.items.length ? `<span class="sb-peek" aria-hidden="true">${c.items.slice(0, 3).map(peek).join('')}${more > 0 ? `<span class="sb-peek-more">+${more}</span>` : ''}</span>` : '';
-    const body = c.items.length ? `<ul class="sb-list">${c.items.map(i => card(i, level + 1)).join('')}</ul><p class="sb-nomatch" hidden>Nothing in this stage matches your search.</p>`
-      : `<p class="wf-empty">${esc(typeof empty === 'function' ? empty(c) : empty)}</p>`;
-    return `<section class="sb-col${on ? ' is-open' : ''}" id="${id}-${c.key}" data-stage="${c.key}" data-tone="${c.tone || ''}" aria-labelledby="${id}-${c.key}-title"><h${level} class="sb-heading"><button type="button" class="sb-head" data-sb-open="${c.key}" aria-expanded="${on}" aria-controls="${id}-${c.key}-body"${on ? ' aria-disabled="true"' : ''}><span class="sb-head-row"><span class="sb-icon" aria-hidden="true">${c.icon ? icon(c.icon) : ''}</span><span class="sb-title" id="${id}-${c.key}-title">${esc(c.label)}</span><span class="segment-count" data-sb-count>${c.items.length}</span></span>${c.hint ? `<span class="sb-hint">${esc(c.hint)}</span>` : ''}${previews}</button></h${level}><div class="sb-body" id="${id}-${c.key}-body">${body}</div></section>`;
-  };
-  return `<div class="sb" id="${id}" data-stage-board data-open="${current}">${pills}<div class="sb-track">${columns.map(column).join('')}</div></div>`;
+// A stage's cards, then "Load more" while the server has more of them; or why the stage could not load.
+const stageMore = (c, shown) => c.pages > c.page ? `<div class="sb-more"><span class="sb-more-note">${shown} of ${c.total} shown</span><button type="button" class="btn-ghost btn-sm" data-sb-more="${c.page + 1}">Load more</button></div>` : '';
+function stageBody(c, conf) {
+  if (c.error) return `<div class="sb-error" role="alert"><p>${esc(c.error)}</p><button type="button" class="btn-ghost btn-sm" data-sb-retry>Try again</button></div>`;
+  if (!c.items.length) return `<p class="wf-empty">${esc(typeof conf.empty === 'function' ? conf.empty(c) : conf.empty)}</p>`;
+  return `<ul class="sb-list">${c.items.map(i => conf.card(i, conf.level + 1)).join('')}</ul>${stageMore(c, c.items.length)}<p class="sb-nomatch" hidden>Nothing in this stage matches your search.</p>`;
 }
+// Load more appends the next page and moves focus to the first new card; Try again reloads a failed stage.
+// Either way a failure stays inside the stage, with its reason, and the button can be used again.
+document.addEventListener('click', async e => {
+  const control = e.target.closest('[data-sb-more], [data-sb-retry]'), board = control?.closest('[data-stage-board]'), conf = board && stageBoardConfig[board.id];
+  if (!conf?.load || control.disabled) return;
+  const col = control.closest('.sb-col'), body = col.querySelector('.sb-body'), more = control.matches('[data-sb-more]'), label = control.textContent;
+  control.disabled = true; control.setAttribute('aria-busy', 'true'); control.textContent = 'Loading…';
+  body.querySelector('.sb-more-error')?.remove();
+  try {
+    const data = await conf.load(col.dataset.stage, more ? +control.dataset.sbMore : 1);
+    if (!control.isConnected) return;
+    conf.onLoad?.(data.items);
+    const stage = conf.columns.find(c => c.key === col.dataset.stage);
+    Object.assign(stage, {items:more ? [...stage.items, ...data.items] : data.items, page:data.page, pages:data.pages, total:data.total, error:''});
+    if (!more) { body.innerHTML = stageBody(stage, conf); const first = body.querySelector('.sb-list > *'); if (first) { first.tabIndex = -1; first.focus(); } return; }
+    const list = body.querySelector('.sb-list'), before = list.children.length;
+    list.insertAdjacentHTML('beforeend', data.items.map(i => conf.card(i, conf.level + 1)).join(''));
+    control.closest('.sb-more').outerHTML = stageMore(stage, list.children.length);
+    rememberDepth(board.id, conf.depthView, stage.key, list.children.length);
+    const first = list.children[before]; if (first) { first.tabIndex = -1; first.focus(); }
+  } catch (err) {
+    if (!control.isConnected) return;
+    control.disabled = false; control.removeAttribute('aria-busy'); control.textContent = more ? 'Try again' : label;
+    control.insertAdjacentHTML('beforebegin', `<span class="sb-more-error" role="alert">${esc(err.message || 'Could not load more.')}</span>`);
+  }
+});
+// The open stage survives a refresh and a return from another page: in the address (replaced, so Back
+// still leaves the page) and for the session. hrefFor(key) is the page's address with that stage open.
+const rememberedStage = storageKey => { try { return sessionStorage.getItem(storageKey) || ''; } catch (e) { return ''; } };
+let stageBumpNext = null;
+function rememberStage(board, storageKey, hrefFor) {
+  if (!board) return;
+  // An item that moved to another stage (stageBumpNext, set before the page is drawn again): that stage
+  // lights up once, with its new count.
+  if (stageBumpNext?.board === board.id) { board.querySelectorAll(`.sb-col[data-stage="${stageBumpNext.stage}"], .sb-pills [data-sb-open="${stageBumpNext.stage}"]`).forEach(el => { el.classList.add('sb-bump'); setTimeout(() => el.classList.remove('sb-bump'), 1600); }); stageBumpNext = null; }
+  const save = (key, address) => { try { sessionStorage.setItem(storageKey, key); } catch (e) {} if (address) history.replaceState(history.state, '', '#' + hrefFor(key)); };
+  save(board.dataset.open, false);
+  board.addEventListener('stagechange', e => save(e.detail.key, true));
+}
+/* One card on a stage board, the same anatomy everywhere: preview · what it is (title, details, reference) ·
+   value and time on the right; an optional note; then Details on the left and at most one main action on the
+   right (secondary actions, destructive ones included, sit beside Details). A card without a main action
+   (finished work, read-only) has no footer: its links sit under the value, which keeps it compact. */
+function boardCard({tag = 'li', level = 3, thumb = '', kicker = '', title, titleHtml = '', lines = [], side = [], note = '', noteTone = '', links = '', primary = '', search = '', attrs = '', className = ''}) {
+  return `<${tag} class="wf-card jc ${className}" ${attrs} ${search ? `data-search="${esc(search.toLowerCase())}"` : ''}>${thumb || '<span class="jc-thumb jc-icon" aria-hidden="true"></span>'}<div class="jc-main">${kicker ? `<p class="jc-ref jc-kicker">${kicker}</p>` : ''}<h${level} class="jc-title">${titleHtml || esc(title)}</h${level}>${lines.filter(Boolean).map(l => `<p class="jc-spec">${l}</p>`).join('')}</div><div class="jc-side">${side.filter(Boolean).join('')}${links && !primary ? `<div class="wf-card-links jc-side-links">${links}</div>` : ''}</div>${note ? `<p class="jc-note${noteTone ? ' jc-note-' + noteTone : ''}">${note}</p>` : ''}${primary ? `<div class="jc-foot"><div class="wf-card-links">${links}</div>${primary}</div>` : ''}</${tag}>`;
+}
+// An icon tile in place of a product preview (requests without images, decisions, printers).
+const cardIcon = name => `<span class="jc-thumb jc-icon" aria-hidden="true">${icon(name)}</span>`;
 function openStage(board, key) {
-  const target = board.querySelector(`.sb-col[data-stage="${key}"]`); if (!target || target.classList.contains('is-open')) return false;
-  board.dataset.open = key; board.classList.add('is-switching');
-  clearTimeout(board.switching); board.switching = setTimeout(() => board.classList.remove('is-switching'), 400);
-  board.querySelectorAll('.sb-col').forEach(col => {
-    const on = col === target, head = col.querySelector('.sb-head');
-    col.classList.toggle('is-open', on); head.setAttribute('aria-expanded', String(on));
-    if (on) head.setAttribute('aria-disabled', 'true'); else head.removeAttribute('aria-disabled');
+  const collapsing = key === STAGE_NONE, target = collapsing ? null : board.querySelector(`.sb-col[data-stage="${key}"]`);
+  if ((!collapsing && !target) || board.dataset.open === key) return false;
+  const focused = board.contains(document.activeElement) ? document.activeElement : null, last = board.querySelector('.sb-col.is-open');
+  slideStages(board, () => {
+    board.dataset.open = key; board.classList.toggle('is-overview', collapsing);
+    board.querySelectorAll('.sb-col').forEach(col => {
+      const on = col === target, head = col.querySelector('.sb-head');
+      col.classList.toggle('is-open', on); head.setAttribute('aria-expanded', String(on));
+      if (on) head.title = 'Collapse this stage'; else head.removeAttribute('title');
+    });
+    arrangeMosaic(board);
   });
   board.querySelectorAll('.sb-pills [data-sb-open]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.sbOpen === key)));
+  // A moved node loses focus, and the pills are hidden in the overview: focus stays with the stage concerned.
+  if (focused?.isConnected && document.activeElement !== focused) focused.focus({preventScroll:true});
+  if (focused && !focused.checkVisibility()) (target || last)?.querySelector('.sb-head').focus({preventScroll:true});
   board.dispatchEvent(new CustomEvent('stagechange', {bubbles:true, detail:{key}}));
   return true;
 }
+// A closed stage opens; the open stage's own header (or pressed pill) collapses the board into its overview.
 document.addEventListener('click', e => {
   const control = e.target.closest('[data-sb-open]'), board = control?.closest('[data-stage-board]');
-  if (board) openStage(board, control.dataset.sbOpen);
+  if (board) openStage(board, control.dataset.sbOpen === board.dataset.open ? STAGE_NONE : control.dataset.sbOpen);
 });
 // While searching, each stage counts its matching cards, and the open stage says when none of its own match.
 function syncStageMatches(board, query) {
   board.querySelectorAll('.sb-col').forEach(col => {
     const cards = [...col.querySelectorAll('[data-search]')], shown = cards.filter(c => !c.hidden).length;
-    board.querySelectorAll(`[data-sb-open="${col.dataset.stage}"] [data-sb-count]`).forEach(n => { n.textContent = query ? shown : cards.length; });
+    board.querySelectorAll(`[data-sb-open="${col.dataset.stage}"] [data-sb-count], #${CSS.escape(col.id)} .sb-head [data-sb-count]`).forEach(n => { n.textContent = query ? shown : n.dataset.total ?? cards.length; });
     col.classList.toggle('no-match', !!query && !shown);
     board.querySelector(`.sb-pills [data-sb-open="${col.dataset.stage}"]`)?.classList.toggle('no-match', !!query && !shown);
     col.querySelector('.sb-nomatch')?.toggleAttribute('hidden', !query || shown > 0);
+    if (query) col.dataset.matches = shown; else delete col.dataset.matches;
   });
+  arrangeMosaic(board);
 }
+/* Expand section: the open stage's items in a large dialog, the same cards with the same actions. It holds no
+   copy of the state: its items come from the board's own columns (stageBoardConfig), and when a page redraws
+   after any action the dialog redraws from the new columns, so a job that moved on leaves it and the count
+   follows. The other dialogs (Details, a step's confirmation) open above it, under one scrim: Escape closes the
+   top one and focus returns to the control that opened it.
+   - Stages the browser holds completely search and sort locally, without a request.
+   - Paged stages show their pages with Show more; a search goes to the server (section.serverSearch) or, where
+     the API has none, loads every page first. A sort other than the server's order also needs every page.
+   - Cards are drawn in batches, so hundreds of them never reach the page at once. */
+const SECTION_BATCH = 24, sectionWhen = value => +parseServerDate(value);
+// The dialog's sort options. recent: when an item was created (or, for finished work, closed); stage: when it
+// entered its stage, for stages where the wait matters; reference: its order or request number. server names what
+// the API sorts by itself, so a paged stage asks for a page in that order instead of downloading everything.
+function sectionSorts({recent, stage, reference, referenceLabel = 'Order reference'}) {
+  const number = (of, direction) => (a, b) => direction * (of(a) - of(b));
+  return [{key:'recent', server:'newest', label:'Most recent', by:number(recent, -1)}, {key:'oldest', server:'oldest', label:'Oldest', by:number(recent, 1)},
+    ...(stage ? [{key:'stage', label:'Longest in this stage', by:number(stage, 1)}] : []),
+    ...(reference ? [{key:'reference', server:'reference', label:referenceLabel, by:(a, b) => String(reference(a)).localeCompare(String(reference(b)))}] : [])];
+}
+let section = null;
+const sectionDialog = () => document.getElementById('section-dialog');
+const sectionColumn = () => section.conf.columns.find(c => c.key === section.stage);
+const sectionPaged = () => { const c = sectionColumn(); return !!(c && section.conf.load && c.pages > 1); };
+const sectionNoun = n => { const {one = 'item', many = one + 's'} = section.conf.section; return n === 1 ? one : many; };
+// A card's own search text (data-search), or its words when it has none.
+const sectionDecode = document.createElement('textarea');
+function sectionSearchText(html) {
+  const found = /data-search="([^"]*)"/.exec(html);
+  sectionDecode.innerHTML = found ? found[1] : html.replace(/<svg[\s\S]*?<\/svg>|<[^>]+>/g, ' ');
+  return sectionDecode.value.toLowerCase();
+}
+// One item as a card, drawn once for as long as the page's data lasts.
+function sectionEntry(item) {
+  let entry = section.cards.get(item);
+  if (!entry) { const html = section.conf.card(item, 3); let text = null; entry = {item, html, search:() => (text ??= sectionSearchText(html))}; section.cards.set(item, entry); }
+  return entry;
+}
+// What the dialog shows now: its items filtered (locally held stages) and sorted, as card markup.
+function sectionVisible() {
+  const {view, q, sort, conf} = section, sorts = conf.section.sorts || [], chosen = sorts.find(s => s.key === sort);
+  const entries = view.items.map(sectionEntry);
+  const query = q.trim().toLowerCase(), filtered = query && !section.searchedOnServer ? entries.filter(e => e.search().includes(query)) : entries;
+  // A page the server already sorted stays as it came; the same goes for the first sort, the server's own order.
+  return chosen && !view.sortedOnServer && (sort !== sorts[0].key || !view.partial) ? [...filtered].sort((a, b) => chosen.by(a.item, b.item)) : filtered;
+}
+const sectionKey = item => item?.id ?? '';
+function sectionInsert(entries, list) {
+  const start = list.children.length;
+  list.insertAdjacentHTML('beforeend', entries.map(e => e.html).join(''));
+  [...list.children].slice(start).forEach((card, k) => {
+    card.dataset.sectionKey = sectionKey(entries[k].item);
+    // The board holds the same card: ids must stay unique, and what points at them must follow.
+    [card, ...card.querySelectorAll('[id]')].filter(e => e.id).forEach(e => { e.id += '-section'; });
+    [card, ...card.querySelectorAll('[aria-labelledby]')].filter(e => e.getAttribute('aria-labelledby')).forEach(e => e.setAttribute('aria-labelledby', e.getAttribute('aria-labelledby').split(' ').map(t => t + '-section').join(' ')));
+  });
+  return list.children[start];
+}
+function sectionDraw() {
+  const d = sectionDialog(), entries = sectionVisible(), list = d.querySelector('.ss-list'), column = sectionColumn(), query = section.q.trim();
+  const all = column ? column.total ?? column.items.length : 0, matching = section.searchedOnServer ? section.view.total : entries.length;
+  list.innerHTML = ''; sectionInsert(entries.slice(0, section.limit), list);
+  d.querySelector('#ss-count').textContent = query ? `${matching} of ${all} ${sectionNoun(all)}` : `${all} ${sectionNoun(all)}`;
+  d.querySelector('#ss-status').textContent = query ? `${matching} ${matching === 1 ? 'match' : 'matches'}` : '';
+  const none = d.querySelector('.ss-empty'), label = column?.label || 'this stage';
+  none.hidden = !!entries.length;
+  none.textContent = query ? `Nothing in ${label} matches “${query}”.` : `Nothing in ${label} right now.`;
+  sectionMoreButton(entries);
+}
+function sectionMoreButton(entries) {
+  const d = sectionDialog(), more = d.querySelector('.ss-more'), shown = d.querySelector('.ss-list').children.length, {view} = section;
+  const left = entries.length > shown || view.partial;
+  more.hidden = !left;
+  if (left) { more.querySelector('.ss-more-note').textContent = `${shown} of ${view.partial ? view.total : entries.length} shown`; const b = more.querySelector('[data-ss-more]'); b.disabled = false; b.textContent = 'Show more'; }
+}
+// Fetches what the current search and sort need. Without either, the board's own data, with no request at all.
+// keepDepth: an action refreshed the page, so bring back as many items as were showing, not just the first page.
+async function sectionFetch(keepDepth = false) {
+  const s = section, c = sectionColumn(); if (!c) return;
+  const request = ++s.request, sorts = s.conf.section.sorts || [], paged = sectionPaged(), query = s.q.trim(), shownBefore = s.view.items.length;
+  const load = (page, extra) => s.conf.load(s.stage, page, extra), onServer = paged && query && s.conf.section.serverSearch;
+  const chosen = sorts.find(o => o.key === s.sort), custom = sorts.length && s.sort !== sorts[0].key;
+  const serverSort = paged && custom && s.conf.section.serverSearch && chosen?.server ? chosen.server : '';
+  // Only what the API cannot do itself still needs every page: a local search, or "longest in this stage" (active work, so bounded).
+  const everything = paged && ((query && !onServer) || (custom && !serverSort));
+  const extra = {...(onServer && {q:query}), ...(serverSort && {sort:serverSort})};
+  s.searchedOnServer = !!onServer;
+  if (!paged) { s.view = {items:c.items, total:c.items.length, page:1, pages:1, partial:false}; return; }
+  if (!everything && !Object.keys(extra).length) { s.view = {items:c.items, total:c.total ?? c.items.length, page:c.page || 1, pages:c.pages || 1, partial:(c.page || 1) < (c.pages || 1)}; return; }
+  const body = sectionDialog().querySelector('.ss-body'); body.setAttribute('aria-busy', 'true');
+  const perPage = everything ? STAGE_MAX_PAGE : keepDepth && shownBefore ? Math.min(STAGE_MAX_PAGE, shownBefore) : 0;
+  const sized = perPage ? {...extra, per_page:perPage} : extra;
+  try {
+    const data = await load(1, sized);
+    if (request !== s.request || section !== s) return false;
+    let items = data.items;
+    if (everything) for (let page = 2; page <= data.pages; page++) { const next = await load(page, sized); if (request !== s.request || section !== s) return false; items = [...items, ...next.items]; }
+    s.conf.onLoad?.(items);
+    s.view = {items, total:data.total, page:everything ? data.pages : data.page, pages:data.pages, partial:!everything && data.page < data.pages, sortedOnServer:!!serverSort, extra:everything ? null : sized};
+    sectionError('');
+  } catch (e) {
+    if (request !== s.request || section !== s) return false;
+    sectionError(e.message || 'Could not load this stage.');
+    return false;
+  } finally { if (request === s.request && section === s) body.removeAttribute('aria-busy'); }
+}
+function sectionError(message) { const box = sectionDialog().querySelector('.ss-error'); box.hidden = !message; box.querySelector('p').textContent = message; }
+async function sectionUpdate() {
+  const s = section; s.limit = SECTION_BATCH;
+  if (await sectionFetch() !== false && section === s) { sectionDraw(); sectionDialog().querySelector('.ss-body').scrollTop = 0; }
+}
+function openSection(board, key) {
+  const conf = stageBoardConfig[board.id], column = conf?.columns.find(c => c.key === key); if (!column) return;
+  let d = sectionDialog();
+  if (!d) {
+    d = document.createElement('dialog'); d.id = 'section-dialog'; d.className = 'ss-dialog'; d.setAttribute('aria-labelledby', 'ss-title'); d.setAttribute('aria-describedby', 'ss-count');
+    document.body.append(d); keepFocusInside(d);
+    d.addEventListener('cancel', e => { e.preventDefault(); closeSection(); });   // Escape
+    d.addEventListener('close', sectionClosed);
+    let outside = false; d.addEventListener('pointerdown', e => { outside = e.target === d; });
+    d.addEventListener('click', e => { if (e.target === d && outside) closeSection(); if (e.target.closest('[data-ss-close]')) closeSection(); if (e.target.closest('[data-ss-more]')) sectionShowMore(e.target.closest('[data-ss-more]')); if (e.target.closest('[data-ss-retry]')) sectionUpdate(); });
+    d.addEventListener('input', e => { if (!e.target.matches('#ss-q')) return; section.q = e.target.value; clearTimeout(section.typing); section.typing = setTimeout(sectionUpdate, 220); });
+    d.addEventListener('submit', e => e.preventDefault());
+    d.addEventListener('focusin', e => { const card = e.target.closest('[data-section-key]'); if (card && section) section.lastCard = card.dataset.sectionKey; });
+  }
+  const sorts = conf.section.sorts || [];
+  section = {board:board.id, stage:key, conf, q:'', sort:sorts[0]?.key || '', limit:SECTION_BATCH, request:0, view:{items:[], total:0, page:1, pages:1, partial:false}, searchedOnServer:false, cards:new WeakMap()};
+  d.dataset.tone = column.tone || ''; d.classList.remove('is-closing');
+  const sortControl = sorts.length > 1 ? uiSelect({id:'ss-sort', label:'Sort by', value:section.sort, options:sorts.map(o => [o.key, o.label]), className:'ss-sort'}) : '';
+  d.innerHTML = `<div class="ss"><header class="ss-head"><span class="sb-icon" aria-hidden="true">${column.icon ? icon(column.icon) : ''}</span><div class="ss-titles"><h2 id="ss-title">${esc(column.label)}</h2><p id="ss-count"></p></div><button type="button" class="icon-btn ss-close" data-ss-close aria-label="Close">${icon('close')}</button></header><form class="ss-tools" role="search"><label class="search-field">${icon('search')}<span class="sr-only">Search ${esc(column.label)}</span><input type="search" id="ss-q" placeholder="${esc(conf.section.search || 'Search ' + sectionNoun(2))}" autocomplete="off" maxlength="80"></label>${sortControl}</form><div class="ss-body"><div class="ss-error sb-error" role="alert" hidden><p></p><button type="button" class="btn-ghost btn-sm" data-ss-retry>Try again</button></div><ul class="ss-list sb-list"></ul><p class="ss-empty wf-empty" hidden></p><div class="ss-more sb-more" hidden><span class="ss-more-note sb-more-note"></span><button type="button" class="btn-ghost btn-sm" data-ss-more>Show more</button></div></div><p class="sr-only" id="ss-status" role="status"></p></div>`;
+  const hidden = d.querySelector('[data-select=ss-sort] input[type=hidden]');
+  if (hidden) hidden.onchange = e => { section.sort = e.target.value; sectionUpdate(); };
+  document.documentElement.classList.add('section-open');
+  const note = document.getElementById('toast'); if (note) d.append(note);   // the top layer covers everything else
+  section.view = {items:column.items, total:column.total ?? column.items.length, page:column.page || 1, pages:column.pages || 1, partial:(column.page || 1) < (column.pages || 1)};
+  sectionDraw();
+  d.showModal();
+  // The search field on a desktop; on a touch screen, not the keyboard over half the list.
+  (matchMedia('(pointer:coarse)').matches ? d.querySelector('[data-ss-close]') : d.querySelector('#ss-q')).focus();
+  // Any redraw of the page (an action, wherever it was made) brings the dialog up to date.
+  section.watch = new MutationObserver(sectionSync);
+  section.watch.observe(document.getElementById('app'), {childList:true, subtree:true});
+}
+// Reveals the next batch; then, for paged stages, the next page. Focus moves to the first new card.
+async function sectionShowMore(button) {
+  const s = section, list = sectionDialog().querySelector('.ss-list'), shown = list.children.length, entries = sectionVisible();
+  let added = null;
+  if (entries.length > shown) added = sectionInsert(entries.slice(shown, shown + SECTION_BATCH), list);
+  else if (s.view.partial) {
+    button.disabled = true; button.textContent = 'Loading…';
+    try {
+      const own = s.view.extra || null, data = await s.conf.load(s.stage, s.view.page + 1, own || {});
+      if (section !== s) return;
+      s.conf.onLoad?.(data.items);
+      // Without a search or sort of its own these are the board's next page as well: both show the same list.
+      const column = sectionColumn();
+      if (!own && column) { Object.assign(column, {items:[...column.items, ...data.items], page:data.page, pages:data.pages, total:data.total}); stageRedrawColumn(s.board, column, s.conf); rememberDepth(s.board, s.conf.depthView, s.stage, column.items.length); }
+      s.view = {...s.view, items:own ? [...s.view.items, ...data.items] : column.items, total:data.total, page:data.page, pages:data.pages, partial:data.page < data.pages};
+      added = sectionInsert(data.items.map(item => ({item, html:s.conf.card(item, 3)})), list);
+      sectionError('');
+    } catch (e) { sectionError(e.message || 'Could not load more.'); }
+  }
+  s.limit = list.children.length;
+  sectionMoreButton(sectionVisible());
+  if (added) { added.tabIndex = -1; added.focus(); }
+}
+// The board's column after the dialog loaded its next page.
+function stageRedrawColumn(id, column, conf) {
+  const body = document.querySelector(`#${CSS.escape(id)} .sb-col[data-stage="${column.key}"] .sb-body`);
+  if (body) body.innerHTML = stageBody(column, conf);
+}
+// The page behind was redrawn: new columns, or the board is gone (no work left, or an error page).
+function sectionSync() {
+  if (!section) return;
+  const s = section, conf = stageBoardConfig[s.board], board = document.getElementById(s.board);
+  if (conf === s.conf && board) return;
+  // Mid-redraw: the page's frame is back and its content is not, yet.
+  if (document.querySelector('#app .ws-loading, #app #bo-results[aria-busy=true] .bo-skeletons')) return;
+  if (!board) { closeSection(); return; }
+  s.conf = conf;
+  sectionRefresh();
+}
+async function sectionRefresh() {
+  const s = section, d = sectionDialog(), list = d.querySelector('.ss-list'), body = d.querySelector('.ss-body'), active = document.activeElement;
+  // Focus stays with the same card, or the one now in its place.
+  const card = list.contains(active) ? active.closest('[data-section-key]') : null, place = card ? [...list.children].indexOf(card) : -1, key = card?.dataset.sectionKey;
+  s.cards = new WeakMap();
+  if (await sectionFetch(true) === false || section !== s) return;
+  s.conf.onLoad?.(s.view.items);
+  s.limit = Math.max(SECTION_BATCH, list.children.length);
+  const scroll = body.scrollTop;
+  sectionDraw();
+  body.scrollTop = scroll;
+  if (place < 0 || document.querySelector('dialog[open]:not(#section-dialog)')) return;
+  sectionFocusCard(key, place);
+}
+function sectionFocusCard(key, place = 0) {
+  const d = sectionDialog(), list = d.querySelector('.ss-list'), cards = [...list.children];
+  const card = cards.find(c => c.dataset.sectionKey === key) || cards[Math.min(place, cards.length - 1)];
+  (card?.querySelector('[data-job],button:not([disabled]),a[href]') || d.querySelector('#ss-q')).focus({preventScroll:true});
+}
+// A dialog above this one closed, and what opened it was redrawn meanwhile: focus must not fall out.
+document.addEventListener('close', e => {
+  if (!section || e.target === sectionDialog() || document.querySelector('dialog[open]:not(#section-dialog)')) return;
+  if (!sectionDialog().contains(document.activeElement) || document.activeElement === sectionDialog()) sectionFocusCard(section.lastCard);
+}, true);
+function closeSection() {
+  const d = sectionDialog(); if (!d?.open || d.classList.contains('is-closing')) return;
+  clearTimeout(section?.typing);
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return d.close();
+  d.classList.add('is-closing'); setTimeout(() => { if (d.open) d.close(); }, 130);
+}
+function sectionClosed() {
+  const d = sectionDialog(), s = section; d.classList.remove('is-closing');
+  document.documentElement.classList.remove('section-open');
+  if (!s) return;
+  s.watch?.disconnect(); section = null;
+  const note = document.getElementById('toast'); if (note) document.body.append(note);
+  d.innerHTML = '';
+  // Back to the control that opened it; the page may have been redrawn, or the stage emptied, meanwhile.
+  const col = document.querySelector(`#${CSS.escape(s.board)} .sb-col[data-stage="${s.stage}"]`), expand = col?.querySelector('[data-sb-expand]');
+  const target = expand?.checkVisibility() ? expand : (col?.checkVisibility() ? col.querySelector('.sb-head') : document.querySelector(`#${CSS.escape(s.board)} .sb-col.is-open .sb-head`));
+  (target || document.querySelector('#app .ws-main .empty-state a, #app .ws-main a, #app a'))?.focus({preventScroll:true});
+}
+const sectionIsOpen = () => !!section;
+document.addEventListener('click', e => {
+  const control = e.target.closest('[data-sb-expand]'), board = control?.closest('[data-stage-board]');
+  if (board) openSection(board, control.dataset.sbExpand);
+});
+// Leaving the page (Back, a link): the dialog belongs to the page it was opened from.
+addEventListener('hashchange', () => { const d = sectionDialog(); if (d?.open) d.close(); });
 /* Ordered products, wherever they appear (orders, jobs, history): the current neutral product render,
    recoloured in the browser with the purchased colour (product-visuals.js, no new renders), and the
    material and colour as bought. Lines from before colour snapshots show their name without a swatch. */
@@ -340,9 +792,12 @@ function openReview(title, subtitle, body, actions) {
   const dialog = $('#modal'); dialog.className = 'review-dialog';
   dialog.innerHTML = `<div class="review-frame"><header class="review-head"><div><p class="ws-crumb">${esc(subtitle)}</p><h2>${esc(title)}</h2></div><button type="button" class="icon-btn" data-close-modal aria-label="Close">${icon('close')}</button></header><div class="review-body">${body}</div><footer class="review-foot"><button type="button" class="btn-ghost btn-sm" data-close-modal>Close</button>${actions || ''}</footer></div>`;
   dialog.addEventListener('close', () => { dialog.querySelector('[data-cad-viewer]')?.disposeViewer?.(); dialog.className = ''; }, {once:true});
+  nameDialog(dialog);
   if (!dialog.open) dialog.showModal();
   return dialog;
 }
+// The shared dialog (details, reviews, confirmations): focus stays inside it, whoever opens it.
+keepFocusInside(document.getElementById('modal'));
 const rowMenu = (id, items) => `<div class="dropdown row-menu"><button type="button" class="icon-btn" id="${id}-button" data-dropdown aria-expanded="false" aria-controls="${id}" aria-label="More actions">${icon('more')}</button><div class="dropdown-menu align-end" id="${id}" hidden>${items}</div></div>`;
 // The API stores UTC timestamps without an offset; read them as UTC rather than local time.
 const parseServerDate = value => new Date(typeof value === 'string' && !/(Z|[+-]\d\d:?\d\d)$/.test(value) ? value + 'Z' : value);

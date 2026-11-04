@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import re
 from email import policy
 from email.parser import BytesParser
-def mail_text(path): return BytesParser(policy=policy.default).parsebytes(path.read_bytes()).get_content()
+def mail_text(path): return BytesParser(policy=policy.default).parsebytes(path.read_bytes()).get_body(('plain',)).get_content()
 root=tempfile.TemporaryDirectory(prefix='ol-accounts-')
 os.environ['DATABASE_URL']='sqlite:///'+root.name+'/test.db'
 os.environ['UPLOAD_DIR']=root.name+'/uploads'
@@ -19,18 +19,26 @@ from sqlalchemy import select
 from app.main import app, rate
 from app.database import Base,engine,SessionLocal
 from app.models import User,AccountToken
+from app import email_service
 Base.metadata.create_all(engine)
 
 def signup(name='MarcoLab'):
+    """An unverified account with a session: since verification became mandatory, only a legacy account has one."""
     client=TestClient(app)
     response=client.post('/api/auth/register',json={'email':name+'@example.org','username':name,'password':'Openlabs2026'})
     assert response.status_code==201,response.text
-    client.headers['X-CSRF-Token']=response.json()['csrf_token']
+    assert client.post('/api/auth/login',json={'email':name+'@example.org','password':'Openlabs2026'}).status_code==403
+    with SessionLocal() as db:
+        db.scalar(select(User).where(User.username==name)).legacy_email_access=True;db.commit()
+    signed_in=client.post('/api/auth/login',json={'email':name+'@example.org','password':'Openlabs2026'});assert signed_in.status_code==200,signed_in.text
+    client.headers['X-CSRF-Token']=signed_in.json()['csrf_token']
     return client
 
 def token():
-    path=max(Path(os.environ['MAIL_OUTBOX']).glob('*.eml'),key=lambda p:p.stat().st_mtime_ns)
-    return re.search(r'token=([A-Za-z0-9_-]+)',mail_text(path))[1]
+    email_service.process_due(SessionLocal)
+    # The newest message with a link: notices such as "this address already has an account" have none.
+    paths=sorted(Path(os.environ['MAIL_OUTBOX']).glob('*.eml'),key=lambda p:p.stat().st_mtime_ns,reverse=True)
+    return next(found[1] for path in paths if (found:=re.search(r'token=([A-Za-z0-9_-]+)',mail_text(path))))
 
 def test_accounts():
     client=TestClient(app)
@@ -38,8 +46,10 @@ def test_accounts():
         assert client.post('/api/auth/register',json={'email':'valid@example.org','username':'Valid','password':password}).status_code==422
     assert client.post('/api/auth/register',json={'email':'invalid','username':'Valid','password':'Openlabs2026'}).status_code==422
     a=signup(); b=signup('OtherLab')
-    for body in [{'email':'MarcoLab@example.org','username':'Different'},{'email':'different@example.org','username':'MARCOLAB'}]:
-        assert client.post('/api/auth/register',json={**body,'password':'Openlabs2026'}).status_code==409
+    # A taken username is refused. A taken address is answered like a new one (test_email_verification.py), and adds nothing.
+    assert client.post('/api/auth/register',json={'email':'different@example.org','username':'MARCOLAB','password':'Openlabs2026'}).status_code==409
+    assert client.post('/api/auth/register',json={'email':'MarcoLab@example.org','username':'Different','password':'Openlabs2026'}).status_code==201
+    with SessionLocal() as db:assert db.scalar(select(User).where(User.username=='Different')) is None
     assert not a.get('/api/auth/me').json()['user']['email_verified']
     assert a.post('/api/listings',json={}).status_code==403
     assert a.get('/api/auth/username?username=marcolab').json()['available']
@@ -252,11 +262,12 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolated_account_database(tmp_path,monkeypatch):
     import sys
-    from sqlalchemy import create_engine,event
+    from fastapi import Request
+    from sqlalchemy import create_engine,event,text
     from sqlalchemy.orm import sessionmaker
     from app.database import get_db
     from app import config
-    isolated=create_engine('sqlite:///'+str(tmp_path/'accounts.db'),connect_args={'check_same_thread':False})
+    isolated=create_engine('sqlite:///'+str(tmp_path/'accounts.db'),connect_args={'check_same_thread':False,'timeout':15})
     @event.listens_for(isolated,'connect')
     def fk(connection,_):connection.execute('PRAGMA foreign_keys=ON')
     factory=sessionmaker(bind=isolated)
@@ -265,8 +276,12 @@ def isolated_account_database(tmp_path,monkeypatch):
     monkeypatch.setattr(config,'UPLOAD_DIR',tmp_path/'uploads'/'products')
     monkeypatch.setenv('MAIL_OUTBOX',str(tmp_path/'mail'))
     Base.metadata.create_all(isolated)
-    def session():
-        with factory() as db:yield db
+    # As database.get_db: a write holds the lock from the start of its request. Without this, simultaneous requests race
+    # in a way the application itself cannot.
+    def session(request:Request):
+        with factory() as db:
+            if request.method not in ('GET','HEAD','OPTIONS'):db.execute(text('BEGIN IMMEDIATE'))
+            yield db
     app.dependency_overrides[get_db]=session
     rate.clear()
     yield
@@ -280,7 +295,7 @@ def test_verification_rate_limit_and_username_race():
     with ThreadPoolExecutor(max_workers=2) as pool:statuses=list(pool.map(attempt,[0,1]))
     assert sorted(statuses)==[201,409]
     client=TestClient(app)
-    for _ in range(10):assert client.post('/api/auth/verify',json={'token':'x'*43}).status_code==400
+    for _ in range(60):assert client.post('/api/auth/verify',json={'token':'x'*43}).status_code==400
     assert client.post('/api/auth/verify',json={'token':'x'*43}).status_code==429
 
 def test_cart_concurrent_add_and_removed_item():

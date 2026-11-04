@@ -13,6 +13,8 @@ from aesthetic suggestions (§3, marked *aesthetic*).
 
 ## 1. Summary of the Kanban redesign
 
+> Later passes replaced this board: §6 (third, fourth and fifth pass) describes the current `stageBoard()`, now the only board component.
+
 **One shared component.** `workflowBoard()` in `assets/navigation.js` draws one column per stage, in stage
 order. The stages and the statuses each one holds come from the API (`app/lifecycle.py`: each status group
 now also returns its `statuses`). As a result, the board places every record in the server's own column, and
@@ -40,12 +42,12 @@ They now answer different questions.
 
 **Printing jobs: where the work is done.** It uses `stageBoard()` in `navigation.js`, built on the same
 stages from the API and the same card renderer.
-- **Wide** (board ≥ 760 px; desktop, and 900 px without the sidebar):
-  - the four stages sit side by side and one is open;
-  - the open stage takes about 58% of the row and shows full job cards;
-  - the other stages shrink to compact columns with an icon, name, count and up to three coloured previews. Clicking one opens it (WAI-ARIA accordion pattern: `aria-expanded`; `aria-disabled` on the open header).
-- **Narrower** (1024 px with the sidebar, tablets, phones): rounded stage pills, 2×2 on phones and one row of four from 600 px, with the open stage underneath.
-- **Switching** is local: no request and no reload. The width animates (0.32 s) only while switching, never on load or resize, and not at all with reduced motion.
+- **All collapsed** (sixth pass, §6): the open stage's header collapses the board into one proportional mosaic.
+- **Wide** (board ≥ 680 px), the **balanced mosaic** (fifth pass, §6):
+  - the open stage takes two thirds of the row, or 5/7 (about 71%) from a board width of 900 px, and shows full job cards;
+  - the other stages share a compact grid on the right, which stays in view while a long stage scrolls. Each panel shows an icon, name, count and coloured previews, and is sized by its job count. Clicking one opens it (WAI-ARIA accordion pattern: `aria-expanded`; `aria-disabled` on the open header).
+- **Narrower** (phones and small tablets): rounded stage pills, 2×2 on phones and one row of four from 600 px, with the open stage underneath.
+- **Switching** is local: no request and no reload. Panels slide to their new places (0.32 s) only while switching, never on load or resize, and not at all with reduced motion.
 - **Remembering the stage:** the open stage is written to the address (`replaceState`, no history entry) and to the session. A refresh, or a return from another page, reopens it. Without either, the first stage with work opens.
 - **Old links** (`?group=accepted`, `?group=in-progress`, `#host/jobs/accepted`) open In production.
 - **After a step,** the open stage stays open. Focus goes to the job if it is still there, otherwise to the card now in its place. The stage the job moved to lights up once with its new count.
@@ -57,7 +59,7 @@ allows `ready` from `accepted` as well as from `printing`. The internal states a
 - **Reporting the print start is optional.** `printing` still exists, and "Report printing started" is offered only in the job details.
 - **Nothing is recorded that the host did not report.** A job that skips the report gets no `printing` status and no `job.printing` event.
 - **The card says which:** a small Accepted or Printing badge.
-- **Administrator rules are unchanged:** reopen only `accepted` jobs; cancel only `pending` or `accepted` orders. A host who prints without reporting it can therefore still have the job reopened or cancelled until it is marked ready. Reporting the start protects it, as before.
+- **Administrators** may cancel an order at any stage before completion, whatever the host reported (fourth pass, below). Reopening a job for another host is still allowed only while it is `accepted`.
 - **The buyer still sees "In production"** once a print start is reported, or when another product of the order is further along. The lifecycle groups for orders are unchanged.
 
 **Job cards** (the open stage of Printing jobs) show:
@@ -115,10 +117,10 @@ address) and Printing jobs keeps its open stage. A stage link (`#host/jobs?group
 
 | Component | Where | Used by |
 |-----------|-------|---------|
-| `workflowBoard`, `bindWorkflowBoards`, stage strip, `syncWorkflowStrip`, `scrollToStage` | `navigation.js` | My orders (Printing jobs and the host overview until the second pass) |
+| `stageBoard`, `mosaicPlan`, `arrangeMosaic`, `openSection` | `navigation.js` | every Active/History list (`workflowBoard` was removed in the fifth pass) |
 | `stageBoard`, `openStage`, `syncStageMatches` (expandable board) and `.sb-*` / `.jc-*` styles | `navigation.js`, `style.css` | Printing jobs |
 | `.ho-*` summary cards and alerts | `workspaces.js`, `style.css` | Host overview |
-| `.wf-*` styles (column, card, lane, strip, section head, toolbar) | `style.css` "Workflow boards" | the same three pages; replaces the separate `.hb-*` overview board |
+| `.wf-card`, `.wf-link`, `.wf-toolbar`, `.wf-empty`; `.sb-*` (board and mosaic); `.ss-*` (Expand section) | `style.css` | every stage board; replaces the separate `.hb-*` overview board |
 | `orderLineThumb` / `orderLineConfig` (tinted preview, swatch + "Material · Colour") | `navigation.js` | job cards, job history rows, order cards, order rows, both details dialogs. Host and buyer now name colours identically |
 | `openReview` / `reviewSection` / `reviewItem` (detail dialog) | moved from `workspaces.js` to `navigation.js` | admin approvals (unchanged), job details (new), order details (new) |
 | `actionDialog` (themed confirmation with in-dialog errors and a busy state) | reused | every job step, Mark as received, address change, order deletion |
@@ -209,21 +211,112 @@ pricing, matching or eligibility change.
 
 ## 6. Where Kanban is beneficial
 
-| Area | Why | Status |
-|------|-----|--------|
-| Printing jobs (host) | Each job moves through four stages with one host action per stage; hosts work across stages at once | Implemented (expandable, one stage open) |
-| Host overview | A summary, not a second workspace | Second pass: counts per stage instead of a board |
-| My orders (buyer) | Few items per buyer; the question is "where is each order?" | Implemented |
-| Admin custom requests | Three active states (Submitted → Under review → Quoted/Accepted) worked one request at a time | **Recommended later** (R5): volumes are low today and each request needs its details dialog; the list with status chips works. The component can be reused as is |
-| Admin orders | — | A compact overview already exists: stage pills with counts, plus the overview's "Needs attention" links (now correct, U1). A board would hide search and comparison, which administrators need here |
+**Third pass (product decision, 2026-11-01):** every Active/History list now uses the expandable stage board
+of Printing jobs, including the places §7 first advised against. What §7 was protecting is kept: search
+(server-side on paged lists, with a match count per stage), comparison (cards keep the same anatomy in every
+stage) and paging through long histories ("Load more" within a stage, 12 cards at a time).
+
+| Area | Stages | Loading |
+|------|--------|---------|
+| Printing jobs (host) | Available · In production · Ready to ship · Awaiting buyer | all active jobs at once |
+| Job history (host) | Completed · Cancelled | first page of each stage (`columns=true`), Load more |
+| My orders (buyer) | Pending · In progress · Shipping | all current orders |
+| Previous orders (buyer) | Completed · Cancelled | first page of each stage, Load more |
+| My requests (buyer, host) | Submitted · Under review · Accepted / Request history: Closed (one column) | all at once |
+| Admin orders | Pending · In progress · Shipping / Completed · Cancelled | first page of each stage, Load more |
+| Admin approvals | Host applications · Equipment updates · Listings · Printer suggestions / history by the same types | pending all at once; history by page |
+| Admin custom requests | Submitted · Under review · Quoted / Closed | all at once |
+| Host overview | A summary, not a board (four stage counts) | — |
+
+`stageBoard` gained opt-in options for this, so Printing jobs is unchanged: counts from the API (`count`,
+`total`), "Load more" and Try again per stage (`load`, `onLoad`), a single full-width column when a scope has
+one stage, `rememberStage` (address + session), a one-time highlight of the stage an item moved to
+(`stageBumpNext`), and `boardCard`, the shared card anatomy (preview · title and details · value and time ·
+note · Details and at most one main action; read-only cards put Details under the value, with no footer).
+
+Measured on the same fixture data (content height in px, before → after; lower is more compact):
+Previous orders 807 → 483 (1366) and 1470 → 598 (390); My requests 1874 → 686 and 2355 → 947; Admin order
+history 739 → 338; Admin orders 817 → 463 and 1467 → 675; Request history 846 → 523. Taller than before:
+Job history with a single job (220 → 414; 383 → 511 on a phone: the stage header and the richer card),
+pending Approvals (400 → 539; 555 → 812 on a phone: the stage header, and four stage pills on a phone) and
+admin Request history (367 → 386).
+
+**Fourth pass (2026-11-02): a mosaic on Printing jobs, generalised by the fifth pass below.** The collapsed stages no longer sit as narrow
+columns. They share a grid on the right of the open stage (`mosaicPlan` in `navigation.js`):
+- **Sized by count, on a bounded scale:**
+  - no jobs: a slim one-line bar;
+  - 1–2 jobs: small;
+  - 3–5 jobs: medium, with the stage hint when it spans the grid;
+  - 6 or more: large, always across the grid, with the hint and bigger previews.
+
+  A busy stage stands out without crowding the others.
+- **Arranged by the counts:**
+  - the panels stay in workflow order, in rows of one panel across both columns or two side by side;
+  - small and medium panels pair up wherever that makes the mosaic shortest (a small dynamic program over the three or so panels), so rows are always full and nothing is hard-coded;
+  - two columns from a board width of 860 px, one column from 760 px; narrower, the stage pills as before.
+- **Previews:** up to three on a half-width panel and five across the grid, always on one row, with "+n" for the rest.
+- **Switching:**
+  - the open stage moves to the main area and the old one joins the mosaic. In the page order, the open stage comes first, as on screen;
+  - panels slide from where they were, and a growing panel is revealed from its old size rather than stretched (FLIP with `clip-path`; text never distorts);
+  - a switch during a switch carries on from where the panels are drawn;
+  - with reduced motion the switch is instant;
+  - switching from far down a long stage brings the board's top back into view.
+
+**Fifth pass (2026-11-02): Balanced Mosaic everywhere, and Expand section.** Three levels of detail, on one component:
+1. **Collapsed mosaic:** a compact overview of the other stages.
+2. **Open stage:** its cards, inside the board.
+3. **Expand section:** all its items, in a large dialog.
+
+*One component.* `workflowBoard` and its styles are gone. My orders now uses `stageBoard` like every other
+Active/History list, so the mosaic and the dialog need no per-page code; each board only declares its noun, sort
+options and whether its API can search. Single-stage scopes (Request history) stay one full-width column, with
+Expand section.
+
+*The mosaic (`mosaicPlan`, replacing the fourth pass's rules):*
+- **Bounded sizes:** no jobs · 1–2 · 3–5 · 6–10 · more, with weights 2, 3, 4 and 5 and a fixed slim bar for no jobs. 40 jobs get less than three times the room of 3.
+- **Arrangement:** each candidate is scored by how close each panel's area comes to its weight, with a small cost per row; ties go to the busiest stage across the grid. The largest two sizes always span the grid, and two panels stack, because side by side they would be too narrow. Workflow order is kept, and every row is full.
+- **A rectangle with the open stage:** the rows are `fr` tracks, so the mosaic matches the open stage's height, up to a maximum that grows with the workload. A short list gives one aligned rectangle; a long one leaves the mosaic at its maximum, sticky, instead of stretching into empty tiles.
+- **What it reacts to:** switching stage, new counts, the board's width (container queries: one column from 680 px, two from 780 px, the wider split from 900 px) and a search, which sizes each panel and its previews by what still matches.
+
+*Expand section (`openSection`):*
+- **Two steps:** a collapsed panel only opens its stage. The button is on the open stage alone, and is hidden when the stage is empty.
+- **The dialog:** a native modal at 92% of the screen (nearly full-screen on a phone), with internal scrolling, a locked page behind, focus kept inside, Escape to close and focus returned to the button. It reuses the board's cards and actions. With text in the search, the first Escape clears it.
+- **No second copy of the state:** its items come from the board's own columns. Whenever the page redraws after an action, the dialog redraws from the new columns, so a job that moved on leaves it and the counts follow. Focus stays on the same card, or the one now in its place. Opening it makes no request.
+- **Details and confirmations** open above it under a lighter scrim, so one page stays dimmed. Escape closes only the top one, and focus returns to its button.
+- **Large stages:**
+  - cards are drawn 24 at a time, with Show more;
+  - paged stages load their next page once, and the board gets the same page;
+  - search runs in the browser for stages it holds completely, on the server for paged ones (debounced, one request), and for approval history (no server search) after loading every page;
+  - a sort other than the server's own order loads every page first (in pages of 50), so the order is true.
+
+**Sixth pass (2026-11-02): colour hierarchy and the all-collapsed overview.** Every stage board now has three states:
+
+| State | What it shows | How you get there |
+|-------|---------------|-------------------|
+| **Overview** | Every stage a tile of one proportional mosaic | Click the open stage's header (or its pressed pill on a phone) |
+| **Focus** | One open stage, the others a neutral mosaic | Click a tile or a panel |
+| **Popup** | All the stage's items | Expand section, on the open stage only |
+
+*Colour.* The open stage always leads:
+- **Open stage:** the stage's tone on its header, a tinted border, a soft shadow, a 17 px title, full-colour previews.
+- **Side panels in Focus:** neutral whatever their tone: a quiet surface, a thin border, a muted icon with one 6 px status dot, a small count, slightly desaturated previews. Colour means status, so Approvals' amber is on the open queue's header and in dots, and Approved and Rejected keep green and red.
+- **Tiles in the Overview:** each in its stage's colour at 40% of the header's tone (72% under the mouse), at one level: same type, border and no lift.
+
+*The overview's layout (`overviewPlan`).* An ordered treemap: stages keep their workflow order, and of every way to cut the rectangle (side by side or stacked, recursively) it takes the one with the most comfortable tiles, growing the mosaic if any tile would fall below its minimum.
+- **Weights are bounded and nonlinear:** 1 for no items, then `1.6 + 1.5·log2(n + 1)`, capped at 9 (reached at about 30 items).
+- **A minimum share** keeps near-empty stages usable (enough to fit one row of tiles) without inflating the mosaic. Above it, areas follow the weights exactly, and the height follows the total workload, within a maximum.
+- **Three width classes** (board under 520 px, under 780 px, wider) are computed up front and applied by container queries, so resizing needs no script. Each tile adapts its own content with a size container query.
+- **Hover and keyboard focus** lift a tile just perceptibly (`scale(1.012)`, 1 px up, a soft shadow). Neighbours do not move and are never touched. No hover effect on touch screens; none of the movement with reduced motion.
+- **A search** re-plans it from the stage's matches.
+
+*Remembering.* All collapsed is explicit: `group=none` (`type=none` on Approvals) in the address and in the session, so a refresh, a return or Back and Forward never reopens a stage. A first visit still opens the first stage with work. A link to a stage, or an overview warning's `attention` link, opens that stage.
 
 ## 7. Where Kanban would be inappropriate
 
-- **Admin approvals:** a review queue. One item is decided at a time, in a dialog; there is no progression to watch.
 - **Admin users, printing hosts, products, printers, materials, categories, activity:** data management. Search, filter and compare rows, so tables and lists fit.
-- **Host product listings:** draft, pending review, published, rejected, archived. Most listings sit in a final state, and a host has few; a list with status badges and filters is clearer. Reconsider only if hosts manage many drafts.
+- **Host product listings:** draft, pending review, published, rejected, archived. Most listings sit in a final state, and a host has few; a list with status badges and filters is clearer.
 - **Catalogue:** browsing, so cards.
-- **Job history and previous orders:** finished work; compact searchable lists.
+- Approvals, job history and previous orders were listed here before the third pass (§6).
 
 ## 8. Remaining recommendations, by impact
 
@@ -303,7 +396,7 @@ What the board suite now verifies, against the spec's checklist:
 - **Overview:** exactly four summary cards with the API counts and the board's stage names; no job cards, previews or board; Manage printing jobs is the page action. Each card opens Printing jobs on its stage.
 - **Expandable board:**
   - exactly one stage is open after every switch, with `aria-expanded` to match;
-  - the open stage takes 55–65% of the row; collapsed stages are at least 100 px wide, show no cards, and their names fit;
+  - the open stage takes 65–75% of the row; the other stages are in the mosaic on its right, show no cards, and their names fit (`tests/mosaic_board_browser.py`);
   - switching sends no request and causes no reload, and the address remembers the stage.
 - **Cards:** every In production card shows the product, recoloured preview, material and swatch, quantity, dimensions, model file, order reference, time in stage and Download; Accepted or Printing as reported.
 - **Workflow:**
@@ -316,8 +409,7 @@ What the board suite now verifies, against the spec's checklist:
 - **Search:** stage counts become match counts, and clearing the search restores them.
 - **Widths and themes:**
   - 320 and 390 px with touch: a 2×2 grid of 44 px pills, one stage, stacked cards with full-width 44 px actions;
-  - 768 and 1024 px: four pills in one row;
-  - 900 px: side by side;
+  - 768, 900 and 1024 px: the open stage and the mosaic;
   - no page overflow in Bright or Dark.
 
 The local Docker backend was rebuilt after backing up the development database to
@@ -325,11 +417,110 @@ The local Docker backend was rebuilt after backing up the development database t
 overview, Printing jobs (In production opened from its card) and Job history render at 1440 and 390 px
 without console errors or overflow.
 
+### Fourth pass (admin cancellation and the Printing jobs mosaic)
+
+**Admin cancellation.** `POST /api/admin/orders/{id}/cancel` reuses the one existing cancellation:
+- **Before:** only `pending` or `accepted` orders could be cancelled, so a host's optional "Report printing started" decided whether an administrator could intervene.
+- **Now:** administrators may cancel any order that is not completed, with a required reason (`OrderCancellation`: 3–500 characters).
+- **Every job not yet shipped** (`available`, `accepted`, `printing`, `ready`) is cancelled:
+  - it keeps its host, so it stays in that host's Job history;
+  - the model file is refused to the host from then on (the existing `cad.py` rule for cancelled orders); administrators keep it.
+- **Shipped and received products** are never cancelled or altered. An order holding any is refused (409) unless the request acknowledges them (`shipped_acknowledged`). That is the exceptional resolution, with returns and refunds handled outside OpenLabs3D. A shipped product stays confirmable by the buyer.
+- **Completed orders** are closed (409).
+- **Recorded:**
+  - `order.cancelled` with the reason as its note (administrators see notes in order details; buyers do not);
+  - one `job.cancelled` per stopped job, saying where it was ("…while printing", "…while accepted (printing start not reported)").
+  - Nothing is deleted.
+- **Idempotent:** a repeat changes and records nothing.
+- **Races:** the conditional update runs inside the request's write reservation, so a host step or receipt that lands first is either included or refuses the cancellation.
+- **Unchanged:** buyers still only delete never-accepted orders, and hosts cannot cancel.
+
+The admin dialog (Orders card or Details) lists each product with its stage and what happens to it ("Will be
+cancelled" / "Kept as is"). It warns when a host may already be making something, and shows a red
+exceptional-cancellation warning with a required checkbox when something shipped. The reason field is
+required, the confirm button is the danger button, errors stay in the dialog, and the board refreshes in place.
+
+| Suite | Fixture | Result |
+|-------|---------|--------|
+| `backend/tests/test_operations.py::test_admin_cancels_orders_at_any_production_stage` | temporary database | **passed** |
+| `tests/admin_cancel_browser.py` | workflow_preview | **57/57** |
+| `tests/mosaic_board_browser.py` | workflow_preview (distributions rewritten in the browser) | **594/594** |
+| `tests/workflow_boards_browser.py` | workflow_preview | **131/131** |
+| `tests/stage_boards_browser.js`, `history_views`, `workspace_overview`, `admin_approvals`, `equipment_revisions`, `admin_user_profile`, `checkout_contact`, `buyer_orders`, `custom_requests_filter`, `unified_navigation` | their fixtures | **passed** |
+| `tests/host_job_dialog_browser.py` · `job_eligibility_browser.py` · `integrity_browser.py` · `my_orders_browser.py` | catalogue / orders | **41 · 27 · 24 · 49 passed** |
+| Backend `pytest tests/` | temporary databases | **153 passed** |
+
+The mosaic suite draws the real page with six job distributions (all empty, one stage with 14, 3 in each,
+several empty stages, mixed, small counts) and every stage open. For each layout it checks:
+- one open stage in the main area, taking 70–80% of the row;
+- the other stages in workflow order on the right;
+- sizes that follow the counts and every count shown;
+- no clipped text and no word broken across lines;
+- no overlapping panels and no holes in a row;
+- previews on one row, with "+n" adding up to the count;
+- hints only where there is room;
+- no page overflow.
+
+It also checks six expected arrangements. Switching is checked at 60, 5 and 0 ms between clicks: it always
+settles on the last stage clicked, with no animation left, no request and no reload. Keyboard switching and
+reload persistence are covered too. Widths: 1920, 1440, 1280 and 900 (one column) in Bright and Dark, and the
+pills at 1024, 768, 390 and 320. All-empty shows "You're all caught up".
+
+### Fifth pass (Balanced Mosaic and Expand section)
+
+Frontend only: no backend, status or lifecycle change, so the backend suite was not re-run (153 passed in the fourth pass, on the same backend code).
+
+| Suite | Fixture | Result |
+|-------|---------|--------|
+| `tests/section_modal_browser.py` (new) | workflow_preview | **163/163** |
+| `tests/mosaic_board_browser.py` | workflow_preview (distributions rewritten in the browser) | **994/994** |
+| `tests/workflow_boards_browser.py` | workflow_preview | **125/125** |
+| `tests/admin_cancel_browser.py` | workflow_preview | **57/57** |
+| `tests/stage_boards_browser.js` | workflow_preview | **passed** |
+| `tests/host_job_dialog_browser.py` · `job_eligibility_browser.py` · `integrity_browser.py` | catalogue_preview | **41 · 27 · 24 passed** |
+| `tests/custom_requests_filter_browser.js`, `unified_navigation_browser.py` | catalogue_preview | **passed** |
+| `tests/my_orders_browser.py`, `buyer_orders_browser.js` | orders_preview | **49 passed; passed** |
+| `tests/history_views_browser.js`, `workspace_overview`, `admin_approvals`, `equipment_revisions`, `admin_user_profile`, `checkout_contact` | equipment_preview | **passed** |
+
+The section suite covers these, with real jobs and orders moving through real actions:
+- **Interaction:** the action appears only on the open stage; a collapsed panel opens no dialog; the right stage opens, with no request.
+- **Modal behaviour:** size, focus trap, Escape, close button, dimmed page, scroll lock, focus restoration, no duplicate ids.
+- **Search and sort:** every sort order checked against the API; a dropdown's Escape stays with the dropdown.
+- **Actions:** Details above the section; accept, mark ready and ship from it, with board, counts and server in agreement, one write and one read per step, no reload; emptying a stage.
+- **Large stages:** 60 jobs in batches; server-paged stages (Show more, search, Oldest, Details on a later page, one request per typed search).
+- **Other boards:** admin cancel, My orders (progress, tracking, Mark as received), Previous orders, approval history.
+- **Environment:** Back, reduced motion; 320, 390, 768, 1024, 1280 and 1440 px in Bright and Dark.
+
+Screenshots of the mosaic and the dialog were inspected at those widths. On :8080 with the development accounts (read-only), host, buyer and admin boards and sections render at 1440 and 390 px with no console errors or overflow.
+
+### Sixth pass (colour hierarchy and the overview)
+
+Frontend only, so the backend suite was not re-run (153 passed in the fourth pass, on the same backend code).
+
+| Suite | Fixture | Result |
+|-------|---------|--------|
+| `tests/overview_mosaic_browser.py` (new) | workflow_preview | **1051/1051** |
+| `tests/approval_colors_browser.py` (new) | equipment_preview | **27/27** |
+| `tests/mosaic_board_browser.py` | workflow_preview | **994/994** |
+| `tests/section_modal_browser.py` | workflow_preview | **163/163** |
+| `tests/admin_cancel_browser.py` | workflow_preview | **57/57** |
+| `tests/workflow_boards_browser.py` | workflow_preview | **125/125** |
+| `tests/host_job_dialog_browser.py` · `job_eligibility_browser.py` · `integrity_browser.py` | catalogue_preview | **41 · 27 · 24 passed** |
+| `tests/my_orders_browser.py`, `buyer_orders_browser.js`, `stage_boards_browser.js`, `history_views`, `workspace_overview`, `admin_approvals`, `equipment_revisions`, `admin_user_profile`, `checkout_contact`, `custom_requests_filter`, `unified_navigation` | their fixtures | **passed** (49 for my_orders) |
+
+The overview suite measures colour as drawn (composited over the page): chroma, difference from the page, border strength, type and icon sizes and text contrast, on every tone in both themes. It covers uneven counts (0, 1, 3, 10, 30+), and proportions against the weights, at 320, 390, 768, 1024, 1280 and 1440 px in Bright and Dark.
+
+Screenshots of the overview and the expanded layout were inspected at those widths.
+
 ## 10. Unresolved limitations
 
 - **No deadline or estimated delivery** exists in the data model (U10, R6).
 - **Current orders load in full** (pages of 50, fetched together). That is right for a buyer's active orders, but there is no upper bound for an extreme account.
 - **Board search on My orders filters cards** but leaves column counts at their totals (R7). Printing jobs shows match counts per stage (second pass).
-- **Accessibility was verified with keyboard and focus checks and ARIA structure**, not with a screen reader. Columns are labelled sections with headings, counts carry text for assistive technology, and the strip uses buttons.
+- **Accessibility was verified with keyboard and focus checks, ARIA structure and automated axe-core rules**, not with a screen reader. Columns are labelled sections with headings, counts carry text for assistive technology, and the strip uses buttons.
 - **Development database:** before the Docker backend was rebuilt to serve the new response fields, it was backed up to `backups/pre-workflow-boards-20261101-162538.db`. There was no migration.
-- **Out of scope by instruction:** prices, matching and eligibility rules, CAD models, payments and migrations are unchanged. The only lifecycle change (second pass) allows Mark ready to ship straight from accepted. Statuses, order aggregation and administrator rules are as before.
+- **Out of scope by instruction:** prices, matching and eligibility rules, CAD models, payments and migrations are unchanged. Two lifecycle changes: Mark ready to ship straight from accepted (second pass), and administrator cancellation at any stage before completion (fourth pass). Statuses, order aggregation, reopening and buyer deletion are as before.
+- **Admin reopen** still needs the job to be `accepted`: a job whose host reported printing cannot be handed to another host, only cancelled.
+- ~~Pages can fetch their data up to three times on load.~~ Resolved: see `docs/architecture/STABILIZATION_AUDIT.md`.
+- ~~Paged sorts can be slow on a very long history.~~ Resolved: the server sorts them. Only "Longest in this stage", which needs each job's stage history, still fetches every page, and it exists on active stages only.
+- ~~The dialog's scroll position after an action on a paged stage.~~ Resolved: a stage keeps how much was loaded, up to 50 cards.

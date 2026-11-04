@@ -6,7 +6,7 @@ async page => {
   const login = async who => { await ctx.clearCookies(); return (await (await ctx.request.post(base + '/api/auth/login', {data:{email:who + '@example.org', password:'TestPassword2026'}})).json()).csrf_token; };
   const post = (path, csrf, data) => ctx.request.post(base + '/api/' + path, {data, headers:{'x-csrf-token':csrf}});
   const open = async hash => { await page.goto(base + '/?qa=' + Date.now() + '#' + hash); await page.waitForLoadState('networkidle'); await page.waitForFunction(() => !document.querySelector('.ws-main[aria-busy], .ws-loading')); };
-  const navState = () => page.evaluate(() => [...document.querySelectorAll('.scope-nav .segment, .chips .chip')].filter(e => e.getClientRects().length).map(e => { const s = getComputedStyle(e), r = e.getBoundingClientRect(); return {h:Math.round(r.height), radius:s.borderRadius, on:e.matches('[aria-current]') , bg:s.backgroundColor}; }));
+  const navState = () => page.evaluate(() => [...document.querySelectorAll('.scope-nav .segment')].filter(e => e.getClientRects().length).map(e => { const s = getComputedStyle(e), r = e.getBoundingClientRect(); return {h:Math.round(r.height), radius:s.borderRadius, on:e.matches('[aria-current]') , bg:s.backgroundColor}; }));
   // A buyer order the host makes and ships; the buyer then confirms receipt.
   let csrf = await login('buyer');
   const listing = (await (await ctx.request.get(base + '/api/listings')).json()).items.find(p => p.title === 'Availability QA Rack'), line = {listing_id:listing.id, material:'PLA', color:'black', quantity:1};
@@ -34,33 +34,50 @@ async page => {
   await open('host/jobs');
   check(await page.locator(`[data-job-card="${job}"]`).count() === 0, 'Completed job left Active jobs');
   await page.locator('.ws-actions a', {hasText:'Job history'}).click();
-  await page.waitForURL(/scope=history/); await page.locator('.job-history .list-row').first().waitFor();
-  const done = page.locator('.job-history .list-row').first();
-  check((await done.innerText()).includes('Completed') && await done.locator('[data-job], a[download]').count() === 0, 'History row: completed, no steps or downloads');
+  await page.waitForURL(/scope=history/); await page.locator('#job-history-board').waitFor();
+  const done = page.locator(`#job-history-board [data-stage="completed"] [data-job-card="${job}"]`);
+  check(await done.count() === 1 && (await done.innerText()).includes('Completed') && await done.locator('[data-job], a[download]').count() === 0, 'History card: under Completed, no steps or downloads');
+  check((await done.innerText()).includes('QA-HIST-1'), 'History card keeps the shipment');
   await done.locator('[data-job-details]').click(); await page.locator('#modal[open]').waitFor();
   check((await page.locator('#modal').innerText()).includes('QA-HIST-1') && await page.locator('#modal [data-details-step], #modal a[download]').count() === 0, 'History details keep the shipment, read-only');
   await page.keyboard.press('Escape');
   // Administrator: orders, approvals and requests.
   csrf = await login('admin');
   await open('admin/orders');
-  check(!(await page.locator('#order-list').innerText().catch(() => '')).includes(order.reference), 'Completed order not in Active orders');
+  check(!(await page.locator('.ws-main').innerText()).includes(order.reference), 'Completed order not in Active orders');
   await page.locator('.scope-nav .segment', {hasText:'Order history'}).click(); await page.waitForURL(/scope=history/);
-  await page.locator('#order-list').waitFor();
-  check((await page.locator('#order-list').innerText()).includes(order.reference), 'Completed order in Order history');
+  await page.locator('#admin-orders-board').waitFor();
+  const card = page.locator('#admin-orders-board [data-stage="completed"] [data-order-card]', {hasText:order.reference});
+  check(await card.count() === 1, 'Completed order in Order history, under Completed');
+  await card.locator('[data-admin-order]').click(); await page.locator('#modal[open]').waitFor();
+  const details = await page.locator('#modal').textContent();
+  check(details.includes('Printing jobs (1)') && details.includes('Delivery address') && details.includes('order.created') && await page.locator('#modal').getByRole('button', {name:'Cancel order'}).count() === 0, 'Order details: jobs, delivery and history, no cancel once completed');
+  await page.keyboard.press('Escape');
   await page.locator('#admin-order-q').fill(order.reference.slice(-6)); await page.locator('#admin-order-q').press('Enter');
-  await page.waitForURL(/q=/); await page.waitForFunction(n => document.querySelectorAll('#order-list .list-row').length === n, 1);
+  await page.waitForURL(/q=/); await page.waitForFunction(n => document.querySelectorAll('#admin-orders-board [data-order-card]').length === n, 1);
+  check(await page.locator('#admin-orders-board [data-stage="completed"] .sb-head [data-sb-count]').innerText() === '1', 'Search counts its matches per stage');
   // Approvals: deciding a printer suggestion moves it from Pending to Approval history.
   await open('admin/pending?type=printers');
   const pendingBefore = +(await page.locator('.scope-nav .segment', {hasText:'Pending'}).locator('.segment-count').innerText());
-  await page.locator('.approval-card').first().getByRole('button', {name:'Add as unverified'}).click();
+  await page.locator('#approvals-board [data-stage="printers"] .wf-card').first().getByRole('button', {name:'Add as unverified'}).click();
   const added = page.waitForResponse(r => r.url().includes('/approve') && r.ok());
   await page.locator('#action-dialog[open]').getByRole('button', {name:'Add to catalogue'}).click(); await added;
   await open('admin/pending?type=printers');
   check(+(await page.locator('.scope-nav .segment', {hasText:'Pending'}).locator('.segment-count').innerText()) === pendingBefore - 1, 'Decided item left the pending queue');
   await page.locator('.scope-nav .segment', {hasText:'Approval history'}).click(); await page.waitForURL(/scope=history/);
-  await page.locator('.decision-row').first().waitFor();
-  check((await page.locator('.decision-row').first().innerText()).includes('Added unverified'), 'Decision recorded in Approval history');
-  check(await page.locator('.chips .chip', {hasText:'Printers'}).locator('span').innerText() === '1', 'History counted by type');
+  await page.locator('#approval-history-board').waitFor();
+  check((await page.locator('#approval-history-board [data-stage="printers"] [data-decision-card]').first().innerText()).includes('Added unverified'), 'Decision recorded in Approval history, under Printers');
+  check(await page.locator('#approval-history-board [data-stage="printers"] .sb-head [data-sb-count]').innerText() === '1', 'History counted by type');
+  // Expand section on an approvals board: the decision cards, search but no sort, and Escape returns focus.
+  if (await page.locator('#approval-history-board').getAttribute('data-open') !== 'printers') { await page.locator('#approval-history-board .sb-head[data-sb-open="printers"]').click(); await page.waitForTimeout(360); }
+  await page.locator('#approval-history-board .sb-col.is-open[data-stage="printers"] [data-sb-expand]').click(); await page.locator('#section-dialog[open]').waitFor();
+  check(await page.locator('#section-dialog [data-decision-card]').count() === 1 && await page.locator('#section-dialog [data-select=ss-sort]').count() === 0 && await page.locator('#section-dialog #ss-count').innerText() === '1 decision', 'Approval history section: its decision, search only');
+  await page.locator('#section-dialog #ss-q').fill('no such decision'); await page.waitForFunction(() => !document.querySelector('#section-dialog [data-decision-card]'));
+  check(await page.locator('#section-dialog .ss-empty').isVisible(), 'A search with no match says so');
+  await page.keyboard.press('Escape'); await page.waitForFunction(() => document.querySelector('#section-dialog [data-decision-card]'));
+  check(await page.locator('#section-dialog #ss-q').inputValue() === '' && await page.locator('#section-dialog').evaluate(d => d.open), 'The first Escape clears the search and keeps the section open');
+  await page.keyboard.press('Escape'); await page.locator('#section-dialog').waitFor({state:'hidden'});
+  check(await page.evaluate(() => document.activeElement.matches('.sb-col.is-open [data-sb-expand]')), 'Focus returns to Expand section');
   // Requests: closed goes to Request history; reopening brings it back.
   csrf = await login('buyer');
   const rid = (await (await ctx.request.post(base + '/api/custom-requests', {multipart:{payload:JSON.stringify({idempotency_key:'history-request-' + Date.now(), title:'History holder', application:'A holder for checking request history in the browser.', dimensions:'10 x 10 x 10 mm', quantity:1})}, headers:{'x-csrf-token':csrf}})).json()).id;
@@ -73,14 +90,17 @@ async page => {
   check((await ctx.request.patch(`${base}/api/admin/custom-requests/${rid}`, {data:{status:'under_review'}, headers:{'x-csrf-token':csrf}})).ok(), 'Reopened');
   await open('admin/requests');
   check((await page.locator('.ws-main').innerText()).includes('History holder'), 'Reopened request back in the active queue');
-  // Navigation: shared pills, 44 px, rounded, navy when selected, in both themes and on a phone.
+  // Navigation: level 1 is the shared pills (44 px, rounded, navy when selected); level 2 is the board, one stage
+  // open, with stage pills only where the columns do not fit (phones). Both themes, no overflow.
   for (const [width, theme] of [[1366, 'light'], [390, 'dark']]) {
     await page.setViewportSize({width, height:900});
-    for (const hash of ['admin/orders', 'admin/pending?scope=history', 'admin/requests']) {
+    for (const hash of ['admin/orders?scope=history', 'admin/pending?scope=history', 'admin/requests']) {
       await open(hash); await page.evaluate(t => applyTheme(t), theme); await page.waitForTimeout(150);
       const pills = await navState();
-      check(pills.length >= 4 && pills.every(p => p.h >= 43 && p.h <= 45 && p.radius === '999px'), `${hash} ${width} ${theme}: pill sizes ${JSON.stringify(pills)}`);
-      check(pills.filter(p => p.on).every(p => p.bg === 'rgb(29, 53, 87)') && pills.filter(p => p.on).length === 2, `${hash} ${width} ${theme}: one selected pill per level`);
+      check(pills.length === 2 && pills.every(p => p.h >= 43 && p.h <= 45 && p.radius === '999px'), `${hash} ${width} ${theme}: pill sizes ${JSON.stringify(pills)}`);
+      check(pills.filter(p => p.on).every(p => p.bg === 'rgb(29, 53, 87)') && pills.filter(p => p.on).length === 1, `${hash} ${width} ${theme}: one selected level-1 pill`);
+      const board = await page.evaluate(() => { const b = document.querySelector('[data-stage-board]'), shown = [...b.querySelectorAll('.sb-pills .chip')].filter(e => e.getClientRects().length); return {open:b.querySelectorAll('.sb-col.is-open').length, pills:shown.length, pressed:shown.filter(e => e.getAttribute('aria-pressed') === 'true').length, low:shown.filter(e => e.getBoundingClientRect().height < 43).length}; });
+      check(board.open === 1 && (width < 700 ? board.pills >= 2 && board.pressed === 1 && !board.low : board.pills === 0), `${hash} ${width}: one open stage; stage pills only on a phone ${JSON.stringify(board)}`);
       check(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), `${hash} ${width}: no horizontal overflow`);
     }
   }

@@ -112,7 +112,7 @@ with sync_playwright() as pw:
     # Colours: one per category; accepted, printing, ready and shipped share one.
     third_job = order(buyer, micro); host.request.post(f'{BASE}/api/host/jobs/{third_job}/accept', headers={'X-CSRF-Token': host.csrf})
     p.goto(BASE + '/#host/jobs'); p.wait_for_selector(f'[data-job="{third_job}"]', state='attached')   # in a collapsed stage
-    stages = p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-col')].map(c => c.dataset.stage)")
+    stages = p.evaluate("[...document.querySelectorAll('#host-jobs-board .sb-col')].sort((a, b) => a.dataset.index - b.dataset.index).map(c => c.dataset.stage)")
     ok(stages == ['available', 'in-production', 'ready', 'shipped'] and p.locator(f'#host-jobs-board [data-stage="in-production"] [data-job-card="{third_job}"]').count() == 1, 'Active jobs: one stage each, available first, no finished stage: ' + ','.join(stages))
     # Colours: one per category in the status badges (job details); accepted to shipped share one.
     badges = {}

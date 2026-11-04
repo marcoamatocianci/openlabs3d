@@ -83,5 +83,4 @@ render = function() {
   marketplaceRender();saveOpsCart();$('.footername').textContent=publicSettings.marketplace_name;
   if(route==='account' || route.startsWith('product/')) bindOperations();
 };
-refreshCategories().then(()=>{if((location.hash||'#home').startsWith('#home')||(location.hash||'').startsWith('#catalogue'))render()});
 refreshPublicSettings();

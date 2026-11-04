@@ -220,7 +220,7 @@ function bindStock() {
 function deleteDraftDialog() {
   const dialog = $('#modal'); dialog.className = '';
   dialog.innerHTML = `<form class="modal-form" method="dialog"><h2>Delete equipment draft?</h2><p>Your saved, unsubmitted changes will be removed. Approved equipment stays active and unchanged.</p><p class="form-error" role="alert"></p><div class="modal-actions"><button type="button" class="secondary" data-close-modal>Cancel</button><button type="button" class="danger" data-confirm>Delete draft</button></div></form>`;
-  dialog.showModal();
+  nameDialog(dialog); dialog.showModal();
   dialog.querySelector('[data-confirm]').onclick = async e => {
     e.target.disabled = true;
     try { await api('/host/equipment-revision', {method:'DELETE'}); try { sessionStorage.removeItem(equipmentKey()); } catch (err) {} dialog.close(); toast('Draft deleted. Approved equipment is unchanged.'); render(); }
@@ -238,7 +238,7 @@ function leaveEditor(target='my-printers') {
   if (!editorDirty) { location.hash = target; return; }
   const dialog = $('#modal'); dialog.className = '';
   dialog.innerHTML = `<form class="modal-form" method="dialog"><h2>Leave without saving?</h2><p>You have unsaved equipment changes. Save them as a private draft, or discard them. Approved equipment is never affected.</p><div class="modal-actions eq-leave-actions"><button type="button" class="secondary" data-close-modal>Keep editing</button><button type="button" class="secondary" data-discard>Discard changes</button><button type="button" class="primary" data-save>Save draft</button></div></form>`;
-  dialog.showModal();
+  nameDialog(dialog); dialog.showModal();
   dialog.querySelector('[data-discard]').onclick = () => { dialog.close(); clearEditorSession(); location.hash = target; };
   dialog.querySelector('[data-save]').onclick = () => { dialog.close(); saveEquipment(false, target); };
 }
@@ -372,7 +372,7 @@ function printerDrawer(index) {
       document.querySelector(`[data-k="edit-${isNew ? hostDraft.printers.length - 1 : index}"]`)?.focus();
     });
   };
-  dialog.className = 'eq-drawer'; draw(); dialog.showModal();
+  dialog.className = 'eq-drawer'; draw(); nameDialog(dialog); dialog.showModal();
   dialog.addEventListener('close', () => { dialog.className = ''; if (trigger?.isConnected) trigger.focus(); }, {once:true});
   dialog.querySelector('[data-d="brand"]').focus();
 }

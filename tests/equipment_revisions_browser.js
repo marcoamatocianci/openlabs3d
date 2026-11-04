@@ -72,10 +72,11 @@ async (page) => {
   assert(JSON.stringify(await json(hc,'/api/host/equipment'))===JSON.stringify(approved),'Approved equipment unchanged while pending');
 
   // Administrator rejects, host resubmits, administrator approves.
-  await a.goto(base+'/#admin/pending?type=equipment');await a.locator('.approval-card').first().waitFor();
-  assert((await a.locator('.approval-card').first().innerText()).includes('Waiting'),'Approval card shows how long it has waited');
-  await a.locator('.approval-details > summary').first().click();await a.locator('.rv-table').waitFor();
-  assert((await a.locator('.rv-table').innerText()).includes('Modified')&&await a.locator('.rv-table .rv-new').count()>0,'Before/after comparison highlights the change');
+  await a.goto(base+'/#admin/pending?type=equipment');const update=a.locator('#approvals-board [data-stage="equipment"] .wf-card').first();await update.waitFor();
+  assert((await update.innerText()).includes('Waiting'),'Approval card shows how long it has waited');
+  await update.getByRole('button',{name:'View changes'}).click();await a.locator('#modal[open] .rv-table').waitFor();
+  assert((await a.locator('#modal .rv-table').innerText()).includes('Modified')&&await a.locator('#modal .rv-table .rv-new').count()>0,'Before/after comparison highlights the change');
+  await a.keyboard.press('Escape');
   a.on('dialog',d=>d.accept(d.type()==='prompt'?'Verify printer calibration':undefined));
   const rejected=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/reject'));
   await a.getByRole('button',{name:'Reject equipment update'}).click();assert((await rejected).ok(),'Rejected');
@@ -86,7 +87,7 @@ async (page) => {
   const resubmitted=h.waitForResponse(r=>r.url().endsWith('/host/equipment-application')&&r.request().method()==='PUT');
   await h.getByRole('button',{name:'Submit for approval',exact:true}).click();assert((await resubmitted).ok(),'Resubmitted');
   await a.reload();await a.getByRole('button',{name:'Approve equipment update'}).waitFor();
-  assert(await a.locator('.approvals-tabs .chip[aria-current]').innerText().then(t=>t.startsWith('Equipment updates')),'Equipment tab selected');
+  assert(await a.locator('#approvals-board .sb-col.is-open').getAttribute('data-stage')==='equipment','Equipment stage open');
   const accepted=a.waitForResponse(r=>r.url().includes('/equipment-revisions/')&&r.url().endsWith('/approve'));
   await a.getByRole('button',{name:'Approve equipment update'}).click();assert((await accepted).ok(),'Approved');
   assert((await json(hc,'/api/host/equipment'))[0].quantity===3,'Approved revision activated');
