@@ -100,7 +100,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "8080:80"
+      - "127.0.0.1:8080:80"
     volumes:
       - ./caddy/Caddyfile.dev:/etc/caddy/Caddyfile:ro
       - ./index.html:/srv/index.html:ro
