@@ -54,6 +54,10 @@ docker compose -f compose.yaml -f compose.production.yaml ps
 
 Caddy ottiene e rinnova automaticamente i certificati, reindirizza HTTP a HTTPS e conserva certificati e configurazione nei volumi `caddy_data` e `caddy_config`. La configurazione di produzione forza cookie Secure. In produzione il database è PostgreSQL (volume `pg_data`, password in `secrets/db_password`) e un servizio `worker` separato elabora i modelli CAD; né il database né il worker sono raggiungibili da Internet. Il volume `app_data` contiene file CAD, anteprime e immagini; non esporlo tramite il web server. Per la prima installazione, il passaggio da SQLite a PostgreSQL, gli aggiornamenti e il rollback seguire [deploy/README.md](deploy/README.md). Le normali ricostruzioni non eliminano i volumi; non usare `docker compose down -v` se si vogliono conservare i dati.
 
+## Design Your Rack
+
+Configuratore parametrico di rack da laboratorio: l'acquirente sceglie le provette, il sistema genera un vero modello CAD stampabile (CadQuery, solo nel worker) e lo vende tramite il carrello e i lavori di stampa esistenti. Architettura, test, validazione fisica e limiti: [docs/features/PARAMETRIC_RACK_CONFIGURATOR.md](docs/features/PARAMETRIC_RACK_CONFIGURATOR.md). Nessun rack è ancora stato stampato né provato con provette reali.
+
 ## Sviluppo e migrazioni
 
 Il container avvia `alembic upgrade head` prima del server. Per applicare le migrazioni manualmente:
