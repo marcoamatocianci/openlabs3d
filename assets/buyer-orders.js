@@ -27,7 +27,7 @@ function buyerOrderFilters() {
 }
 // The purchased configuration comes only from the order line: material, colour name and the colour
 // snapshot taken at checkout (shared helpers in navigation.js).
-const buyerOrderConfig = item => orderLineConfig(item);
+const buyerOrderConfig = item => orderLineConfig(item) + rackLineNote(item);
 const buyerOrderThumb = item => orderLineThumb(item, 'bo-thumb');
 // Order lines with the printing job that makes each one (one job per line).
 function buyerOrderLines(order) {
@@ -103,7 +103,7 @@ const BIN = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentCo
 function buyerOrderDetails(id) {
   const order = buyerOrdersById[id]; if (!order) return;
   const lines = buyerOrderLines(order), count = order.items.reduce((n, i) => n + i.quantity, 0);
-  const product = ({item, job}) => `<li class="bo-detail-line">${buyerOrderThumb(item)}<div class="bo-line-copy"><span class="bo-line-title">${esc(item.title)}</span>${buyerOrderConfig(item)}<span class="bo-meta">Quantity ${item.quantity} · ${buyerOrderMoney(item.price_cents, order.currency)} each</span><span class="bo-meta">${job ? (job.host_id ? 'Made by a printing host' : job.status === 'cancelled' ? 'No active assignment' : 'Waiting for a printing host') : ''}${job?.shipment ? ` · ${esc(job.shipment.carrier)} · Tracking ${buyerTracking(job.shipment)}` : ''}</span></div><div class="bo-detail-side">${job ? buyerOrderBadge(job.status, buyerItemStages[job.status]) : ''}<strong>${buyerOrderMoney(item.price_cents * item.quantity, order.currency)}</strong></div></li>`;
+  const product = ({item, job}) => `<li class="bo-detail-line">${buyerOrderThumb(item)}<div class="bo-line-copy"><span class="bo-line-title">${esc(item.title)}</span>${orderLineConfig(item)}<span class="bo-meta">Quantity ${item.quantity} · ${buyerOrderMoney(item.price_cents, order.currency)} each</span>${rackSpecification(item)}${rackOrderActions(item)}<span class="bo-meta">${job ? (job.host_id ? 'Made by a printing host' : job.status === 'cancelled' ? 'No active assignment' : 'Waiting for a printing host') : ''}${job?.shipment ? ` · ${esc(job.shipment.carrier)} · Tracking ${buyerTracking(job.shipment)}` : ''}</span></div><div class="bo-detail-side">${job ? buyerOrderBadge(job.status, buyerItemStages[job.status]) : ''}<strong>${buyerOrderMoney(item.price_cents * item.quantity, order.currency)}</strong></div></li>`;
   const shipped = order.jobs.filter(j => j.status === 'shipped');
   const body = (order.status === 'cancelled' ? '' : reviewSection('Progress', buyerOrderProgress(order)))
     + buyerOrderShipments(order, shipped)

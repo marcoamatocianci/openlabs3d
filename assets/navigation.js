@@ -31,10 +31,12 @@ const isHostRoute = route => routeIn(route, 'host', 'my-listings', 'my-printers'
 const marketplaceItem = label => ({href:'catalogue', label, match:route => routeIn(route, 'catalogue', 'product')});
 const accountItem = {href:'account', label:'My account', match:route => route.startsWith('account')};
 const ordersItem = {href:'orders', label:'My orders'};
+const rackItem = {href:'design-rack', label:'Design your rack'};
+const designsItem = {href:'my-designs', label:'My designs'};
 const NAVIGATION = {
-  guest:{primary:[marketplaceItem('Explore')]},
-  buyer:{primary:[marketplaceItem('Explore'), ordersItem], cart:true, menu:[accountItem, {href:'onboarding', label:'Become a printing host'}]},
-  host:{primary:[marketplaceItem('Marketplace'), {href:'host', label:'Host workspace', match:isHostRoute, count:'jobs'}], cart:true, menu:[accountItem, ordersItem]},
+  guest:{primary:[marketplaceItem('Explore'), rackItem]},
+  buyer:{primary:[marketplaceItem('Explore'), rackItem, ordersItem], cart:true, menu:[accountItem, designsItem, {href:'onboarding', label:'Become a printing host'}]},
+  host:{primary:[marketplaceItem('Marketplace'), rackItem, {href:'host', label:'Host workspace', match:isHostRoute, count:'jobs'}], cart:true, menu:[accountItem, ordersItem, designsItem]},
   admin:{primary:[marketplaceItem('Marketplace'), {href:'admin', label:'Admin workspace', match:isAdminRoute, count:'approvals'}], menu:[accountItem]}
 };
 const WORKSPACES = {

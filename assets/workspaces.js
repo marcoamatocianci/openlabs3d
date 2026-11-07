@@ -391,7 +391,8 @@ const adminPages = {
   },
   async 'admin/settings'() {
     const s = await api('/settings');
-    return {title:'Settings', bind:bindOperations, body:`<form id="settings-form" class="section-card settings-form"><header class="card-head"><div><h2>Marketplace</h2><p class="muted">Shown across the site. Currency is EUR and product approval is always required.</p></div></header><div class="fields"><label>Marketplace name<input name="marketplace_name" required maxlength="100" value="${esc(s.marketplace_name)}"></label><label>Public contact information<input name="contact" maxlength="200" value="${esc(s.contact)}"></label><label>Printing host applications<select name="host_applications_open"><option value="true" ${s.host_applications_open ? 'selected' : ''}>Open</option><option value="false" ${s.host_applications_open ? '' : 'selected'}>Closed</option></select></label></div><div class="form-footer"><button class="primary">Save settings</button></div></form>`};
+    const rackPricing = await rackPricingForm();
+    return {title:'Settings', bind:() => { bindOperations(); bindRackPricing(); }, body:rackPricing + `<form id="settings-form" class="section-card settings-form"><header class="card-head"><div><h2>Marketplace</h2><p class="muted">Shown across the site. Currency is EUR and product approval is always required.</p></div></header><div class="fields"><label>Marketplace name<input name="marketplace_name" required maxlength="100" value="${esc(s.marketplace_name)}"></label><label>Public contact information<input name="contact" maxlength="200" value="${esc(s.contact)}"></label><label>Printing host applications<select name="host_applications_open"><option value="true" ${s.host_applications_open ? 'selected' : ''}>Open</option><option value="false" ${s.host_applications_open ? '' : 'selected'}>Closed</option></select></label></div><div class="form-footer"><button class="primary">Save settings</button></div></form>`};
   },
   async 'admin/activity'() {
     const [events, users] = await Promise.all([api('/admin/activity'), api('/admin/users')]);
@@ -469,15 +470,15 @@ const jobBadge = (status, note = true) => `<span class="status job-status job-${
 const shipmentDetails = s => s ? `<div><dt>Shipment</dt><dd>${esc(s.carrier)} · ${s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number)}${s.note ? `<br><span class="muted">${esc(s.note)}</span>` : ''}<br><span class="muted">Shipped ${esc(safeDate(s.shipped_at))}</span></dd></div>` : '';
 // The model sold with this order line (never the listing's newer uploads). The server re-checks the
 // assignment on every download, so the link stops working once the job is completed or reassigned.
-const jobModel = j => ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="btn-ghost btn-sm" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
-const jobModelNote = j => j.item.cad_status === 'unverified' ? '<span class="row-meta">Model version not recorded at purchase: this is the model on file when versioning began.</span>' : '';
+const jobModel = j => ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="btn-ghost btn-sm" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>${rackThreeMf(j, 'btn-ghost btn-sm')}` : '';
+const jobModelNote = j => rackLineNote(j.item) + (j.item.cad_status === 'unverified' ? '<span class="row-meta">Model version not recorded at purchase: this is the model on file when versioning began.</span>' : '');
 // The order as both sides name it: the reference the buyer sees on My orders.
 const jobOrderRef = j => j.order_reference || `Order #${j.order_id}`;
 const jobSearchText = j => [j.item.title, j.item.material, colorName(j.item.color), jobOrderRef(j), 'order ' + j.order_id].join(' ').toLowerCase();
 // The host's next step on a job: accept it, or move it one stage on. Steps always go through jobAction's dialog.
 const jobStep = j => j.status === 'available' ? ['accept', 'Accept job'] : j.host_id === account.id && nextJobStep[j.status];
 const jobStepButton = (j, className = 'btn btn-sm') => { const step = jobStep(j); return step ? `<button type="button" class="${className}" data-job="${j.id}" aria-haspopup="dialog" onclick="jobAction(${j.id},'${step[0]}')">${step[1]}</button>` : ''; };
-const jobDownload = (j, className) => j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) && ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="${className}" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>` : '';
+const jobDownload = (j, className) => j.host_id === account.id && ['accepted', 'printing', 'ready'].includes(j.status) && ['pinned', 'unverified'].includes(j.item.cad_status) ? `<a class="${className}" href="/api/jobs/${j.id}/cad" download>Download ${esc(j.item.cad_format || 'model')}</a>${rackThreeMf(j, className)}` : '';
 const jobTracking = s => s ? (s.tracking_url ? `<a class="textlink" href="${esc(s.tracking_url)}" target="_blank" rel="noopener noreferrer">${esc(s.tracking_number)}</a>` : esc(s.tracking_number)) : '';
 // When the job reached its current stage: the closest thing to a deadline the marketplace records.
 const JOB_SINCE = {available:'Listed', accepted:'Accepted', printing:'Printing started', ready:'Ready', shipped:'Shipped', completed:'Completed', cancelled:'Cancelled'};
@@ -632,7 +633,7 @@ function jobDetails(id) {
     : j.status === 'available' ? reviewSection('Before you accept', '<ul class="ad-notes"><li>You commit to printing this item in the material and colour shown.</li><li>The buyer’s contact and delivery details become visible once the job is yours.</li><li>Agree payment and delivery directly with the buyer before printing.</li></ul>') : '';
   // Reporting the print start is optional and never needed to move on, so it is offered only here.
   const started = j.status === 'accepted' && j.host_id === account.id ? '<button type="button" class="btn-ghost btn-sm" data-details-printing>Report printing started</button>' : '';
-  const dialog = openReview(i.title, `Printing job · ${jobOrderRef(j)}`, reviewSection('Product', product) + reviewSection('Progress', jobFlow(j)) + model + delivery, started + (step ? `<button type="button" class="btn btn-sm" data-details-step>${step[1]}</button>` : ''));
+  const dialog = openReview(i.title, `Printing job · ${jobOrderRef(j)}`, reviewSection('Product', product) + (i.rack ? reviewSection('Custom rack', rackSpecification(i, true)) : '') + reviewSection('Progress', jobFlow(j)) + model + delivery, started + (step ? `<button type="button" class="btn btn-sm" data-details-step>${step[1]}</button>` : ''));
   if (started) dialog.querySelector('.review-foot').classList.add('has-wrap');
   // The confirmation replaces the details, so only one dialog is open at a time.
   dialog.querySelector('[data-details-step]')?.addEventListener('click', () => { dialog.close(); jobAction(j.id, step[0]); });

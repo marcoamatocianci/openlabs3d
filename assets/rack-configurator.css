@@ -1,0 +1,379 @@
+/* Design Your Rack. Uses the site's colours, type and controls; loaded only on these pages.
+   The tube colours identify tube types in the top view, always alongside a position number and a size. */
+/* Keyboard focus is never hidden behind the sticky header or the action bar. */
+html:has(#rk-root){scroll-padding:calc(var(--topbar-h) + 12px) 0 calc(var(--rk-bar-h) + 16px)}
+.rk button,.rk input,.rk select,.rk label{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+:root{--rk-t50:#457b9d;--rk-t15:#2a9d8f;--rk-t15m:#b5791f;--rk-t05:#9a4f8f;--rk-bad:#c92a3a;--rk-tight:#b5791f;--rk-exact:#1d6b3a;--rk-bar-h:64px}
+:root[data-theme=dark]{--rk-t50:#9dceff;--rk-t15:#5fd3c4;--rk-t15m:#f0bd5e;--rk-t05:#dc9ad2;--rk-bad:#ff7581;--rk-tight:#f0bd5e;--rk-exact:#93e2b2}
+
+.rk-page{max-width:1400px;margin:0 auto;padding:24px 4% 0}
+.rk{--stage-top:calc(var(--topbar-h) + 12px)}
+.rk-quiet{color:var(--subtle);font-weight:400}
+.rk-note{margin:8px 0 0;color:var(--subtle);font-size:12.5px;line-height:1.5;overflow-wrap:anywhere}.rk-note.is-error{color:var(--danger-fg)}
+
+/* Heading and starting points */
+.rk-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px 40px;align-items:end;padding-bottom:18px}
+.rk-head h1{margin:0 0 4px;font-size:clamp(26px,2.6vw,34px);line-height:1.1;text-wrap:balance}
+.rk-head p{margin:0;max-width:62ch;color:var(--muted);font-size:14.5px}
+.rk-presets{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.rk-presets button{display:grid;gap:1px;padding:7px 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);text-align:left;cursor:pointer;transition:border-color .15s,background-color .15s}
+.rk-presets button:hover{border-color:var(--teal);background:var(--hover)}
+.rk-presets button:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.rk-presets strong{font-size:12.5px;font-weight:700}.rk-presets small{color:var(--subtle);font-size:11px;line-height:1.3}
+
+/* The workspace: choices on the left, and the rack, large, on the right */
+.rk-work{display:grid;grid-template-columns:minmax(320px,392px) minmax(0,1fr);gap:clamp(18px,2.4vw,32px);align-items:start;padding-bottom:calc(var(--rk-bar-h) + 28px)}
+.rk-sheet{min-width:0}
+.rk-sheet>section{padding:0 0 20px}
+.rk-sheet h2,.rk-bs-body h2{margin:0 0 10px;font-size:15px;line-height:1.3;font-weight:700}
+.rk-sheet h2 label,.rk-bar .rk-qty{display:inline;font:inherit;margin:0}.rk-sheet h2 label{cursor:pointer}
+.rk-section-head{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.rk-section-head h2{margin-bottom:0}
+.rk-sheet fieldset,.rk-bs-body fieldset{min-width:0;margin:12px 0 0;padding:0;border:0}.rk-sheet legend,.rk-bs-body legend{padding:0;margin-bottom:6px;font-size:13px;font-weight:600}
+.rk-right{position:sticky;top:var(--stage-top);min-width:0;display:grid;gap:12px}
+
+/* The tube shelf: every tube to the same scale, so the sizes explain themselves */
+.rk-shelf{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:6px;background:linear-gradient(var(--line),var(--line)) no-repeat 0 90px/100% 1px}
+.rk-cell{display:flex;flex-direction:column;align-items:center;min-width:0;text-align:center}
+.rk-figure{display:flex;align-items:flex-end;justify-content:center;height:90px}
+.rk-tube{display:block;overflow:visible}
+.rk-tube-body{fill:color-mix(in srgb,var(--tube) 9%,transparent);stroke:color-mix(in srgb,var(--tube) 46%,var(--line));stroke-width:1;transition:fill .15s,stroke .15s}
+.rk-tube-cap{fill:color-mix(in srgb,var(--tube) 16%,var(--surface));stroke:color-mix(in srgb,var(--tube) 46%,var(--line));stroke-width:1;transition:fill .15s}
+.rk-tube.is-active .rk-tube-body{fill:color-mix(in srgb,var(--tube) 26%,transparent);stroke:var(--tube)}
+.rk-tube.is-active .rk-tube-cap{fill:var(--tube);stroke:var(--tube)}
+.rk-cell label{margin:8px 0 6px;font-size:12px;line-height:1.25;display:grid;gap:0;flex-direction:row}.rk-cell label strong{font-size:13px;font-weight:700}.rk-cell label span{color:var(--subtle);font-size:11.5px}
+.rk-stepper{display:grid;grid-template-columns:28px minmax(0,1fr) 28px;align-items:stretch;width:100%;border:1px solid var(--control-border);border-radius:8px;overflow:hidden;background:var(--surface)}
+.rk-cell.has-tubes .rk-stepper{border-color:var(--teal)}
+.rk-stepper button{min-height:38px;padding:0;border:0;background:transparent;color:var(--ink);font-size:17px;line-height:1;cursor:pointer;touch-action:manipulation}
+.rk-stepper button:hover:not(:disabled){background:var(--hover)}.rk-stepper button:disabled{color:var(--control-border);cursor:default}
+.rk-stepper input{width:100%;min-width:0;padding:0;border:0;background:transparent;color:var(--ink);text-align:center;font-weight:700;font-variant-numeric:tabular-nums;appearance:textfield;-moz-appearance:textfield}
+.rk-stepper input::-webkit-inner-spin-button,.rk-stepper input::-webkit-outer-spin-button{appearance:none;margin:0}
+.rk-stepper input:focus-visible,.rk-stepper button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+
+/* The two design families, shown as themselves */
+.rk-styles{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rk-style{display:block;margin:0;cursor:pointer;min-width:0;position:relative}.rk-style input{position:absolute;opacity:0;width:1px;height:1px}
+.rk-style span{display:grid;gap:1px;align-content:start;height:100%;padding:6px 12px 11px;border:1px solid var(--control-border);border-radius:10px;background:var(--surface);transition:border-color .15s,background-color .15s}
+.rk-style img{display:block;width:100%;height:96px;object-fit:contain;margin-bottom:2px}
+.rk-style strong{font-size:13.5px}.rk-style small{color:var(--subtle);font-size:12px;line-height:1.35}
+.rk-style:hover span{background:var(--hover)}
+.rk-style input:checked+span{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal);background:var(--accent-soft)}
+.rk-style input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+
+.rk-segmented{display:inline-flex!important;margin-top:8px!important;border:1px solid var(--control-border)!important;border-radius:8px;overflow:hidden;background:var(--surface)}
+.rk-segmented[hidden]{display:none!important}
+.rk-segmented label{display:block;margin:0;cursor:pointer;position:relative}.rk-segmented input{position:absolute;opacity:0;width:1px;height:1px}
+.rk-segmented span{display:block;padding:8px 14px;font-size:13px;font-weight:600;min-height:36px}
+.rk-segmented input:checked+span{background:var(--accent-soft);color:var(--ink);box-shadow:inset 0 0 0 1px var(--teal)}
+.rk-segmented input:focus-visible+span{outline:2px solid var(--focus);outline-offset:-2px}
+
+.rk-rows,.rk-strip,.rk-for-phone,.rk-save-inline,.rk-review-metrics{display:none}.rk-bs,.rk-focus{display:none}
+.rk-bs[open],.rk-focus[open]{display:block}
+
+/* Layout: what the software proposes, shown as itself */
+.rk-layout-options{display:grid!important;grid-template-columns:repeat(auto-fit,minmax(0,1fr));grid-auto-flow:column;grid-auto-columns:minmax(0,1fr);gap:8px;margin:0!important}
+.rk-layout-option{display:block;margin:0;position:relative;cursor:pointer;min-width:0}.rk-layout-option input{position:absolute;opacity:0;width:1px;height:1px}
+.rk-layout-option span{display:grid;gap:0;align-content:start;height:100%;padding:8px 9px 9px;border:1px solid var(--control-border);border-radius:10px;background:var(--surface);transition:border-color .15s,background-color .15s}
+.rk-layout-option svg{display:block;width:100%;height:58px;margin-bottom:6px}
+.rk-layout-option rect{fill:color-mix(in srgb,var(--teal) 10%,var(--surface));stroke:color-mix(in srgb,var(--ink) 45%,transparent);stroke-width:1.2;vector-effect:non-scaling-stroke}
+.rk-layout-option circle{fill:var(--surface);stroke:var(--teal);stroke-width:1;vector-effect:non-scaling-stroke}
+.rk-layout-option strong{font-size:13px}.rk-layout-option small{color:var(--subtle);font-size:11.5px;line-height:1.3}.rk-layout-dims{margin-top:3px;font-variant-numeric:tabular-nums}
+.rk-layout-option:hover span{background:var(--hover)}
+.rk-layout-option input:checked+span{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal);background:var(--accent-soft)}
+.rk-layout-option input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+#rk-layouts{min-height:126px}#rk-layouts:has(.rk-layout-line){min-height:0}
+.rk-layout-line{margin:0;color:var(--muted);font-size:13.5px;line-height:1.45}
+.rk-layout-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px 14px;margin-top:10px}.rk-layout-actions .btn-ghost{min-height:38px;padding:0 14px;font-size:13px}
+#rk-layout-size{font-variant-numeric:tabular-nums}
+
+/* Height: a real dimension of the rack, within what these tubes allow */
+.rk-height-value{display:inline-flex!important;flex-direction:row!important;align-items:center;gap:5px;margin:0;font-size:13px;color:var(--subtle)}
+.rk-sheet .rk-height-value input{width:66px;min-height:34px;padding:3px 6px;text-align:right;font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+.rk-height-track{position:relative}.rk-height-track[hidden]{display:none}
+.rk-height{display:block;width:100%;min-height:0;height:32px;margin:2px 0 0;padding:0;border:0;background:none;box-shadow:none;appearance:none;-webkit-appearance:none;cursor:pointer;--thumb:20px}
+.rk-height::-webkit-slider-runnable-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--teal) var(--fill,0%),var(--line) var(--fill,0%))}
+.rk-height::-moz-range-track{height:6px;border-radius:3px;background:linear-gradient(to right,var(--teal) var(--fill,0%),var(--line) var(--fill,0%))}
+.rk-height::-webkit-slider-thumb{-webkit-appearance:none;width:var(--thumb);height:var(--thumb);margin-top:calc((6px - var(--thumb)) / 2);border:2px solid var(--teal);border-radius:50%;background:var(--surface);box-shadow:0 1px 3px rgba(29,53,87,.25)}
+.rk-height::-moz-range-thumb{width:var(--thumb);height:var(--thumb);box-sizing:border-box;border:2px solid var(--teal);border-radius:50%;background:var(--surface)}
+.rk-height:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:6px}
+.rk-height-track i{position:absolute;top:3px;left:calc(10px + (100% - 20px) * var(--at,0));width:2px;height:6px;margin-left:-1px;background:var(--subtle);pointer-events:none}
+.rk-height-scale{display:flex;justify-content:space-between;gap:12px;font-size:11.5px;color:var(--subtle);font-variant-numeric:tabular-nums}.rk-height-scale[hidden]{display:none}
+.rk-height-reset{margin-top:4px;padding:0;font-size:12.5px}.rk-height-reset[hidden]{display:none}
+.rk-inline{margin:0 0 12px!important}.rk-inline legend{font-size:12.5px!important;margin-bottom:5px!important}
+.rk-segmented-row{display:inline-flex;border:1px solid var(--control-border);border-radius:8px;overflow:hidden;background:var(--surface)}
+.rk-segmented-row label{display:block;margin:0;position:relative;cursor:pointer}.rk-segmented-row input{position:absolute;opacity:0;width:1px;height:1px}
+.rk-segmented-row span{display:inline-flex;align-items:center;gap:5px;padding:7px 12px;min-height:34px;font-size:12.5px;font-weight:600}
+.rk-segmented-row input:checked+span{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--teal)}.rk-segmented-row input:focus-visible+span{outline:2px solid var(--focus);outline-offset:-2px}
+
+/* Advanced options: everything Basic decides for you, on the same configuration */
+.rk-advanced-wrap{padding-bottom:18px!important;border-top:1px solid var(--line);border-bottom:1px solid var(--line);padding-top:0;margin-bottom:22px}
+.rk-advanced-toggle{display:flex;align-items:center;gap:8px;width:100%;min-height:46px;padding:0;border:0;background:none;color:var(--ink);font:inherit;font-size:14px;font-weight:700;text-align:left;cursor:pointer}
+.rk-advanced-toggle svg{flex:none;transition:transform .15s}.rk-advanced-toggle[aria-expanded=true] svg{transform:rotate(90deg)}
+.rk-advanced-toggle small{margin-left:auto;font-size:12.5px}
+.rk-advanced-toggle:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.rk-advanced{display:grid;gap:18px;padding:4px 0 2px}.rk-advanced[hidden]{display:none}
+.rk-group{margin:0!important}.rk-group>legend{font-size:13.5px!important;font-weight:700!important;margin-bottom:8px!important}
+.rk-narrow{max-width:150px;margin-top:10px}
+.rk-reset{display:flex;flex-wrap:wrap;align-items:center;gap:6px 12px}.rk-reset .rk-note{margin:0}.rk-reset button:disabled{opacity:.5;cursor:default}
+#rk-root:not(.is-advanced) .rk-adv-only{display:none}
+.rk-name{margin-top:14px}
+
+/* Choices */
+.rk-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rk-card{display:block;cursor:pointer;min-width:0}.rk-card input,.rk-chip input,.rk-swatches input{position:absolute;opacity:0;width:1px;height:1px}
+.rk-card span{display:grid;gap:3px;height:100%;padding:11px 12px;border:1px solid var(--control-border);border-radius:9px;background:var(--surface);transition:border-color .15s,background-color .15s}
+.rk-card strong{font-size:13.5px}.rk-card small{color:var(--subtle);font-size:12px;line-height:1.4;font-weight:400}
+.rk-card:hover span,.rk-chip:hover span{background:var(--hover)}
+.rk-card input:checked+span,.rk-chip input:checked+span{border-color:var(--teal);box-shadow:inset 0 0 0 1px var(--teal);background:var(--accent-soft)}
+.rk-card input:focus-visible+span,.rk-chip input:focus-visible+span,.rk-swatches input:focus-visible+span{outline:2px solid var(--focus);outline-offset:2px}
+.rk-choice-row{display:flex;flex-wrap:wrap;gap:6px}.rk-choice-row legend{width:100%}
+.rk-chip{cursor:pointer}.rk-chip span{display:grid;gap:1px;padding:8px 13px;border:1px solid var(--control-border);border-radius:8px;background:var(--surface);min-height:40px;align-content:center;transition:border-color .15s,background-color .15s}
+.rk-chip strong{font-size:13px}.rk-chip small{color:var(--subtle);font-size:11.5px;font-weight:400;font-variant-numeric:tabular-nums}
+.rk-swatches>div{display:flex;flex-wrap:wrap;gap:8px}.rk-swatches label{position:relative;cursor:pointer}
+.rk-swatches label span{display:block;width:34px;height:34px;border:1px solid var(--control-border);border-radius:50%;transition:box-shadow .15s}
+.rk-swatches input:checked+span{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--teal)}
+.rk-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px}
+.rk-field{display:grid;gap:4px;font-size:13px;font-weight:600}.rk-field-inline{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600}
+.rk-sheet input[type=text],.rk-sheet input[type=number]:not(.rk-stepper input),.rk-sheet select,.rk-bs-body input[type=text],.rk-bs-body input[type=number],.rk-bs-body select,.rk-tools select{width:100%;min-width:0;min-height:40px;padding:8px 10px;border:1px solid var(--control-border);border-radius:7px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px;font-weight:400}
+.rk-tools select{width:auto;min-height:34px;padding:5px 8px;font-size:12.5px}
+.rk-more{margin-top:12px}.rk-more>summary{cursor:pointer;color:var(--teal-text);font-size:13px;font-weight:600;padding:4px 0}.rk-more[open]>summary{margin-bottom:6px}
+.rk-size-row{margin:10px 0 0!important;padding:10px 0 0!important;border-top:1px solid var(--line)!important}
+.rk-size-row>label,.rk-size-fields label{display:grid;gap:3px;font-size:12.5px;font-weight:600}.rk-size-fields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:8px}
+
+/* Checks */
+.rk-issues{display:grid;gap:6px;margin:0 0 10px;padding:0;list-style:none}
+.rk-issues li{display:grid;gap:2px;padding:9px 11px;border-left:3px solid;border-radius:0 7px 7px 0;font-size:13px;line-height:1.45}
+.rk-issues strong{font-weight:600}.rk-issues span{color:var(--subtle)}
+.rk-issues .is-error{border-color:var(--rk-bad);background:var(--danger-bg)}.rk-issues .is-warning{border-color:var(--rk-tight);background:var(--warning-bg)}.rk-issues .is-more{border-color:var(--line)}
+.rk-report details{padding:5px 0;font-size:13px}.rk-report summary{cursor:pointer;font-weight:600}.rk-report ul{margin:6px 0 0;padding-left:18px;color:var(--muted);line-height:1.5}
+
+/* The stage */
+.rk-stage{min-width:0;display:grid;gap:8px;position:relative}
+.rk-tools button:focus-visible,.rk-pad button:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.rk-panel{display:grid;gap:8px;min-width:0}.rk-panel[hidden]{display:none}
+.rk-viewport{position:relative;border-radius:12px;overflow:hidden;background:radial-gradient(ellipse 80% 70% at 50% 38%,var(--surface) 0,color-mix(in srgb,var(--surface) 55%,var(--paper)) 60%,color-mix(in srgb,var(--media) 60%,var(--paper)) 100%);box-shadow:inset 0 0 0 1px var(--line)}
+:root[data-theme=dark] .rk-viewport{background:radial-gradient(ellipse 80% 70% at 50% 38%,#2a3f5c 0,#1c2e47 60%,#14243a 100%)}
+.rk-canvas{position:relative;height:clamp(340px,calc(100vh - 390px),780px);touch-action:none}
+.rk-canvas canvas{display:block;width:100%;height:100%;outline-offset:-3px}
+.rk-state{position:absolute;top:10px;right:10px;display:inline-flex;align-items:center;gap:7px;padding:4px 10px;border-radius:999px;background:color-mix(in srgb,var(--surface) 88%,transparent);font-size:12px;color:var(--muted);pointer-events:none}
+.rk-state:before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor;flex:none}
+.rk-state.is-exact{color:var(--rk-exact);font-weight:600}.rk-state.is-blocked{color:var(--danger-fg)}
+.rk-state.is-working:before{animation:rk-pulse 1.2s ease-in-out infinite}
+@keyframes rk-pulse{50%{opacity:.25}}
+.rk-viewtools{position:absolute;left:10px;right:10px;bottom:10px;gap:4px;pointer-events:none}
+.rk-viewtools>*{pointer-events:auto}
+.rk-viewtools button,.rk-viewtools .rk-toggle{min-height:32px;padding:4px 10px;border:1px solid transparent;border-radius:7px;background:color-mix(in srgb,var(--surface) 86%,transparent);color:var(--ink);font-size:12.5px;font-weight:600}
+.rk-viewtools button:hover,.rk-viewtools .rk-toggle:hover{background:var(--surface);border-color:var(--line)}
+.rk-problems{position:absolute;left:10px;top:10px;max-width:min(440px,calc(100% - 200px));z-index:2}
+.is-editing .rk-problems{position:static;max-width:none}
+.rk-dims{position:absolute;inset:0;pointer-events:none}.rk-dims span{position:absolute;left:0;top:0;padding:1px 6px;border-radius:4px;background:var(--surface);color:var(--ink);font-size:11.5px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;box-shadow:0 0 0 1px var(--line)}
+.rk-panel.is-expanded{position:fixed;inset:0;z-index:60;padding:12px;background:var(--paper)}.rk-panel.is-expanded .rk-canvas,#rk-view-3d:fullscreen .rk-canvas{height:calc(100vh - 24px)}
+#rk-view-3d:fullscreen{padding:12px;background:var(--paper)}
+.rk-tools{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.rk-tools button,.rk-nudge button,.rk-pad button{min-height:34px;padding:5px 11px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer;touch-action:manipulation}
+.rk-tools button:hover:not(:disabled),.rk-nudge button:hover,.rk-pad button:hover{background:var(--hover);border-color:var(--control-border)}.rk-tools button:disabled{opacity:.45;cursor:default}
+.rk-toggle{display:inline-flex;flex-direction:row;align-items:center;gap:5px;margin:0;padding:0 6px;font-size:12.5px;font-weight:500;cursor:pointer}.rk-toggle input{width:auto;min-height:0;margin:0}.rk-end{margin-left:auto}
+
+/* The layout editor: the sheet takes the stage, and the rack in 3D stays in view beside it */
+.rk-editor{display:grid;gap:8px;min-width:0}.rk-editor[hidden]{display:none}
+.rk-edit-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.rk-edit-head h2{margin:0;font-size:15px;font-weight:700}.rk-edit-head h2:focus{outline:none}.rk-edit-head .rk-quiet{margin-left:6px;font-size:13px;font-variant-numeric:tabular-nums}
+.rk-edit-bar{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 12px}.rk-edit-actions{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.rk-edit-3d{display:none}
+.rk-edit-actions button:not(.rk-done,.link-button){min-height:36px;padding:0 11px;border:1px solid var(--line);border-radius:7px;background:var(--surface);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer}
+.rk-edit-actions button:disabled{opacity:.45;cursor:default}.rk-edit-actions button:hover:not(:disabled,.rk-done,.link-button){background:var(--hover)}
+.rk-edit-actions .link-button{padding:0 6px;font-size:12.5px}
+.rk-done{min-height:38px;padding:0 16px;font-size:13px}
+.rk-add-row{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12.5px;color:var(--subtle)}
+.rk-add-chip{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:0 10px;border:1px solid var(--line);border-radius:999px;background:var(--surface);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer}
+.rk-add-chip i{width:10px;height:10px;border-radius:50%;border:2px solid var(--tube)}.rk-add-chip:hover{background:var(--hover)}
+.rk-add-chip[aria-pressed=true]{border-color:var(--tube);background:color-mix(in srgb,var(--tube) 16%,var(--surface))}.rk-add-chip:focus-visible{outline:2px solid var(--focus);outline-offset:1px}
+.rk-sheet-wrap{display:grid;grid-template-columns:minmax(0,1fr) 232px;gap:12px;align-items:start;min-width:0}
+.rk-rail{display:grid;gap:10px;min-width:0}.rk-rail .rk-note{margin:0}
+.is-editing #rk-view-3d{min-width:0}.is-editing .rk-canvas{height:150px}.is-editing .rk-viewtools,.is-editing .rk-state{display:none}
+.is-editing .rk-layout-actions{display:none}
+.rk-picked{flex-basis:100%;font-weight:600}
+.rk-for-touch{display:none}@media(pointer:coarse){.rk-for-mouse{display:none}.rk-for-touch{display:inline}}
+.rk-suggest{display:grid;gap:7px;padding:10px 11px;border-radius:9px;background:var(--accent-soft);font-size:12.5px;line-height:1.4}.rk-suggest[hidden]{display:none}.rk-suggest .btn-ghost{min-height:34px}
+.rk-suggested{fill:none;stroke:var(--focus);stroke-width:.6;stroke-dasharray:1.6 1.4;pointer-events:none}
+.rk-guide{stroke:var(--focus);stroke-width:.35;stroke-dasharray:2 1.5;pointer-events:none}
+.rk-marquee{fill:color-mix(in srgb,var(--focus) 12%,transparent);stroke:var(--focus);stroke-width:.4;pointer-events:none}
+.rk-ghost{fill:color-mix(in srgb,var(--focus) 16%,transparent);stroke:var(--focus);stroke-width:.7;pointer-events:none}.rk-ghost.is-bad{fill:color-mix(in srgb,var(--rk-bad) 18%,transparent);stroke:var(--rk-bad)}
+.rk-pos.is-swap .rk-pos-bore{fill:color-mix(in srgb,var(--focus) 26%,var(--surface));stroke:var(--focus);stroke-width:1.2}
+.rk-issue-action{justify-self:start;margin-top:5px;min-height:32px;padding:0 11px;border:1px solid currentColor;border-radius:7px;background:var(--surface);color:var(--ink);font-size:12.5px;font-weight:600;cursor:pointer}.rk-issue-action:hover{background:var(--hover)}
+
+/* The top view */
+.rk-svg{display:block;width:100%;height:clamp(300px,calc(100vh - 400px),700px);border-radius:10px;background:var(--surface);box-shadow:inset 0 0 0 1px var(--line);user-select:none;-webkit-user-select:none}
+.rk-grid-line{stroke:var(--line);stroke-width:.25}
+.rk-outline{fill:color-mix(in srgb,var(--teal) 7%,transparent);stroke:var(--ink);stroke-width:.6}
+.rk-limit{fill:none;stroke:var(--rk-bad);stroke-width:.8;stroke-dasharray:4 3}
+.rk-front{fill:var(--subtle);font-size:4.2px;text-anchor:middle}
+.rk-pos-cap{fill:transparent;pointer-events:all;stroke:var(--tube);stroke-width:.35;stroke-dasharray:1.4 1.1;opacity:.75}
+.rk-pos-bore{fill:color-mix(in srgb,var(--tube) 20%,var(--surface));stroke:var(--tube);stroke-width:.7}
+.rk-pos-n{fill:var(--ink);font-weight:700;text-anchor:middle;pointer-events:none}
+.rk-svg .rk-pos{cursor:grab}.rk-svg.is-dragging,.rk-svg.is-dragging .rk-pos{cursor:grabbing}.rk-svg.is-arming{cursor:copy}
+.rk-svg{touch-action:pan-y}.rk-pos{touch-action:none}.rk-pos:focus{outline:none}
+.rk-pos:focus-visible .rk-pos-bore,.rk-pos.is-picked .rk-pos-bore{stroke:var(--focus);stroke-width:1.4}
+.rk-pos.is-picked .rk-pos-bore{fill:color-mix(in srgb,var(--focus) 24%,var(--surface))}
+.rk-pos.is-tight .rk-pos-cap{stroke:var(--rk-tight);stroke-width:.7;opacity:1}
+.rk-pos.is-bad .rk-pos-bore{fill:color-mix(in srgb,var(--rk-bad) 26%,var(--surface));stroke:var(--rk-bad);stroke-width:1.2;stroke-dasharray:2 1}
+.rk-pos.is-bad .rk-pos-cap{stroke:var(--rk-bad);opacity:1}
+.rk-scale path{stroke:var(--subtle);stroke-width:.5;fill:none}.rk-scale text{fill:var(--subtle);font-size:3.6px;text-anchor:middle}
+.rk-nudge{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:9px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:12.5px}.rk-nudge[hidden]{display:none}#rk-align{display:flex;flex-wrap:wrap;gap:6px}#rk-align[hidden]{display:none}
+.rk-pad{display:inline-flex;gap:3px}.rk-pad button{min-width:40px;min-height:40px;padding:0;font-size:15px}
+.rk-legend{display:flex;flex-wrap:wrap;gap:12px;color:var(--subtle);font-size:11.5px}.rk-legend span{display:inline-flex;align-items:center;gap:5px}
+.rk-legend i{display:inline-block;width:12px;height:12px;border-radius:50%;border:1.5px solid var(--teal)}.rk-legend .k-cap{border-style:dashed}.rk-legend .k-bad{border-color:var(--rk-bad);border-style:dashed;background:color-mix(in srgb,var(--rk-bad) 26%,transparent)}.rk-legend .k-tight{border-color:var(--rk-tight);border-style:dashed}
+
+/* What the rack comes to: measured values and estimates say which they are */
+.rk-metrics{display:grid;grid-template-columns:1.3fr .9fr 1.2fr 1fr .8fr;gap:0;margin:0;min-height:56px}
+#rk-finish{min-height:128px}
+.rk-metrics>div{min-width:0;padding:0 14px;border-left:1px solid var(--line)}.rk-metrics>div:first-child{border-left:0;padding-left:2px}
+.rk-metrics dt{color:var(--subtle);font-size:11.5px}.rk-metrics dd{margin:1px 0 0;font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3;overflow-wrap:anywhere}
+.rk-metrics small{display:block;margin-top:1px;color:var(--subtle);font-size:11px;font-weight:400;line-height:1.3}
+.rk-table-wrap{max-height:240px;overflow:auto}.rk-table-wrap:focus-visible{outline:2px solid var(--focus);outline-offset:2px}.rk-list table{width:100%;border-collapse:collapse;font-size:12.5px;font-variant-numeric:tabular-nums}
+.rk-list th,.rk-list td{padding:5px 8px;border-bottom:1px solid var(--line);text-align:left}.rk-list thead th{position:sticky;top:0;background:var(--paper);font-weight:600}
+.rk-mini{width:82px;min-height:32px;padding:3px 6px;border:1px solid var(--control-border);border-radius:5px;background:var(--surface);color:var(--ink)}
+.rk-list tr.is-selected{background:var(--accent-soft)}
+
+/* The action bar: the price and what to do next, always in reach */
+.rk-bar{position:fixed;left:0;right:0;bottom:0;z-index:30;padding:9px max(4%,env(safe-area-inset-right)) calc(9px + env(safe-area-inset-bottom)) max(4%,env(safe-area-inset-left));background:var(--surface);border-top:1px solid var(--line);box-shadow:0 -6px 18px rgba(29,53,87,.07)}
+.rk-bar-inner{display:flex;align-items:center;gap:12px;max-width:1400px;margin:0 auto}
+.rk-bar-price{display:grid;line-height:1.15;min-width:96px}.rk-bar-price strong{font-size:22px;font-variant-numeric:tabular-nums}.rk-bar-price small{color:var(--subtle);font-size:11.5px}
+.rk-bar-price[data-basis=estimate] strong{font-weight:600;color:var(--muted)}
+.rk-bar-note{flex:1;min-width:0;display:grid;gap:1px;font-size:12.5px;line-height:1.35;color:var(--subtle)}#rk-add-error:not(:has(a)){color:var(--danger-fg)}#rk-add-error:empty,#rk-why:empty{display:none}
+.rk-bar .rk-qty{display:flex;flex-direction:row;align-items:center;margin:0;gap:6px;font-size:12.5px;color:var(--subtle)}.rk-qty input{width:58px;min-height:44px;padding:6px 8px;border:1px solid var(--control-border);border-radius:7px;background:var(--surface);color:var(--ink);font:inherit;font-size:14px;text-align:center}
+.rk-save{min-height:44px;padding:0 14px;font-size:13.5px}.rk-add{min-height:44px;min-width:150px}.rk-buy{min-height:44px;min-width:112px}.rk-add:disabled,.rk-buy:disabled{cursor:not-allowed}
+.rk-prototype{margin:0 0 10px;padding:8px 11px;border-left:3px solid var(--line);color:var(--muted);font-size:12.5px;line-height:1.45}
+
+body:has(#rk-root) footer{padding-bottom:calc(var(--rk-bar-h) + 24px)}
+
+/* My designs */
+.rk-designs{padding:24px 0 48px}.rk-designs-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:12px}.rk-designs h1{margin:0}
+.rk-design-list{margin:0;padding:0;list-style:none;border-top:2px solid var(--ink)}
+.rk-design{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:18px;align-items:start;padding:16px 0;border-bottom:1px solid var(--line)}
+.rk-design-pic{display:block;width:96px;height:96px;border-radius:8px;background:var(--media);overflow:hidden}.rk-design-pic img{display:block;width:100%;height:100%;object-fit:contain}
+.rk-design-copy{min-width:0}.rk-design h2{margin:0 0 3px;font-size:16px}.rk-design h2 a{color:inherit;text-decoration:none;overflow-wrap:anywhere}.rk-design h2 a:hover{text-decoration:underline}.rk-design p{margin:0;font-size:13.5px}
+.rk-row-actions{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:flex-end}
+.rk-ordered{margin-top:8px;font-size:13px}.rk-ordered summary{cursor:pointer;font-weight:600;color:var(--teal-text)}.rk-ordered ul{margin:6px 0;padding:0;list-style:none}.rk-ordered li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px 14px;padding:5px 0;border-top:1px solid var(--line)}
+.rk-rename{display:flex;gap:6px}.rk-rename input{flex:1;min-width:0;padding:5px 8px;border:1px solid var(--control-border);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit}
+.rk-empty{padding:34px 0;border-top:2px solid var(--ink)}.rk-empty p{margin:0 0 14px}
+
+@media(max-width:900px){
+  .rk-head{grid-template-columns:1fr}.rk-presets{justify-content:flex-start}
+  .rk-work{grid-template-columns:1fr;gap:16px}
+  .rk-right{display:contents}
+  /* The model stays in sight while the choices below it scroll, without taking the screen. */
+  .rk-stage{position:sticky;top:calc(var(--topbar-h) + 4px);z-index:5;order:-1;background:var(--paper);padding-bottom:6px}
+  .is-editing .rk-stage{position:static}
+  .rk-sheet-wrap{grid-template-columns:1fr}.rk-rail{grid-template-columns:minmax(0,1fr)}
+  .rk-sheet{order:0}.rk-metrics{order:1}
+  .rk-canvas{height:min(42vh,420px)}.rk-svg{height:min(44vh,440px)}
+  .rk-problems{position:static;max-width:none}
+}
+/* ---- The phone: the same configuration, worked differently. A compact model that never takes the page's scroll, the few
+   decisions everyone makes on the first screen, a short list that opens sheets for the rest, and a fullscreen editor. ---- */
+html.rk-lock,html.rk-lock body{overflow:hidden}
+#rk-root.is-phone{--rk-bar-h:66px}
+body:has(#rk-root.is-phone) footer{padding-bottom:calc(66px + 24px)}
+.is-phone .rk-for-wide{display:none}.is-phone .rk-for-phone{display:inline}
+.rk-page:has(.is-phone){padding:10px 16px 0}
+.is-phone .rk-head{grid-template-columns:1fr;gap:8px;padding-bottom:10px}.is-phone .rk-head h1{margin:0;font-size:21px}.is-phone .rk-head p{display:none}
+.is-phone .rk-presets{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.is-phone .rk-presets button{justify-items:center;align-content:center;min-height:44px;padding:4px;text-align:center}.is-phone .rk-presets small{display:none}
+.is-phone .rk-work{display:flex;flex-direction:column;gap:14px;padding-bottom:calc(var(--rk-bar-h) + 24px)}
+.is-phone .rk-right{display:contents}.is-phone .rk-metrics:not(.rk-review-metrics){display:none}
+/* The model: in view while the choices scroll below it, and never in the way of the thumb */
+.is-phone .rk-stage{position:sticky;top:calc(var(--topbar-h) + 2px);z-index:5;order:-1;gap:0;margin:0 -16px;padding:0 16px 6px;background:var(--paper)}
+.is-phone .rk-canvas{height:clamp(150px,30vh,270px);height:clamp(150px,30dvh,270px);touch-action:pan-y}
+/* The 3D library sets touch-action:none on its canvas, which would stop the page scrolling under a thumb even with pointer events off. */
+.is-phone .rk-canvas canvas{pointer-events:none;touch-action:pan-y!important}
+.is-phone .rk-viewport{cursor:zoom-in}
+.is-phone .rk-viewtools{flex-wrap:nowrap;left:6px;right:6px;bottom:6px}
+.is-phone .rk-viewtools button,.is-phone .rk-viewtools .rk-toggle{min-height:40px;padding:2px 11px;white-space:nowrap}
+.is-phone .rk-viewtools [aria-label="Reset view"],.is-phone .rk-viewtools .rk-toggle{display:none}
+.is-phone .rk-state{top:6px;right:6px;font-size:11.5px}
+.is-phone .rk-strip{display:flex;justify-content:space-between;align-items:center;gap:10px;width:100%;min-height:44px;padding:4px 2px 0;border:0;background:none;color:var(--ink);font-size:12.5px;font-variant-numeric:tabular-nums;text-align:left;cursor:pointer}
+.is-phone .rk-strip b{flex:none;font-weight:600;color:var(--rk-exact)}.is-phone .rk-strip[data-ok=false] b{color:var(--danger-fg)}
+.is-phone .rk-problems{position:static;max-width:none;margin-top:4px}.is-phone .rk-issues{margin:0}.is-phone .rk-issues li{padding:7px 9px;font-size:12.5px}
+/* The first screen: tubes, style, height */
+.is-phone .rk-sheet>section{padding:0 0 16px}
+.is-phone #rk-layout-section,.is-phone #rk-label-section,.is-phone #rk-finish-section,.is-phone #rk-advanced-section,.is-phone #rk-check-section{display:none}
+.is-phone .rk-shelf{grid-template-columns:1fr;gap:0;margin-top:2px;background:none}
+.is-phone .rk-cell{display:grid;grid-template-columns:30px minmax(0,1fr) 136px;align-items:center;column-gap:8px;min-height:52px;text-align:left;border-bottom:1px solid var(--line)}.is-phone .rk-cell:last-child{border-bottom:0}
+.is-phone .rk-figure{height:46px;width:30px;overflow:visible;align-items:flex-end}.is-phone .rk-figure svg{transform:scale(.5);transform-origin:bottom center}
+.is-phone .rk-cell label{display:flex;flex-direction:row;gap:5px;align-items:baseline;margin:0}.is-phone .rk-cell label strong{font-size:14.5px}
+.is-phone .rk-stepper{grid-template-columns:44px minmax(0,1fr) 44px}.is-phone .rk-stepper button{min-height:44px;font-size:20px}.is-phone .rk-stepper input{font-size:16px}
+.is-phone .rk-style img{height:76px}.is-phone .rk-style span{padding:5px 10px 9px}.is-phone .rk-style small{font-size:11.5px}
+.is-phone .rk-height-value input{min-height:44px!important;font-size:16px}.is-phone .rk-height{height:44px;--thumb:30px}.is-phone .rk-height-track i{top:9px;left:calc(15px + (100% - 30px) * var(--at,0))}
+.is-phone .rk-sheet input[type=number]:not(.rk-stepper input),.rk-bs-body input[type=text],.rk-bs-body input[type=number],.rk-bs-body select{font-size:16px}
+/* Everything else: one list, each row says what it is set to */
+.is-phone .rk-rows{display:grid;border-top:1px solid var(--line)}
+.rk-rows button{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:52px;padding:0 2px;border:0;border-bottom:1px solid var(--line);background:none;color:var(--ink);font-size:14.5px;font-weight:600;text-align:left;cursor:pointer}
+.rk-rows button>span{flex:none}.rk-rows button>b{display:inline-flex;align-items:center;gap:7px;min-width:0;margin-left:auto;color:var(--subtle);font-size:13px;font-weight:500;text-align:right;overflow:hidden;white-space:nowrap}
+.rk-rows button>b span,.rk-rows button>b{text-overflow:ellipsis}
+.rk-rows button:after{content:"";flex:none;width:7px;height:7px;margin-left:-4px;border-top:2px solid var(--subtle);border-right:2px solid var(--subtle);transform:rotate(45deg)}
+.rk-rows button:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.rk-rows i{width:14px;height:14px;border-radius:50%;box-shadow:0 0 0 1px var(--control-border)}.rk-rows i[hidden]{display:none}
+/* Bottom sheets */
+.rk-bs[open]{position:fixed;inset:auto 0 0;width:100%;max-width:560px;max-height:88vh;max-height:88dvh;margin:0 auto;padding:0;border:0;border-radius:16px 16px 0 0;background:var(--paper);color:var(--ink);overflow:hidden;animation:rk-sheet-in .18s ease-out}
+.rk-bs::backdrop{background:rgba(16,29,48,.45)}
+@keyframes rk-sheet-in{from{transform:translateY(24px);opacity:.6}}
+.rk-bs-head{position:relative;display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:54px;padding:10px 16px 6px;touch-action:none;cursor:grab}
+.rk-bs-head>i{position:absolute;top:6px;left:50%;width:36px;height:4px;margin-left:-18px;border-radius:2px;background:var(--control-border)}
+.rk-bs-head h2{margin:0;font-size:16px;font-weight:700}.rk-bs-head button{min-height:44px;padding:0 4px;font-size:14px;font-weight:600}
+.rk-bs-body{overflow:auto;max-height:calc(88vh - 54px);max-height:calc(88dvh - 54px);padding:2px 16px calc(18px + env(safe-area-inset-bottom));overscroll-behavior:contain}
+.rk-bs-body>section{display:block!important;padding:0!important;margin:0!important;border:0!important}
+.rk-bs-body>section>h2,.rk-bs-body>section>.rk-section-head h2,.rk-bs-body .rk-advanced-toggle{display:none}
+.rk-bs-body #rk-advanced{display:grid!important}
+.rk-bs-body .rk-layout-option small:not(.rk-layout-dims){display:block}.rk-bs-body .rk-layout-option svg{height:64px}
+.rk-bs-body .rk-review-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 0;margin-bottom:14px}.rk-bs-body .rk-review-metrics>div{border-left:0;padding:0 10px 0 0}
+.rk-bs-body .rk-save-inline{display:inline-flex;min-height:44px;margin-top:12px;padding:0 16px}
+/* Focused model: all gestures, and a clear way out */
+.rk-focus[open]{position:fixed;inset:0;width:100%;height:100%;max-width:none;max-height:none;margin:0;padding:0;border:0;background:var(--paper)}
+.rk-focus::backdrop{background:var(--paper)}
+.rk-focus #rk-view-3d,.rk-focus .rk-viewport{height:100%}.rk-focus .rk-viewport{border-radius:0;cursor:default}
+.rk-focus .rk-canvas{height:100%!important;touch-action:none}.rk-focus .rk-canvas canvas{pointer-events:auto;touch-action:none!important}
+.rk-focus .rk-state{right:auto;left:10px;top:calc(10px + env(safe-area-inset-top))}
+.rk-focus .rk-viewtools{bottom:calc(10px + env(safe-area-inset-bottom))}
+.rk-focus .rk-viewtools [aria-label="Reset view"],.rk-focus .rk-viewtools .rk-toggle{display:inline-flex;align-items:center}.rk-focus #rk-fullscreen,.rk-focus .rk-strip{display:none!important}
+.rk-focus .rk-viewtools{flex-wrap:wrap}
+.rk-focus-close{position:absolute;z-index:3;top:calc(8px + env(safe-area-inset-top));right:10px;min-height:44px;padding:0 16px;border:1px solid var(--line);border-radius:9px;background:var(--surface);color:var(--ink);font-size:14px;font-weight:600;cursor:pointer}
+/* The layout editor takes the screen: nothing else competes, and nothing scrolls under a dragged tube */
+.is-phone.is-editing .rk-stage{position:fixed;inset:0;z-index:1000;display:flex;flex-direction:column;margin:0;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.is-phone.is-editing .rk-editor{display:flex;flex-direction:column;flex:1;min-height:0;gap:6px;padding:8px 12px}
+.is-phone.is-editing .rk-strip,.is-phone.is-editing .rk-bar{display:none}
+.is-phone .rk-edit-head{order:0}.is-phone .rk-edit-head h2{flex:1;font-size:15px}.is-phone .rk-edit-3d{display:inline-flex;align-items:center;min-height:44px;padding:0 12px;border:1px solid var(--line);border-radius:8px;background:var(--surface);color:var(--ink);font-size:13px;font-weight:600}
+.is-phone .rk-done{min-height:44px;padding:0 18px;font-size:14px}
+.is-phone .rk-sheet-wrap{order:1;display:flex;flex-direction:column;flex:1;min-height:0;gap:6px}
+.is-phone .rk-svg{flex:1;height:auto!important;min-height:0;touch-action:none}
+.is-phone .rk-rail{display:block;flex:none}.is-phone .rk-rail .rk-note{font-size:12px}
+.is-phone.is-editing:not(.show-model) #rk-view-3d{display:none}
+.is-phone.show-model .rk-svg,.is-phone.show-model .rk-rail>:not(#rk-view-3d),.is-phone.show-model .rk-edit-bar{display:none}
+.is-phone.show-model .rk-rail{flex:1;display:flex}.is-phone.show-model #rk-view-3d{flex:1;display:grid}.is-phone.show-model .rk-viewport,.is-phone.show-model .rk-canvas{height:100%;touch-action:none}.is-phone.show-model .rk-canvas canvas{pointer-events:auto;touch-action:none!important}
+.is-phone .rk-edit-bar{order:2;display:grid;gap:6px}.is-phone.has-selection .rk-edit-bar .rk-add-row{display:none}
+.is-phone .rk-add-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}.is-phone .rk-add-row>span{display:none}.is-phone .rk-add-chip{justify-content:center;min-height:44px;padding:0 4px;font-size:12.5px}
+.is-phone .rk-edit-actions{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:5px}.is-phone .rk-edit-actions button{min-height:44px!important;padding:0 8px!important;white-space:nowrap}
+.is-phone .rk-nudge{gap:5px;padding:6px}.is-phone .rk-picked{flex:0 0 auto}.is-phone .rk-pad button{min-width:44px;min-height:44px}.is-phone .rk-nudge>button,.is-phone #rk-align button{min-height:44px}
+.is-phone.is-editing .rk-problems{order:3;flex:none;max-height:92px;overflow:auto;padding:0 12px 6px}
+/* The purchase bar: one line, and the action within reach */
+.is-phone .rk-bar{padding:7px 16px calc(7px + env(safe-area-inset-bottom))}
+.is-phone .rk-bar-inner{display:grid;grid-template-columns:minmax(0,auto) minmax(0,1fr) minmax(0,1.3fr);align-items:center;gap:4px 8px}
+.is-phone .rk-bar-price{order:1;min-width:0}.is-phone .rk-bar-price strong{font-size:18px}.is-phone .rk-bar-price small{font-size:10.5px;white-space:nowrap}
+.is-phone .rk-bar-note{order:4;grid-column:1/-1;font-size:11.5px}.is-phone .rk-bar-note:not(:has(span:not(:empty))){display:none}.is-phone .rk-bar-note.is-waiting:not(:has(#rk-add-error:not(:empty))){display:none}
+.is-phone .rk-bar .rk-qty,.is-phone .rk-bar .rk-save{display:none}
+.is-phone .rk-add,.is-phone .rk-buy{min-height:48px;min-width:0;padding:4px 8px;font-size:13px;line-height:1.15;white-space:normal}.is-phone .rk-add{order:2}.is-phone .rk-buy{order:3}.is-phone .rk-add .purchase-icon{display:none}
+.is-phone.is-typing .rk-bar{display:none}
+.is-phone .rk-cards{grid-template-columns:1fr}
+/* A phone on its side: the model on one side, the choices on the other */
+.is-phone.is-landscape .rk-work{display:grid;grid-template-columns:minmax(0,44%) minmax(0,1fr);gap:14px;align-items:start}
+.is-phone.is-landscape:not(.is-editing) .rk-stage{top:calc(var(--topbar-h) + 2px);margin:0;padding:0}
+.is-phone.is-landscape .rk-canvas{height:calc(100vh - var(--topbar-h) - var(--rk-bar-h) - 56px);height:calc(100dvh - var(--topbar-h) - var(--rk-bar-h) - 56px);min-height:130px}
+.is-phone.is-landscape .rk-head{display:none}
+.is-phone.is-landscape.is-editing .rk-editor{display:grid;grid-template-columns:minmax(0,1fr) minmax(250px,34%);grid-template-rows:auto minmax(0,1fr) auto;gap:6px 10px}
+.is-phone.is-landscape .rk-sheet-wrap{display:contents}
+.is-phone.is-landscape.is-editing .rk-svg{grid-column:1;grid-row:1/-1;height:100%!important;min-height:0}
+.is-phone.is-landscape.is-editing .rk-edit-head{grid-column:2;grid-row:1}
+.is-phone.is-landscape.is-editing .rk-rail{grid-column:2;grid-row:2;overflow:auto}
+.is-phone.is-landscape.is-editing .rk-edit-bar{grid-column:2;grid-row:3}
+.is-phone.is-landscape.is-editing .rk-canvas{height:100%}
+@media(max-width:640px){
+  .rk-design{grid-template-columns:64px minmax(0,1fr)}.rk-design-pic{width:64px;height:64px}.rk-design>.rk-row-actions{grid-column:1/-1;justify-content:flex-start}
+}
+@media(prefers-reduced-motion:reduce){.rk-bs[open]{animation:none}.rk-state.is-working:before{animation:none}.rk-card span,.rk-style span,.rk-chip span,.rk-swatches label span,.rk-tube-body,.rk-tube-cap,.rk-presets button,.rk-advanced-toggle svg{transition:none}}

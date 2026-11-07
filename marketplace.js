@@ -135,7 +135,7 @@ render = function(){const route=(location.hash||'#home').slice(1).split('?')[0];
    page is drawn once, when every script has loaded and the session is known. Pages that show catalogue data wait for
    it; workspace pages do not need it, so they draw at once and it arrives behind them. */
 const scriptsLoaded=document.readyState==='loading'?new Promise(done=>addEventListener('DOMContentLoaded',done,{once:true})):Promise.resolve();
-const CATALOGUE_FREE=/^#?(admin|host|orders|my-|account|onboarding|verify|check-inbox|reset|forgot-password)/;
+const CATALOGUE_FREE=/^#?(admin|host|orders|my-|design-rack|account|onboarding|verify|check-inbox|reset|forgot-password)/;
 let catalogueLoad=null;
 // What the current page needs before it can draw: the published catalogue, fetched the first time a page shows it.
 // Returns a promise only while that is on its way, so every other navigation stays synchronous.

@@ -1816,3 +1816,8 @@ label :is(input,select,textarea){font-size:13.5px}
 .auth-separator{display:flex;align-items:center;gap:12px;margin:14px 0;color:var(--subtle);font-size:12.5px}.auth-separator:before,.auth-separator:after{content:'';flex:1;height:1px;background:var(--line)}
 #auth-message{margin:0 auto 16px;max-width:900px}
 #sign-in-methods .hint{margin:0 0 10px}
+
+/* Design Your Rack, as other pages mention it (the configurator's own styles load only on its pages). */
+.rack-promo{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px 28px;margin:6px 0 22px;padding:14px 18px;border-left:3px solid var(--teal);background:var(--accent-soft);border-radius:0 8px 8px 0}
+.rack-promo h2{margin:0 0 2px;font-size:16px}.rack-promo p{margin:0;font-size:13.5px;color:var(--muted)}
+.rack-order-actions{margin-top:8px}
