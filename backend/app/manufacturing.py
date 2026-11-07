@@ -28,9 +28,10 @@ def sha256(path):
 
 def snapshot(listing):
     """The manufacturing reference stored on an order line."""
+    rack = {'rack_snapshot': listing.rack_snapshot} if listing.rack_snapshot else {}
     path = cad_file(listing.cad_path)
     if path is None:
-        return {'listing_version': listing.version, 'cad_path': '', 'cad_sha256': '', 'cad_status': 'none'}
+        return {'listing_version': listing.version, 'cad_path': '', 'cad_sha256': '', 'cad_status': 'none', **rack}
     if not path.is_file():
-        return {'listing_version': listing.version, 'cad_path': listing.cad_path, 'cad_sha256': '', 'cad_status': 'missing'}
-    return {'listing_version': listing.version, 'cad_path': listing.cad_path, 'cad_sha256': sha256(path), 'cad_status': 'pinned'}
+        return {'listing_version': listing.version, 'cad_path': listing.cad_path, 'cad_sha256': '', 'cad_status': 'missing', **rack}
+    return {'listing_version': listing.version, 'cad_path': listing.cad_path, 'cad_sha256': sha256(path), 'cad_status': 'pinned', **rack}

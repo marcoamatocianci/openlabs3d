@@ -54,7 +54,7 @@ def cart_data(db,user_id):
     for row in rows:
         p=products[row.listing_id]
         data={k:getattr(row,k) for k in ('id','listing_id','material','color','quantity','confirmed_unit_price_cents')}
-        data.update(title=p.title,available=p.status=='approved' and not p.removed,price_changed=False)
+        data.update(title=p.title,available=p.status=='approved' and not p.removed,price_changed=False,custom_rack=bool(p.rack_hash),rack_design_id=p.rack_design_id)
         try:
             data.update(quote(p,row.material,row.color,row.quantity,user_id))
             if row.confirmed_unit_price_cents!=data['unit_price_cents']:

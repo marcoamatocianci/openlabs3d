@@ -102,26 +102,67 @@ def line_dimensions(item):
     match = _TEXT_SIZE.fullmatch(item.dimensions or '')
     return valid_dimensions([float(v) for v in match.groups()]) if match else None
 
-def fits(printer, dimensions):
-    return printer.quantity > 0 and all(a <= b for a, b in zip(sorted(dimensions), sorted([printer.x, printer.y, printer.z])))
+def fits(printer, dimensions, upright=False):
+    """Whether a part fits this printer. Most parts may be laid in any axis-aligned orientation. A custom rack only
+    prints upright (its overhangs are safe only that way), so it may turn about Z but not tip over, on an FDM printer,
+    with a margin left for a skirt or brim."""
+    if printer.quantity <= 0: return False
+    if upright:
+        from .rack.rules import RULES
+        width, depth, height = dimensions
+        side, top = RULES.printer_margin_mm * 2, RULES.printer_margin_z_mm
+        return printer.technology == 'FDM' and height + top <= printer.z and ((width + side <= printer.x and depth + side <= printer.y) or (depth + side <= printer.x and width + side <= printer.y))
+    return all(a <= b for a, b in zip(sorted(dimensions), sorted([printer.x, printer.y, printer.z])))
 
 def compatible_printers(product, host_id=None):
     db = object_session(product) if product is not None else None
     dimensions = valid_dimensions(product.cad_dimensions) if db is not None else None
     if dimensions is None:
         return []
-    return [p for p in _approved_printers(db) if (host_id is None or p.user_id == host_id) and fits(p, dimensions)]
+    upright = bool(getattr(product, 'rack_hash', None))
+    return [p for p in _approved_printers(db) if (host_id is None or p.user_id == host_id) and fits(p, dimensions, upright)]
 
-def offers(product, host_id=None):
-    """Every stocked shade that can make this product: (material, colour name, hex, host id)."""
+def _shades(printers, db=None):
     result, seen = [], set()
-    for printer in compatible_printers(product, host_id):
+    for printer in printers:
         # In the host's inventory and within this printer's administrator-approved capabilities.
-        for material, colors in printer_stock(printer).items():
+        for material, colors in printer_stock(printer, db).items():
             for name, value in colors.items():
                 shade = (material, name, value.lower(), printer.user_id)
                 if shade not in seen: seen.add(shade); result.append(shade)
     return result
+
+def offers(product, host_id=None):
+    """Every stocked shade that can make this product: (material, colour name, hex, host id)."""
+    return _shades(compatible_printers(product, host_id))
+
+def rack_envelopes(db, material='', color='', exclude_host=None):
+    """Build volumes of approved FDM printers able to print this material and exact colour from their own host's stock,
+    largest first: [{'x', 'y', 'z', 'printers', 'hosts'}]. Empty material or colour: any. One rule with job_ineligibility:
+    the printer's approved capabilities intersected with its host's inventory, never the buyer's own printers."""
+    sizes = {}
+    for p in _approved_printers(db):
+        if p.technology != 'FDM' or p.quantity <= 0 or p.user_id == exclude_host: continue
+        shades = [(m, n, v.lower()) for m, colors in printer_stock(p, db).items() for n, v in colors.items()]
+        if material: shades = [s for s in shades if s[0] == material]
+        if color: shades = [s for s in shades if matches([s], s[0], color)]
+        if not shades: continue
+        entry = sizes.setdefault((p.x, p.y, p.z), {'printers': 0, 'hosts': set()})
+        entry['printers'] += p.quantity; entry['hosts'].add(p.user_id)
+    ordered = sorted(sizes.items(), key=lambda kv: (-kv[0][0] * kv[0][1], -kv[0][2]))
+    return [{'x': s[0], 'y': s[1], 'z': s[2], 'printers': e['printers'], 'hosts': len(e['hosts'])} for s, e in ordered]
+
+def rack_hosts(db, dimensions, material, color, exclude_host=None):
+    """Hosts that could make a rack of this size in exactly this finish: the question checkout will ask again."""
+    hosts = set()
+    for p in _approved_printers(db):
+        if p.user_id != exclude_host and fits(p, dimensions, True) and any(m == material and matches([(m, n, v.lower())], material, color) for m, c in printer_stock(p, db).items() for n, v in c.items()):
+            hosts.add(p.user_id)
+    return len(hosts)
+
+def rack_combinations(db, dimensions, exclude_host=None):
+    """What a rack of this size could be bought in, before it exists: the same keys as combinations() would give."""
+    return _keyed(_shades([p for p in _approved_printers(db) if fits(p, dimensions, True)], db), None, exclude_host)
 
 def split_color(key):
     """'orange~e66a3c' -> ('orange', '#e66a3c'); 'orange' -> ('orange', '')."""
@@ -132,7 +173,9 @@ def combinations(product, host_id=None, exclude_host=None):
     """{material: {colour key: hex}} for buyers; with host_id, only that host's shades (same keys).
     exclude_host drops shades only that host stocks: a buyer's own printers cannot take their order.
     Keys are worked out over every host, so a shade has the same key whoever is looking."""
-    shades = offers(product)
+    return _keyed(offers(product), host_id, exclude_host)
+
+def _keyed(shades, host_id=None, exclude_host=None):
     distinct = {}
     for material, name, value, _ in shades:
         distinct.setdefault((material, name), set()).add(value)
@@ -158,15 +201,15 @@ def matches(shades, material, color, color_hex=''):
 def supports(product, material, color, host_id=None, color_hex=''):
     return matches(host_shades(product, host_id), material, color, color_hex)
 
-def _sized_shades(db, host_id, dimensions):
+def _sized_shades(db, host_id, dimensions, upright=False):
     """(material, name, hex) a host offers on approved printers that fit this size, or None when
     none fits. Each shade comes from one printer's own stock. Worked out once per request for each
     host and size, so a long job list costs one evaluation per product, not one per job."""
     printers = _approved_printers(db)          # flushes pending changes first, resetting the caches
     cache = db.info.setdefault(_SHADES, {})
-    key = (host_id, tuple(dimensions))
+    key = (host_id, tuple(dimensions), upright)
     if key not in cache:
-        fitting = [p for p in printers if p.user_id == host_id and fits(p, dimensions)]
+        fitting = [p for p in printers if p.user_id == host_id and fits(p, dimensions, upright)]
         cache[key] = {(m, n, v.lower()) for p in fitting for m, colors in printer_stock(p, db).items() for n, v in colors.items()} if fitting else None
     return cache[key]
 
@@ -192,7 +235,7 @@ def job_ineligibility(job, host_id):
         # Lines that recorded no size at all keep using the product's current model.
         listing = db.get(models.Listing, item.listing_id)
         dimensions = valid_dimensions(listing.cad_dimensions) if listing else None
-    shades = _sized_shades(db, host_id, dimensions) if dimensions else None
+    shades = _sized_shades(db, host_id, dimensions, bool(getattr(item, 'rack_snapshot', ''))) if dimensions else None
     if shades is None:
         return 'printer'
     if not any(m == item.material for m, _, _ in shades):

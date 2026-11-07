@@ -99,7 +99,9 @@ def run_render(digest, factory=SessionLocal):
 RUNNERS = {'analyze': run_analyze, 'render': run_render}
 
 def work_once(factory=SessionLocal):
-    """Process one job. True when there was one."""
+    """Process one job. True when there was one. Rack builds go first: someone is watching those."""
+    from .rack.queue import work_once as work_rack_once
+    if work_rack_once(factory): return True
     claimed = claim(factory)
     if claimed is None: return False
     job_id, kind, digest, attempt = claimed
@@ -183,6 +185,8 @@ def serve(factory=SessionLocal):
                 with factory() as db: registered = reconcile(db)
                 if registered: log.info('registered %s existing CAD files', registered)
                 clean_work_dirs(); last_reconcile = time.monotonic()
+                from .rack.queue import clean as clean_rack_builds
+                clean_rack_builds(factory)
             if not work_once(factory): time.sleep(POLL_SECONDS)
         except Exception:
             log.exception('CAD worker loop error'); time.sleep(10)

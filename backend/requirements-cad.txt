@@ -1,0 +1,15 @@
+# The CAD worker only (Dockerfile target "worker"), installed with --no-deps: the web image never imports CadQuery.
+#
+# This is CadQuery's real runtime set, pinned. Its declared dependencies also pull numba and llvmlite (190 MB), scipy (117 MB)
+# and trame (web viewers), none of which a build imports; app/rack/smoke.py proves it at image build time.
+cadquery==2.8.0
+cadquery-ocp==7.9.3.1.1
+cadquery-ocp-proxy==7.9.3.1.1
+vtk==9.6.2
+casadi==3.8.2
+ezdxf==1.4.5
+fonttools==4.68.0
+multimethod==2.1
+nlopt==2.11.0
+pyparsing==3.3.3
+runtype==0.5.3

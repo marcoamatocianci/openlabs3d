@@ -36,12 +36,25 @@ def shipment_data(job):
     if not job.shipped_at: return None
     return {'carrier':job.carrier, 'tracking_number':job.tracking_number, 'tracking_url':job.tracking_url, 'note':job.shipping_note, 'shipped_at':job.shipped_at}
 
+def rack_summary(item):
+    """What a custom rack line is, in a few fields, from its immutable snapshot; None for other products."""
+    if not item.rack_snapshot: return None
+    import json
+    from .rack import estimate
+    rack = json.loads(item.rack_snapshot)
+    spec, metrics = rack.get('spec', {}), rack.get('metrics', {})
+    label = spec.get('label') or {}
+    grams = round(estimate.grams(metrics['volume_mm3'], metrics['area_mm2'], item.material)) if item.material in estimate.DENSITY_G_CM3 and 'area_mm2' in metrics else None
+    return {'name': rack.get('name', ''), 'hash': rack.get('hash', ''), 'style': spec.get('style', ''), 'tubes': rack.get('summary', []), 'dims_mm': metrics.get('dims_mm') or spec.get('dims'),
+            'label': {k: label[k] for k in ('text', 'style', 'position', 'font') if k in label} or None, 'has_3mf': bool(rack.get('files', {}).get('3mf')), 'design_id': rack.get('design_id'),
+            'estimated_grams': grams, 'pricing_status': rack.get('pricing', {}).get('status', 'prototype')}
+
 def job_data(job, thumbnail=''):
     item = job.item
     return {'id':job.id, 'order_id':job.order_id, 'item_id':job.item_id, 'host_id':job.host_id, 'status':job.status, 'updated_at':job.updated_at, 'shipment':shipment_data(job),
             'item':{'color':item.color, 'color_hex':item.color_hex, 'listing_id':item.listing_id, 'title':item.title, 'material':item.material, 'dimensions':item.dimensions, 'quantity':item.quantity, 'price_cents':item.price_cents, 'thumbnail':thumbnail,
                     # Which model this line is made from; the file itself is served by /api/jobs/{id}/cad.
-                    'listing_version':item.listing_version, 'cad_status':item.cad_status, 'cad_format':item.cad_path.rsplit('.',1)[-1].upper() if item.cad_path else '', 'cad_sha256':item.cad_sha256}}
+                    'listing_version':item.listing_version, 'cad_status':item.cad_status, 'cad_format':item.cad_path.rsplit('.',1)[-1].upper() if item.cad_path else '', 'cad_sha256':item.cad_sha256, 'rack':rack_summary(item)}}
 
 def listing_thumbnails(db, listing_ids):
     """{listing id: preview URL} in one query. Only publicly viewable products get a preview; the image
@@ -66,7 +79,7 @@ def orders_data(orders, db, notes=False):
         history.setdefault(e.subject, []).append(e)
     thumbnails = listing_thumbnails(db, {i.listing_id for o in orders for i in o.items})
     def item_data(i):
-        return {'id':i.id, 'color':i.color, 'color_hex':i.color_hex, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material, 'thumbnail':thumbnails.get(i.listing_id, '')}
+        return {'id':i.id, 'color':i.color, 'color_hex':i.color_hex, 'listing_id':i.listing_id, 'title':i.title, 'quantity':i.quantity, 'price_cents':i.price_cents, 'material':i.material, 'thumbnail':thumbnails.get(i.listing_id, ''), 'rack':rack_summary(i)}
     result = []
     for order in orders:
         order_jobs = by_order.get(order.id, [])
@@ -94,6 +107,12 @@ def sync_order(db, order_id):
 
 def delete_account(user, actor, db):
     user_id = user.id
+    # Custom racks a buyer never ordered are theirs alone and go with the account (an ordered one blocks it below).
+    ordered_racks = select(models.OrderItem.listing_id)
+    unordered = select(models.Listing.id).where(models.Listing.owner_id == user_id, models.Listing.rack_hash.is_not(None), models.Listing.id.not_in(ordered_racks))
+    db.execute(delete(models.CartItem).where(models.CartItem.listing_id.in_(unordered)))
+    db.execute(delete(models.Listing).where(models.Listing.id.in_(unordered)))
+    db.execute(delete(models.RackDesign).where(models.RackDesign.user_id == user_id))
     dependencies = (
         (models.Listing, models.Listing.owner_id),
         (models.Order, models.Order.buyer_id),
@@ -717,5 +736,5 @@ def overview(auth=Depends(admin), db: Session=Depends(get_db)):
     from .lifecycle import ORDER_SCOPES, statuses as lifecycle_statuses
     def count(model,*where): return db.scalar(select(func.count()).select_from(model).where(*where))
     return {'users':count(models.User), 'buyers':count(models.User,models.User.role=='buyer'), 'hosts':count(models.HostApplication,models.HostApplication.status=='approved'), 'pending_hosts':count(models.HostApplication,models.HostApplication.status=='pending'), 'pending_equipment':count(models.EquipmentRevision,models.EquipmentRevision.status=='pending'),
-            'products':count(models.Listing), **{f'products_{s}':count(models.Listing,models.Listing.status==s) for s in ('approved','pending','draft','rejected')},
+            'products':count(models.Listing,models.Listing.rack_hash.is_(None)), **{f'products_{s}':count(models.Listing,models.Listing.status==s,models.Listing.rack_hash.is_(None)) for s in ('approved','pending','draft','rejected')},
             'orders':count(models.Order), **{f'orders_{s}':count(models.Order,models.Order.status==s) for s in ('pending','accepted','printing','ready','shipped','completed','cancelled')}, 'orders_active':count(models.Order,models.Order.status.in_(lifecycle_statuses(ORDER_SCOPES,'active'))), 'orders_history':count(models.Order,models.Order.status.in_(lifecycle_statuses(ORDER_SCOPES,'history'))), 'available_jobs':count(models.PrintingJob,models.PrintingJob.status=='available'), 'unmatched_jobs':len(unmatched_job_ids(db)), 'self_assigned_jobs':count(models.PrintingJob,models.PrintingJob.id.in_(self_assigned_open(db))), 'custom_requests_new':count(models.CustomRequest,models.CustomRequest.status=='submitted')}

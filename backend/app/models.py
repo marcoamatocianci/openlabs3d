@@ -74,6 +74,12 @@ class Listing(Base):
     rejection_reason: Mapped[str] = mapped_column(String(1000), default='')
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     __mapper_args__ = {'version_id_col': version}
+    # A custom rack sold to one buyer (see app/racks.py): the hash of its geometry. Such a listing is private to its
+    # owner and never edited. NULL for every catalogue product.
+    rack_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rack_snapshot: Mapped[str] = mapped_column(Text, default='', server_default='')
+    # Which saved design it came from, for "ordered versions". Cleared when that design is deleted; never needed to make it.
+    rack_design_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -82,7 +88,8 @@ class Listing(Base):
     # The stored file behind cad_path, and through it the content's analysis and previews. Read-only: CAD
     # processing never writes listings, so it never moves their version.
     cad_file: Mapped['CadFile | None'] = relationship(primaryjoin='foreign(Listing.cad_path) == CadFile.name', viewonly=True, lazy='selectin')
-    __table_args__ = (CheckConstraint('price_cents >= 0'), CheckConstraint("listing_type IN ('official','community')"), CheckConstraint("status IN ('draft','pending','approved','rejected','archived')"), Index('ix_listings_public', 'status', 'published_at'))
+    __table_args__ = (CheckConstraint('price_cents >= 0'), CheckConstraint("listing_type IN ('official','community')"), CheckConstraint("status IN ('draft','pending','approved','rejected','archived')"), Index('ix_listings_public', 'status', 'published_at'),
+        Index('uq_listing_rack', 'owner_id', 'rack_hash', unique=True, sqlite_where=text('rack_hash IS NOT NULL'), postgresql_where=text('rack_hash IS NOT NULL')))
 class ProductImage(Base):
     __tablename__ = 'product_images'
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -143,6 +150,8 @@ class OrderItem(Base):
     cad_path: Mapped[str] = mapped_column(String(80), default='', server_default='')
     cad_sha256: Mapped[str] = mapped_column(String(64), default='', server_default='')
     cad_status: Mapped[str] = mapped_column(String(12), default='', server_default='')
+    # A custom rack's full configuration, geometry, file references and report as sold. Never changed afterwards.
+    rack_snapshot: Mapped[str] = mapped_column(Text, default='', server_default='')
     __tablename__ = 'order_items'
     id: Mapped[int] = mapped_column(primary_key=True)
     order_id: Mapped[int] = mapped_column(ForeignKey('orders.id', ondelete='RESTRICT'), index=True)
@@ -417,3 +426,32 @@ class CadJob(Base):
     __table_args__ = (UniqueConstraint('sha256', 'kind', 'cache_key', name='uq_cad_job_stage'),
         CheckConstraint("kind IN ('analyze','render')"), CheckConstraint("status IN ('queued','processing','ready','failed')"),
         Index('ix_cad_jobs_due', 'status', 'next_attempt_at'))
+
+
+class RackDesign(Base):
+    """A buyer's saved rack, a draft that can always be edited. What was sold is a separate immutable record: the
+    private listing and the order line's snapshot, which later edits here never reach."""
+    __tablename__ = 'rack_designs'
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'), index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    config: Mapped[str] = mapped_column(Text)
+    config_hash: Mapped[str] = mapped_column(String(64), default='', server_default='')     # '' while it has problems
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, onupdate=now)
+
+class RackBuild(Base):
+    """The queue and cache of CAD builds, one row per distinct geometry (see app/rack/queue.py)."""
+    __tablename__ = 'rack_builds'
+    config_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    spec: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default='queued', server_default='queued')
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default='0')
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    claimed_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    result: Mapped[str] = mapped_column(Text, default='{}', server_default='{}')
+    last_error: Mapped[str] = mapped_column(String(500), default='', server_default='')
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (CheckConstraint("status IN ('queued','processing','ready','failed','abandoned')"), Index('ix_rack_builds_due', 'status', 'next_attempt_at'))

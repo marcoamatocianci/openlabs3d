@@ -27,6 +27,8 @@ def offered(o, material, color, quantity):
     return material in o['materials'] and color in o['colors_by_material'].get(material,{}) and 1<=quantity<=o['max_quantity']
 
 def quote(p, material, color, quantity, buyer_id=None):
+    # A custom rack belongs to the buyer who designed it: every route to a purchase passes through here.
+    if p.rack_hash and buyer_id!=p.owner_id:raise HTTPException(422,UNAVAILABLE)
     o=options(p,buyer_id);material=material or p.material
     if not offered(o,material,color,quantity):
         own=buyer_id is not None and offered(options(p),material,color,quantity)

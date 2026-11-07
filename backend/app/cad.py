@@ -99,12 +99,14 @@ def download_cad(listing_id:int,auth=Depends(require),db:Session=Depends(get_db)
     p=db.get(models.Listing,listing_id)
     if not p or not p.cad_path:fail(404,'Model not found')
     if p.owner_id!=auth[0].id and auth[0].role!='admin':fail(403,'Model access is restricted to its owner and administrators. Printing hosts download the model from their job.')
+    # A buyer's custom rack is made by a host from the order; its manufacturing file is not a download for the buyer.
+    if p.rack_hash and auth[0].role!='admin':fail(403,'Manufacturing files for custom racks are released to the printing host of an order.')
     path=cad_file(p.cad_path)
     if path is None or not path.is_file():fail(404,'Model not found')
     return FileResponse(path,filename='model'+path.suffix,media_type='application/octet-stream',headers={'X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store'})
 
 @router.get('/jobs/{job_id}/cad')
-def job_cad(job_id:int,auth=Depends(require),db:Session=Depends(get_db)):
+def job_cad(job_id:int,format:str='',auth=Depends(require),db:Session=Depends(get_db)):
     """The exact model sold with this order line. Checked on every request (no reusable links):
     administrators, or the host currently assigned while the job is accepted, printing or ready."""
     job=db.get(models.PrintingJob,job_id)
@@ -118,13 +120,19 @@ def job_cad(job_id:int,auth=Depends(require),db:Session=Depends(get_db)):
         if job.status not in MANUFACTURING_STATES or order.status=='cancelled':
             fail(403,'Manufacturing files are available only while your job is accepted, printing or ready for delivery')
     item=job.item
-    path=cad_file(item.cad_path)
+    name,expected=item.cad_path,item.cad_sha256
+    # A custom rack also pins a 3MF of the same geometry; other lines hold exactly one file.
+    if format=='3mf' and item.rack_snapshot:
+        pinned=json.loads(item.rack_snapshot).get('files',{}).get('3mf') or {}
+        name,expected=pinned.get('name',''),pinned.get('sha256','')
+    elif format not in ('','stl'):fail(404,'No manufacturing file was recorded in that format')
+    path=cad_file(name)
     if path is None or item.cad_status not in ('pinned','unverified'):fail(404,'No manufacturing file was recorded for this order line')
     if not path.is_file():fail(404,'The manufacturing file for this order line is missing; contact an administrator')
     # The bytes sent are the bytes checked, on every download (rare: about once per job), so a file changed on
     # disk is refused even if its size and timestamps were kept.
     data=path.read_bytes();digest=hashlib.sha256(data).hexdigest()
-    if item.cad_sha256 and digest!=item.cad_sha256:fail(409,'The manufacturing file failed its integrity check; contact an administrator')
+    if expected and digest!=expected:fail(409,'The manufacturing file failed its integrity check; contact an administrator')
     return Response(data,media_type='application/octet-stream',headers={'Content-Disposition':f'attachment; filename="{order.reference}-line-{item.id}{path.suffix}"','X-Content-Type-Options':'nosniff','Cache-Control':'private, no-store',
         'X-Content-SHA256':digest,'X-OpenLabs3D-Model-Version':item.cad_status})
 @router.post('/admin/products/{listing_id}/{action}')
@@ -136,6 +144,12 @@ def product_action(listing_id:int,action:str,auth=Depends(admin_mutate),db:Sessi
     db.add(models.Activity(actor_id=auth[0].id,action='product.'+action,subject=f'listing:{p.id}'));db.commit()
     return {'ok':True,'message':'Product removed from the marketplace; historical records and assets retained.' if action=='remove' else 'Product unpublished.'}
 
+def rack_job_preview(p,auth,db,asset):
+    """A host sees the picture of a custom rack it can take or has taken; nothing else about a private listing."""
+    if not p.rack_hash or not auth or auth[0].role!='host' or asset=='model.glb':return False
+    jobs=select(models.PrintingJob.id).join(models.OrderItem,models.OrderItem.id==models.PrintingJob.item_id).where(models.OrderItem.listing_id==p.id,(models.PrintingJob.status=='available')|(models.PrintingJob.host_id==auth[0].id)).limit(1)
+    return db.scalar(jobs) is not None
+
 @router.get('/listings/{listing_id}/visuals/{revision}/{asset}')
 def visual_asset(listing_id:int,revision:str,asset:str,auth=Depends(current),db:Session=Depends(get_db)):
     p=get_listing(db,listing_id)
@@ -143,7 +157,7 @@ def visual_asset(listing_id:int,revision:str,asset:str,auth=Depends(current),db:
         current=visual_revision(p);allowed=(current[0],{current[1],'thumb.webp','model.glb'}) if current else None
     else:   # not registered by the worker yet: the legacy folder named after the file
         allowed=(PurePosixPath(p.cad_path).stem,{'render.png','thumb.webp','model.glb'}) if CAD_NAME.fullmatch(p.cad_path or '') else None
-    if not can_view(p,auth) or allowed is None or revision!=allowed[0] or asset not in allowed[1]:
+    if not (can_view(p,auth) or rack_job_preview(p,auth,db,asset)) or allowed is None or revision!=allowed[0] or asset not in allowed[1]:
         fail(404,'Preview unavailable')
     path=config.UPLOAD_DIR.parent/'renders'/revision/asset
     if not path.is_file():fail(404,'Preview unavailable')

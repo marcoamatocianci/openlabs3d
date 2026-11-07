@@ -104,13 +104,16 @@ def color_images(p):
 from .pricing import options, quote, Rules
 
 def listing_data(p):
-    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed')}, 'has_cad':bool(p.cad_path), 'cad_format':p.cad_path.rsplit('.',1)[-1].upper() if p.cad_path else '', 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.username or p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
+    return {**{k:getattr(p,k) for k in ('id','owner_id','title','description','category','price_cents','currency','material','dimensions','compatibility','listing_type','status','rejection_reason','created_at','updated_at','published_at','featured','approved_by','collection_key','cad_dimensions','removed','rack_design_id')}, 'custom_rack':bool(p.rack_hash), 'has_cad':bool(p.cad_path), 'cad_format':p.cad_path.rsplit('.',1)[-1].upper() if p.cad_path else '', 'configurator':options(p), 'color_images':color_images(p), 'seller':p.owner.username or p.owner.display_name, 'images':[{'id':i.id,'url':f'/api/listings/{p.id}/images/{i.id}', 'thumbnail_url':f'/api/listings/{p.id}/images/{i.id}?thumbnail=true', 'sort_order':i.sort_order} for i in sorted(p.images,key=lambda x:x.sort_order)]}
 def get_listing(db, listing_id):
     p = db.scalar(select(models.Listing).options(selectinload(models.Listing.images), selectinload(models.Listing.owner)).where(models.Listing.id==listing_id))
     if not p or p.removed: fail(404, 'Listing not found')
     return p
-def can_view(p, auth): return p.status == 'approved' or bool(auth and (auth[0].id == p.owner_id or auth[0].role == 'admin'))
+def can_view(p, auth):
+    if p.rack_hash: return bool(auth and (auth[0].id == p.owner_id or auth[0].role == 'admin'))    # private to its buyer
+    return p.status == 'approved' or bool(auth and (auth[0].id == p.owner_id or auth[0].role == 'admin'))
 def owned(p, auth):
+    if p.rack_hash: fail(403, 'A custom rack is generated from its design and cannot be edited. Change the design instead.')
     if auth[0].role != 'admin':
         if auth[0].role != 'host' or not auth[0].email_verified: fail(403, 'Verified approved host access required')
     if p.owner_id != auth[0].id and auth[0].role != 'admin': fail(403, 'Not permitted')
@@ -247,7 +250,7 @@ def logout(response: Response, auth = Depends(mutate), db: Session = Depends(get
 @app.get('/api/listings')
 def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: bool = False, page: int = 1, per_page: int = 12, material: str = '', max_price_cents: int | None = None, db: Session = Depends(get_db)):
     if page < 1 or not 1 <= per_page <= 50 or sort not in ('newest','oldest','price_asc','price_desc') or (max_price_cents is not None and max_price_cents < 0): fail(422, 'Invalid filters, pagination or sort')
-    query = select(models.Listing).where(models.Listing.status == 'approved', models.Listing.removed.is_(False))
+    query = select(models.Listing).where(models.Listing.status == 'approved', models.Listing.removed.is_(False), models.Listing.rack_hash.is_(None))
     if featured: query = query.where(models.Listing.featured.is_(True))
     if q: query = query.where(or_(*[c.icontains(q[:200], autoescape=True) for c in (models.Listing.title, models.Listing.description, models.Listing.compatibility)]))
     if category: query = query.where(models.Listing.category == category[:100])
@@ -260,7 +263,7 @@ def catalogue(q: str = '', category: str = '', sort: str = 'newest', featured: b
     return {'items':[listing_data(p) for p in items], 'total':total, 'page':page, 'per_page':per_page}
 @app.get('/api/listings/mine')
 def mine(auth = Depends(require), db: Session = Depends(get_db)):
-    items = db.scalars(select(models.Listing).options(selectinload(models.Listing.images),selectinload(models.Listing.owner)).where(models.Listing.owner_id==auth[0].id).order_by(models.Listing.updated_at.desc())).all()
+    items = db.scalars(select(models.Listing).options(selectinload(models.Listing.images),selectinload(models.Listing.owner)).where(models.Listing.owner_id==auth[0].id, models.Listing.rack_hash.is_(None)).order_by(models.Listing.updated_at.desc())).all()
     return [listing_data(p) for p in items]
 @app.get('/api/listings/{listing_id}')
 def detail(listing_id: int, auth = Depends(current), db: Session = Depends(get_db)):
@@ -391,7 +394,7 @@ def reorder(listing_id: int, body: schemas.Reorder, auth = Depends(mutate), db: 
 
 @app.get('/api/admin/listings')
 def admin_list(auth = Depends(admin), db: Session = Depends(get_db)):
-    return [listing_data(p) for p in db.scalars(select(models.Listing).options(selectinload(models.Listing.images),selectinload(models.Listing.owner)).order_by(models.Listing.updated_at.desc())).all()]
+    return [listing_data(p) for p in db.scalars(select(models.Listing).options(selectinload(models.Listing.images),selectinload(models.Listing.owner)).where(models.Listing.rack_hash.is_(None)).order_by(models.Listing.updated_at.desc())).all()]
 @app.post('/api/admin/listings/{listing_id}/approve')
 def approve(listing_id: int, auth = Depends(admin_mutate), db: Session = Depends(get_db)):
     p=get_listing(db,listing_id)
@@ -425,7 +428,7 @@ def seed_official_collection():
 @app.get('/api/listings/{listing_id}/availability')
 def product_availability(listing_id: int, response: Response, auth=Depends(current), db: Session=Depends(get_db)):
     p=get_listing(db,listing_id)
-    if p.status != 'approved': fail(404,'Listing not available')
+    if p.status != 'approved' or not can_view(p,auth): fail(404,'Listing not available')
     response.headers['Cache-Control']='no-store'
     # Per viewer: a host is not offered what only their own printers can make (see pricing.options).
     return options(p,auth[0].id if auth else None)
@@ -433,7 +436,7 @@ def product_availability(listing_id: int, response: Response, auth=Depends(curre
 @app.post('/api/listings/{listing_id}/quote')
 def price_quote(listing_id: int, body: schemas.QuoteInput, auth=Depends(current), db: Session=Depends(get_db)):
     p=get_listing(db,listing_id)
-    if p.status != 'approved': fail(404,'Listing not available')
+    if p.status != 'approved' or not can_view(p,auth): fail(404,'Listing not available')
     return quote(p,body.material,body.color,body.quantity,auth[0].id if auth else None)
 
 @app.put('/api/listings/{listing_id}/pricing')
@@ -464,3 +467,5 @@ from .custom_requests import router as custom_requests_router
 app.include_router(custom_requests_router)
 from .identity import router as identity_router
 app.include_router(identity_router)
+from .racks import router as racks_router
+app.include_router(racks_router)
